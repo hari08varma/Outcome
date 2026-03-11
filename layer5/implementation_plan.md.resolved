@@ -1,0 +1,859 @@
+# Layer5 — Production Build Plan
+### Phase 0 Artifact | CONFIDENTIAL | v1.0 — March 2026
+
+> **Status**: AWAITING REVIEW — No code has been written. Each phase begins only after you type `APPROVED — BEGIN PHASE [N]`.
+
+---
+
+## Project Overview
+
+Layer5 is a 6-layer, append-only, outcome-ranked decision intelligence middleware that sits between any LLM and enterprise infrastructure. The architecture is a PostgreSQL star schema (Supabase) + Node.js REST API + Edge Functions + lightweight dashboard.
+
+---
+
+## Project Structure
+
+```
+layer5/
+├── supabase/
+│   ├── migrations/
+│   │   ├── 001_create_dimensions.sql        ← dim_customers, dim_agents, dim_actions, dim_contexts
+│   │   ├── 002_create_fact_outcomes.sql      ← fact_outcomes (append-only core table)
+│   │   ├── 003_create_episodes.sql           ← fact_episodes + agent_trust_scores
+│   │   ├── 004_create_materialized_views.sql ← mv_action_scores + mv_episode_patterns
+│   │   ├── 005_create_indexes.sql            ← ALL indexes (run before any data write)
+│   │   ├── 006_create_rls_policies.sql       ← Row Level Security on every tenant-scoped table
+│   │   ├── 007_create_trust_scores.sql       ← agent_trust_scores + agent_trust_audit
+│   │   └── 008_create_events.sql             ← degradation_alert_events + trend_change_events
+│   ├── functions/
+│   │   ├── scoring-engine/
+│   │   │   └── index.ts    ← refreshes mv_action_scores every 5 min (CONCURRENTLY)
+│   │   ├── pruning-scheduler/
+│   │   │   └── index.ts    ← nightly: archive rows >90 days, compress, delete expired
+│   │   ├── cold-start-bootstrap/
+│   │   │   └── index.ts    ← injects synthetic priors on new agent/context registration
+│   │   ├── trust-updater/
+│   │   │   └── index.ts    ← recalculates trust scores after every outcome write
+│   │   └── trend-detector/
+│   │       └── index.ts    ← nightly: computes trend_delta, emits degradation alerts
+│   └── seed/
+│       └── cold_start_priors.sql   ← industry-average synthetic priors by action category
+├── api/
+│   ├── routes/
+│   │   ├── log-outcome.ts    ← POST /v1/log-outcome
+│   │   ├── get-scores.ts     ← GET  /v1/get-scores
+│   │   ├── get-patterns.ts   ← GET  /v1/get-patterns
+│   │   └── audit.ts          ← GET  /v1/audit
+│   ├── middleware/
+│   │   ├── auth.ts           ← Bearer token → customer_id lookup + bcrypt verify
+│   │   ├── validate-action.ts← hallucination prevention: action_name ∈ dim_actions
+│   │   └── rate-limit.ts     ← 1000 req/min per API key (sliding window)
+│   ├── lib/
+│   │   ├── supabase.ts       ← Supabase client singleton (service role key)
+│   │   ├── scoring.ts        ← full 5-factor formula implementation
+│   │   ├── policy-engine.ts  ← explore/exploit/escalate decision tree
+│   │   └── context-embed.ts  ← generate + cosine-compare context vectors
+│   ├── index.ts              ← Hono/Express app entry point
+│   ├── package.json
+│   └── tsconfig.json
+├── dashboard/
+│   ├── src/
+│   │   ├── pages/
+│   │   │   ├── index.tsx       ← Score Leaderboard (ranked actions per context)
+│   │   │   ├── outcomes.tsx    ← Outcome History (paginated fact_outcomes)
+│   │   │   ├── audit.tsx       ← Audit Trail (regulator-ready, exportable CSV)
+│   │   │   └── trust.tsx       ← Agent Trust Status (trust scores + suspension log)
+│   │   └── components/
+│   │       ├── ScoreCard.tsx
+│   │       ├── TrendBadge.tsx
+│   │       ├── OutcomeTable.tsx
+│   │       └── TrustGauge.tsx
+│   ├── index.html
+│   └── vite.config.ts
+├── tests/
+│   ├── layer1/   ← Schema integrity tests (tables, indexes, RLS)
+│   ├── layer2/   ← Materialized view refresh + scoring aggregation tests
+│   ├── layer3/   ← Scoring formula unit tests (all 5 factors)
+│   ├── layer4/   ← Temporal trend detection tests
+│   ├── layer5/   ← Policy engine routing tests (explore/exploit/escalate)
+│   └── layer6/   ← Trust scoring, suspension, reinstatement tests
+├── .env.example
+├── docs/
+│   └── layer5_prd.md
+└── README.md
+```
+
+### Structural Decisions
+
+| Decision | Rationale |
+|---|---|
+| Supabase migrations numbered serially | Ensures reproducible, ordered schema deployment. Migrations are never edited after merge — only additive. |
+| Edge Functions separate per concern | Scoring, pruning, cold-start, trust, and trend are independent cron jobs. Failure of one does not cascade. |
+| Hono for API layer | Lightweight, Deno/Node compatible, typed middleware chain — ideal for Supabase Edge deployment. Can swap to Express if self-hosting. |
+| Vite + React for dashboard | Fastest dev setup; no SSR needed for internal dashboard. Can be replaced with Next.js if customer-facing later. |
+| Tests split by layer | Enables phase-gated validation — Layer 1 tests pass before Layer 2 is built. |
+| `context-embed.ts` isolated | Embedding provider (OpenAI, local) swapped without touching scoring logic. |
+| `dim_institutional_knowledge` omitted from migrations list | Created as a materialized view derivative in Phase 4 — not a separate migration. |
+
+---
+
+## Phase-by-Phase Build Plan
+
+---
+
+### PHASE 1 — Layer 1: Structured Experience Memory
+
+**OBJECTIVE**: Create the complete database schema — all dimension tables, the append-only fact tables, all indexes, and Row Level Security policies. This is the immutable foundation. Every other layer depends on this being correct.
+
+**FILES TO CREATE**:
+```
+supabase/migrations/001_create_dimensions.sql
+supabase/migrations/002_create_fact_outcomes.sql
+supabase/migrations/003_create_episodes.sql
+supabase/migrations/005_create_indexes.sql
+supabase/migrations/006_create_rls_policies.sql
+supabase/seed/cold_start_priors.sql
+.env.example
+```
+
+**FILES TO MODIFY**: None (greenfield)
+
+**DEPENDENCIES**: 
+- Supabase project created and CLI authenticated
+- `pgvector` extension enabled (for `context_vector VECTOR(1536)`)
+- `uuid-ossp` or `pgcrypto` extension enabled (for `gen_random_uuid()`)
+
+**SUPABASE OPERATIONS**:
+
+*Tables to create (in dependency order):*
+
+| Order | Table | Key Columns | Notes |
+|---|---|---|---|
+| 1 | `dim_customers` | `customer_id UUID PK`, `company_name`, `tier`, `api_key_hash`, `pruning_config JSONB` | Created first — all other tables FK to this |
+| 2 | `dim_agents` | `agent_id UUID PK`, `agent_name`, `agent_type`, `llm_model`, `customer_id FK`, `api_key_hash` | Agent registry |
+| 3 | `dim_actions` | `action_id UUID PK`, `action_name VARCHAR UNIQUE`, `action_category`, `required_params JSONB` | Hallucination prevention registry |
+| 4 | `dim_contexts` | `context_id UUID PK`, `issue_type`, `environment`, `customer_tier`, `time_of_day`, `context_vector VECTOR(1536)` | Context with embedding slot |
+| 5 | `fact_outcomes` | `outcome_id UUID PK`, `agent_id FK`, `action_id FK`, `context_id FK`, `customer_id FK`, `session_id UUID`, `timestamp TIMESTAMPTZ`, `success BOOLEAN`, `is_synthetic BOOLEAN`, `is_deleted BOOLEAN`, `salience_score FLOAT` | **APPEND-ONLY** |
+| 6 | `fact_episodes` | `episode_id UUID PK`, `session_id UUID UNIQUE`, `agent_id FK`, `context_id FK`, `customer_id FK`, `started_at`, `ended_at`, `total_actions`, `successful_actions`, `episode_success BOOLEAN`, `action_sequence JSONB` | Hierarchical Level 2 |
+| 7 | `fact_outcomes_archive` | Same schema as `fact_outcomes` + `compression_ratio INT`, `sample_count INT` | Warm storage (90–365 days) |
+| 8 | `dim_institutional_knowledge` | `pattern_id UUID PK`, `action_id FK`, `context_type VARCHAR`, `industry VARCHAR`, `avg_success_rate FLOAT`, `sample_count INT`, `last_updated TIMESTAMPTZ` | Cross-customer anonymized patterns |
+
+*Indexes (created in migration 005 — before any data):*
+
+```sql
+-- fact_outcomes: primary query patterns
+CREATE INDEX idx_outcomes_agent_context_ts   ON fact_outcomes(agent_id, context_id, timestamp DESC) WHERE is_deleted = FALSE;
+CREATE INDEX idx_outcomes_action_context      ON fact_outcomes(action_id, context_id)               WHERE is_deleted = FALSE;
+CREATE INDEX idx_outcomes_session             ON fact_outcomes(session_id);
+CREATE INDEX idx_outcomes_timestamp           ON fact_outcomes(timestamp DESC);
+CREATE INDEX idx_outcomes_customer_ts         ON fact_outcomes(customer_id, timestamp DESC)         WHERE is_deleted = FALSE;
+CREATE INDEX idx_outcomes_synthetic           ON fact_outcomes(is_synthetic)                        WHERE is_synthetic = TRUE;
+
+-- dim_actions: hallucination check
+CREATE INDEX idx_actions_name ON dim_actions(action_name) WHERE is_active = TRUE;
+
+-- dim_contexts: similarity search
+CREATE INDEX idx_contexts_issue_type ON dim_contexts(issue_type);
+-- pgvector IVFFlat index for embedding similarity (created after 100 rows minimum):
+-- CREATE INDEX idx_contexts_vector ON dim_contexts USING ivfflat (context_vector vector_cosine_ops);
+```
+
+> [!IMPORTANT]
+> The IVFFlat vector index requires at least a few hundred rows to be useful. It is commented out of the migration and created manually post-seed. This is documented in the README.
+
+*RLS Policies (migration 006):*
+
+```sql
+-- Enable RLS on all customer-scoped tables
+ALTER TABLE fact_outcomes        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE fact_episodes        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dim_agents           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dim_contexts         ENABLE ROW LEVEL SECURITY;
+
+-- Policy pattern (repeated per table):
+CREATE POLICY "customer_isolation" ON fact_outcomes
+  FOR ALL TO authenticated
+  USING (customer_id = auth.uid()::uuid);
+```
+
+> [!NOTE]
+> The API uses the **service role key** server-side and enforces `customer_id` filtering in query logic. RLS is the defense-in-depth layer for direct DB access.
+
+**CRITICAL RULES**:
+- `fact_outcomes` must have RULE preventing UPDATE: `CREATE RULE no_update_outcomes AS ON UPDATE TO fact_outcomes DO INSTEAD NOTHING;`
+- Every FK column must be NOT NULL except where PRD explicitly allows nullable
+- All TIMESTAMPTZ columns default to `NOW()` — no bare `TIMESTAMP`
+- `dim_customers` is created before all tables that FK to it
+
+**TEST GATE — Phase 1** (run all before proceeding):
+
+```sql
+-- Test 1: All expected tables exist
+SELECT table_name FROM information_schema.tables 
+WHERE table_schema = 'public' 
+ORDER BY table_name;
+-- Expected: dim_agents, dim_actions, dim_contexts, dim_customers, fact_episodes, fact_outcomes, fact_outcomes_archive, dim_institutional_knowledge
+
+-- Test 2: fact_outcomes has correct columns + types
+SELECT column_name, data_type, is_nullable 
+FROM information_schema.columns 
+WHERE table_name = 'fact_outcomes' ORDER BY ordinal_position;
+-- Expected: outcome_id(uuid,NO), agent_id(uuid,NO), success(boolean,NO), timestamp(timestamptz,NO), is_deleted(boolean,YES)
+
+-- Test 3: Append-only rule blocks UPDATE
+UPDATE fact_outcomes SET success = TRUE WHERE outcome_id = 'any-uuid';
+-- Expected: 0 rows affected (rule silently blocks it)
+
+-- Test 4: All indexes exist
+SELECT indexname FROM pg_indexes WHERE tablename = 'fact_outcomes';
+-- Expected: 6 indexes listed above
+
+-- Test 5: RLS enabled
+SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';
+-- Expected: fact_outcomes → rowsecurity = TRUE
+
+-- Test 6: INSERT a synthetic prior row, verify is_synthetic flag
+INSERT INTO fact_outcomes(agent_id, action_id, context_id, customer_id, session_id, success, is_synthetic)
+VALUES ('[valid-uuids]', ..., TRUE);
+SELECT is_synthetic FROM fact_outcomes WHERE session_id = '[test-session-id]';
+-- Expected: TRUE
+```
+
+**ESTIMATED TIME**: 3–4 hours (schema design + migrations + testing)
+
+**RISK FLAGGED**: 
+- ⚠️ `pgvector` must be enabled BEFORE migration 001 runs. If not, migration 004 (context_vector column) will fail silently or error.
+- ⚠️ FK ordering in SQL matters. `dim_customers` must be created before `dim_agents` (which FKs to it). Migration order is enforced by numeric prefix.
+- ⚠️ The `CREATE RULE no_update_outcomes` approach is a belt-and-suspenders guard. The API layer also enforces append-only. Both must exist.
+
+---
+
+### PHASE 2 — Layer 2: Outcome-Aggregated Learning
+
+**OBJECTIVE**: Build the intelligence aggregation layer — materialized views that pre-compute action scores, episode patterns, and trend data. These views are what make sub-5ms decision queries possible at scale.
+
+**FILES TO CREATE**:
+```
+supabase/migrations/004_create_materialized_views.sql
+supabase/functions/scoring-engine/index.ts
+```
+
+**FILES TO MODIFY**:
+```
+supabase/migrations/005_create_indexes.sql  ← add UNIQUE index for CONCURRENTLY refresh
+```
+
+**DEPENDENCIES**: Phase 1 complete + all tables populated with at least seed data
+
+**SUPABASE OPERATIONS**:
+
+*Materialized Views:*
+
+| View | Refresh Strategy | Key Columns |
+|---|---|---|
+| `mv_action_scores` | Every 5 min via Edge Function (CONCURRENTLY) | `action_id`, `context_id`, `customer_id`, `raw_success_rate`, `weighted_success_rate`, `confidence`, `trend_delta`, `business_hours_rate`, `after_hours_rate` |
+| `mv_episode_patterns` | Nightly via Edge Function (CONCURRENTLY) | `context_id`, `action_sequence`, `episode_success_rate`, `avg_duration_ms`, `sample_count` |
+
+*Required UNIQUE index before first CONCURRENTLY refresh*:
+```sql
+CREATE UNIQUE INDEX ON mv_action_scores(action_id, context_id, customer_id);
+CREATE UNIQUE INDEX ON mv_episode_patterns(context_id, action_sequence_hash);
+```
+
+*Edge Function — `scoring-engine/index.ts`*:
+- Triggered by Supabase cron every 5 minutes
+- Runs: `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_action_scores`
+- Runs: staleness check — if last refresh > 10 min, log alert
+- Returns: `{ refreshed: true, duration_ms: N, rows_updated: N }`
+
+**API IMPACT**: The `GET /v1/get-scores` endpoint reads exclusively from `mv_action_scores` — never from `fact_outcomes` directly. This is the performance guarantee.
+
+**TEST GATE — Phase 2**:
+
+```sql
+-- Test 1: Materialized view exists and has unique index
+SELECT matviewname FROM pg_matviews WHERE schemaname = 'public';
+-- Expected: mv_action_scores, mv_episode_patterns
+
+-- Test 2: CONCURRENTLY refresh works (no lock error)
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_action_scores;
+-- Expected: no error, completes in < 2 seconds on dev dataset
+
+-- Test 3: View returns correct aggregates
+INSERT INTO fact_outcomes(..., success=TRUE) VALUES (...);  -- 3 successes
+INSERT INTO fact_outcomes(..., success=TRUE) VALUES (...);
+INSERT INTO fact_outcomes(..., success=TRUE) VALUES (...);
+INSERT INTO fact_outcomes(..., success=FALSE) VALUES (...); -- 1 failure
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_action_scores;
+SELECT raw_success_rate FROM mv_action_scores WHERE action_id = '[test-action]';
+-- Expected: 0.75
+
+-- Test 4: Confidence formula correct at known sample sizes
+-- n=1 → confidence ≈ 0.31 | n=5 → 0.61 | n=10 → 0.71
+SELECT confidence FROM mv_action_scores WHERE total_attempts = 1;
+-- Expected: value between 0.30 and 0.32
+
+-- Test 5: Edge Function refreshes on schedule (simulate invocation)
+-- Invoke scoring-engine function manually → check last_refresh timestamp updates
+```
+
+**ESTIMATED TIME**: 2–3 hours
+
+**RISK FLAGGED**:
+- ⚠️ Without the UNIQUE index, `REFRESH CONCURRENTLY` will throw: `ERROR: cannot refresh concurrently a materialized view without a unique index`. This breaks the entire scoring layer.
+- ⚠️ The `is_synthetic = FALSE` filter in `mv_action_scores` is critical — synthetic priors must not inflate real scores. Verify this filter exists in the view definition.
+
+---
+
+### PHASE 3 — Layer 3: Advanced ML Scoring Engine (API)
+
+**OBJECTIVE**: Build the REST API — the public interface of Layer5. Three endpoints: log an outcome, get ranked scores, get audit trail. Implement the full 5-factor scoring formula in TypeScript. Implement hallucination prevention middleware.
+
+**FILES TO CREATE**:
+```
+api/index.ts
+api/package.json
+api/tsconfig.json
+api/lib/supabase.ts
+api/lib/scoring.ts           ← 5-factor formula
+api/lib/policy-engine.ts     ← explore/exploit/escalate decision tree
+api/lib/context-embed.ts     ← context vector generation + cosine similarity
+api/middleware/auth.ts
+api/middleware/validate-action.ts   ← hallucination prevention
+api/middleware/rate-limit.ts
+api/routes/log-outcome.ts
+api/routes/get-scores.ts
+api/routes/audit.ts
+.env.example
+tests/layer3/scoring.test.ts
+tests/layer3/hallucination.test.ts
+```
+
+**SUPABASE OPERATIONS**: None (reads/writes via Supabase JS client)
+
+**API ENDPOINTS — Complete Specification**:
+
+#### POST /v1/log-outcome
+```
+Request:
+{
+  "agent_id":    "uuid",
+  "action_name": "restart_service",  ← validated against dim_actions.action_name
+  "context": {
+    "issue_type":    "payment_failed",
+    "customer_tier": "enterprise",
+    "environment":   "production"
+  },
+  "success":     false,
+  "response_ms": 1240,
+  "session_id":  "uuid",
+  "error_code":  "TIMEOUT_503"
+}
+
+Middleware chain:
+  1. auth.ts           → resolve customer_id from Bearer token
+  2. rate-limit.ts     → 1000 req/min per key
+  3. validate-action.ts→ action_name ∈ dim_actions (400 if not found)
+
+Handler logic:
+  1. Resolve or create context_id (upsert dim_contexts by issue_type + tier + env)
+  2. Compute salience_score:
+     - If action already scores > 0.9 and outcome is success → salience = 0.1 (sampled)
+     - Otherwise salience = 1.0
+  3. INSERT into fact_outcomes (append-only)
+  4. Trigger trust-updater (async, non-blocking)
+  5. Read new score from mv_action_scores (may be stale ≤5 min — acceptable)
+  6. Run policy engine → return recommendation
+
+Response:
+{
+  "outcome_id":    "uuid",
+  "logged":        true,
+  "new_score":     0.069,
+  "recommendation":"explore",
+  "next_actions": [
+    { "action": "update_app",     "score": 0.85 },
+    { "action": "clear_cache",    "score": 0.61 },
+    { "action": "restart_service","score": 0.07 }
+  ]
+}
+
+Error responses:
+  400: { "error": "UNKNOWN_ACTION", "message": "action_name 'foo' not in registry" }
+  401: { "error": "UNAUTHORIZED" }
+  413: { "error": "PAYLOAD_TOO_LARGE", "message": "raw_context exceeds 64KB limit" }
+  429: { "error": "RATE_LIMITED" }
+```
+
+#### GET /v1/get-scores
+```
+Request params: agent_id, issue_type, tier (optional), environment (optional)
+
+Handler logic:
+  1. auth.ts → resolve customer_id
+  2. Lookup context_id from dim_contexts (exact match on issue_type + tier + env)
+  3. If no exact match: find closest by cosine similarity (context_embed.ts)
+  4. Query mv_action_scores WHERE context_id = X AND customer_id = Y
+  5. Apply trust_factor from agent_trust_scores
+  6. Compute FINAL_SCORE = weighted_success_rate × confidence × trust_factor
+     (recency already baked into weighted_success_rate in the view)
+  7. Sort descending, return top-N actions with policy recommendation
+
+Response:
+{
+  "context_id":     "uuid",
+  "ranked_actions": [
+    { "action": "update_app",     "score": 0.85, "confidence": 0.92, "samples": 47, "trend": "stable" },
+    { "action": "clear_cache",    "score": 0.61, "confidence": 0.71, "samples": 18, "trend": "improving" },
+    { "action": "restart_service","score": 0.07, "confidence": 0.61, "samples": 12, "trend": "degrading" }
+  ],
+  "policy":       "exploit",
+  "agent_trust":  { "status": "trusted", "score": 0.88 }
+}
+```
+
+#### GET /v1/audit
+```
+Request params: agent_id, from (date), to (date), limit (default 100), offset
+
+Handler logic:
+  1. auth.ts → verify customer_id owns agent_id
+  2. Query fact_outcomes with full joins (dim_actions, dim_contexts, dim_agents)
+  3. Return human-readable records (action_name, issue_type, success, timestamp, error_code)
+  4. Include response headers for CSV export: Content-Type: application/csv (if ?format=csv)
+
+Response: Full JSON audit log — regulator-readable, paginated
+```
+
+**Scoring Formula Implementation** (`api/lib/scoring.ts`):
+```typescript
+// 5-factor formula
+function computeScore(row: ActionScoreRow, agentTrust: number, hoursNow: number): number {
+  const successRate    = row.weighted_success_rate;              // from mv_action_scores
+  const confidence     = row.confidence;                         // from mv_action_scores
+  const recency        = Math.exp(-0.01 * hoursNow);            // applied at query time
+  const contextMatch   = row.context_similarity ?? 1.0;         // 1.0 for exact match
+  const trustFactor    = agentTrust;                             // from agent_trust_scores
+  return successRate * confidence * recency * contextMatch * trustFactor;
+}
+```
+
+> [!NOTE]
+> Recency is re-applied at query time (not baked into the view) so that scores degrade correctly even between view refreshes. The view's `weighted_success_rate` uses recency weighting over the dataset; the API applies a final time-of-query recency factor based on when the view was last refreshed.
+
+**TEST GATE — Phase 3**:
+
+```bash
+# Run unit tests
+cd api && npm test tests/layer3/
+
+# Test 1: Scoring formula accuracy
+# Input: success_rate=0.75, confidence=0.92, recency=0.99, context_match=1.0, trust=0.88
+# Expected output: 0.75 × 0.92 × 0.99 × 1.0 × 0.88 = 0.601 (±0.001)
+
+# Test 2: Hallucination prevention
+curl -X POST /v1/log-outcome -d '{"action_name": "FAKE_ACTION_XYZ", ...}'
+# Expected: 400 {"error": "UNKNOWN_ACTION"}
+
+# Test 3: Valid action passes validation
+curl -X POST /v1/log-outcome -d '{"action_name": "restart_service", ...}'
+# Expected: 200 with outcome_id
+
+# Test 4: Rate limiting activates
+# Send 1001 requests in 60 seconds → 1001st response: 429
+
+# Test 5: Audit trail returns correct records
+curl GET /v1/audit?agent_id=X&from=2026-03-01&to=2026-03-31
+# Expected: JSON array with action_name, timestamp, success fields visible
+```
+
+**ESTIMATED TIME**: 4–5 hours
+
+**RISK FLAGGED**:
+- ⚠️ The `context-embed.ts` module calls an external embedding API (e.g., OpenAI). If this is unavailable, `GET /get-scores` must fall back to exact `issue_type` string match. This fallback is mandatory — not optional.
+- ⚠️ The API must use **service role key** (not anon key) to bypass RLS on server-side reads, then enforce `customer_id` filtering in query logic. Using anon key server-side is a security gap.
+- ⚠️ `raw_context` JSONB size must be validated at API layer before any DB write. Supabase row size limit is 8KB by default (can be raised to 1GB with TOAST, but unbounded input is risky).
+
+---
+
+### PHASE 4 — Layer 4: Temporal Memory & Trend Detection
+
+**OBJECTIVE**: Add time-awareness to the scoring layer. Detect performance degradation before it's catastrophic. Identify time-of-day and day-of-week patterns. Emit alerting events when trends reverse.
+
+**FILES TO CREATE**:
+```
+supabase/migrations/008_create_events.sql
+supabase/functions/trend-detector/index.ts
+tests/layer4/trend.test.ts
+```
+
+**FILES TO MODIFY**:
+```
+supabase/migrations/004_create_materialized_views.sql  ← trend_delta already in mv_action_scores
+api/routes/get-scores.ts   ← surface trend field in response
+```
+
+**SUPABASE OPERATIONS**:
+
+*Tables to create:*
+
+| Table | Key Columns |
+|---|---|
+| `degradation_alert_events` | `alert_id UUID PK`, `action_id FK`, `context_id FK`, `customer_id FK`, `trend_delta FLOAT`, `detected_at TIMESTAMPTZ`, `acknowledged BOOLEAN` |
+| `trend_change_events` | `event_id UUID PK`, `action_id FK`, `old_success_rate FLOAT`, `new_success_rate FLOAT`, `score_flip_magnitude FLOAT`, `affected_outcomes_count INT`, `detected_at TIMESTAMPTZ` |
+
+*Edge Function — `trend-detector/index.ts`*:
+- Runs nightly via Supabase cron
+- Queries `mv_action_scores` for rows where `trend_delta < -0.15`
+- Inserts into `degradation_alert_events` for each flagged action
+- Queries for score flips > 0.4 within 7 days → inserts `trend_change_events`
+- For contradiction events: marks old `fact_outcomes` rows as superseded via `is_deleted = FALSE` (they remain) — adds a `superseded_by_event_id` flag (new column in `fact_outcomes` migration addendum)
+
+**Trend Field in API Response**:
+```
+"trend": "stable"      → |trend_delta| < 0.05
+"trend": "improving"   → trend_delta > +0.05
+"trend": "degrading"   → trend_delta < -0.05
+"trend": "critical"    → trend_delta < -0.15  (alert already emitted)
+```
+
+**TEST GATE — Phase 4**:
+
+```sql
+-- Test 1: Degradation alert emitted when trend_delta < -0.15
+-- Setup: insert 5 successes in week 1, 5 failures in week 2 for same action/context
+-- Run trend-detector function manually
+SELECT COUNT(*) FROM degradation_alert_events WHERE action_id = '[test-action]';
+-- Expected: 1
+
+-- Test 2: trend_delta calculated correctly
+SELECT trend_delta FROM mv_action_scores WHERE action_id = '[test-action]';
+-- Expected: negative value reflecting week-over-week drop
+
+-- Test 3: Score flip contradiction event fires
+-- Setup: success_rate was 0.85 last week, drops to 0.35 this week
+SELECT score_flip_magnitude FROM trend_change_events WHERE action_id = '[test-action]';
+-- Expected: ~0.50
+
+-- Test 4: Business hours vs after-hours split in view
+SELECT business_hours_rate, after_hours_rate FROM mv_action_scores WHERE action_id = '[test-action]';
+-- Expected: both non-null if outcomes span day/night
+```
+
+**ESTIMATED TIME**: 2–3 hours
+
+**RISK FLAGGED**:
+- ⚠️ The week-over-week trend comparison requires at least 7 days of data to be meaningful. During Phase 4 testing, synthetic test data must span at least 14 days (use `INSERT WITH backdated timestamps`).
+- ⚠️ Contradiction detection must NOT hard-delete old records. It sets a `superseded` flag only — audit trail must remain intact.
+
+---
+
+### PHASE 5 — Layer 5: Adaptive Policy Engine
+
+**OBJECTIVE**: Build the decision logic that decides HOW the agent uses its scored actions. Implement the cold start protocol (all 4 stages). Implement epsilon-greedy exploration. Integrate with the API response layer.
+
+**FILES TO CREATE**:
+```
+supabase/functions/cold-start-bootstrap/index.ts
+tests/layer5/policy.test.ts
+tests/layer5/cold-start.test.ts
+```
+
+**FILES TO MODIFY**:
+```
+api/lib/policy-engine.ts    ← implement full decision tree
+api/routes/log-outcome.ts   ← integrate policy recommendation in response
+api/routes/get-scores.ts    ← integrate policy recommendation in response
+```
+
+**Policy Engine Decision Tree** (complete implementation):
+
+```
+IF agent.trust_status == 'suspended'
+  → RETURN { policy: 'escalate', reason: 'agent_suspended' }
+
+ELSE IF all actions have confidence < 0.3 (cold start)
+  → COLD START PROTOCOL:
+    Stage 1: Inject synthetic priors (cold-start-bootstrap function)
+    Stage 2: Cap confidence multiplier at 0.3
+    Stage 3: Return all available actions (force exploration)
+    Stage 4: If same-type agent exists with history → transfer priors
+  → RETURN { policy: 'explore', reason: 'cold_start' }
+
+ELSE IF customer.risk_tolerance == 'conservative' AND top_score > 0.8
+  → RETURN { policy: 'exploit', action: top_action }
+
+ELSE IF top_score > 0.85 AND confidence > 0.8
+  → EPSILON-GREEDY: exploit 95%, explore 5%
+  → RETURN { policy: 'exploit' | 'explore' (random 5%) }
+
+ELSE IF top_score between 0.5 and 0.85
+  → EPSILON-GREEDY: exploit with (confidence × 100)%
+  → RETURN { policy: 'exploit' | 'explore' }
+
+ELSE IF all scores < 0.2
+  → RETURN { policy: 'escalate', reason: 'no_reliable_action' }
+
+ELSE
+  → RETURN { policy: 'explore', action: second_ranked_action }
+```
+
+**Cross-Agent Transfer** (cold-start-bootstrap):
+```
+1. New agent registered → cold-start-bootstrap triggered
+2. Query dim_agents WHERE agent_type = [same type] AND customer_id = [same customer]
+3. If matching agent found with > 10 outcomes:
+   - Pull dim_institutional_knowledge patterns for same context type
+   - Insert as synthetic priors (is_synthetic = TRUE) into fact_outcomes for new agent
+   - Log transfer event
+4. If no same-customer match: use global dim_institutional_knowledge averages
+```
+
+**Customer Risk Configs** (stored in `dim_customers.config JSONB`):
+```json
+{
+  "risk_tolerance":   "conservative | balanced | aggressive",
+  "min_confidence":   0.5,
+  "escalation_score": 0.2,
+  "exploration_rate": 0.05
+}
+```
+
+**TEST GATE — Phase 5**:
+
+```bash
+# Test 1: Cold start returns explore with confidence cap
+# Setup: new agent, 0 outcomes
+curl GET /v1/get-scores?agent_id=[new-agent]&issue_type=payment_failed
+# Expected: policy='explore', all confidence values ≤ 0.3, reason='cold_start'
+
+# Test 2: Suspended agent returns escalate immediately
+# Setup: agent with trust_status = 'suspended'
+curl GET /v1/get-scores?agent_id=[suspended-agent]
+# Expected: policy='escalate', reason='agent_suspended', no ranked_actions
+
+# Test 3: High-confidence exploitation
+# Setup: action with 50 outcomes, 80% success, trust=0.9
+# Expected: policy='exploit', top action returned 95% of calls
+
+# Test 4: Cross-agent transfer works
+# Setup: Agent A (same type) has 20 outcomes. Register Agent B (new, same type).
+# Expected: Agent B has synthetic priors after cold-start-bootstrap runs
+
+# Test 5: Conservative customer stays in exploit above 0.8
+curl GET /v1/get-scores?agent_id=[conservative-agent]
+# Expected: Always policy='exploit' when top_score > 0.8 regardless of randomness
+```
+
+**ESTIMATED TIME**: 3–4 hours
+
+**RISK FLAGGED**:
+- ⚠️ Epsilon-greedy randomness makes testing non-deterministic. Tests must use seeded random or mock the random function — otherwise flaky tests.
+- ⚠️ Cross-agent transfer inserts synthetic rows into `fact_outcomes` with `is_synthetic = TRUE`. These must never appear in `mv_action_scores` (which filters `is_synthetic = FALSE`). This filter is already in the view from Phase 2 — verify it has not been accidentally removed.
+
+---
+
+### PHASE 6 — Layer 6: Trust-Aware Decision System + Dashboard
+
+**OBJECTIVE**: Build the agent trust scoring system. Track consecutive failures. Auto-suspend unreliable agents. Require human reinstatement. Build the compliance dashboard with all four views. 
+
+**FILES TO CREATE**:
+```
+supabase/migrations/007_create_trust_scores.sql
+supabase/functions/trust-updater/index.ts
+supabase/functions/pruning-scheduler/index.ts
+dashboard/src/pages/index.tsx
+dashboard/src/pages/outcomes.tsx
+dashboard/src/pages/audit.tsx
+dashboard/src/pages/trust.tsx
+dashboard/src/components/ScoreCard.tsx
+dashboard/src/components/TrendBadge.tsx
+dashboard/src/components/OutcomeTable.tsx
+dashboard/src/components/TrustGauge.tsx
+dashboard/index.html
+dashboard/vite.config.ts
+tests/layer6/trust.test.ts
+tests/layer6/pruning.test.ts
+docs/layer5_prd.md
+README.md
+```
+
+**SUPABASE OPERATIONS**:
+
+*Tables to create:*
+
+| Table | Key Columns |
+|---|---|
+| `agent_trust_scores` | `trust_id UUID PK`, `agent_id UUID UNIQUE FK`, `trust_score FLOAT DEFAULT 0.7`, `total_decisions INT`, `correct_decisions INT`, `consecutive_failures INT`, `trust_status VARCHAR(20)`, `suspension_reason TEXT`, `reinstated_by VARCHAR(255)` |
+| `agent_trust_audit` | `audit_id UUID PK`, `agent_id FK`, `event_type VARCHAR` (suspended/reinstated/recalibrated), `old_score FLOAT`, `new_score FLOAT`, `performed_by TEXT`, `performed_at TIMESTAMPTZ` |
+
+*Trust Update Rules* (in `trust-updater/index.ts`, triggered async after every outcome write):
+```
+On success:  consecutive_failures = 0; trust_score = MIN(trust_score × 1.03, 1.0)
+On failure:  consecutive_failures += 1; trust_score = trust_score × (0.9 ^ consecutive_failures)
+
+Status thresholds:
+  trust_score >= 0.6 → 'trusted'
+  trust_score 0.3-0.6 → 'probation'
+  trust_score < 0.3 OR consecutive_failures >= 5 → 'suspended'
+
+Reinstatement:
+  Only via POST /v1/admin/reinstate-agent (customer_admin role)
+  Sets consecutive_failures = 0, trust_score = 0.4
+  Logs to agent_trust_audit with reinstated_by field
+```
+
+*Pruning Scheduler* (nightly):
+```
+1. Archive: Move fact_outcomes rows WHERE timestamp < NOW() - 90 days AND salience < 0.01
+   → Compress into fact_outcomes_archive (aggregate 100:1)
+2. Cold delete: Delete fact_outcomes_archive rows WHERE timestamp < NOW() - 365 days
+   (pattern preserved in dim_institutional_knowledge)
+3. Salience filter: On INSERT, if action scores > 0.9 and outcome = success → salience = 0.1
+   → Only 10% of redundant confirmations written to hot storage
+```
+
+**Dashboard Pages**:
+
+| Page | Data Source | Key Components |
+|---|---|---|
+| Score Leaderboard (`/`) | `mv_action_scores` | ScoreCard per action, TrendBadge, grouped by context |
+| Outcome History (`/outcomes`) | `fact_outcomes` + joins | OutcomeTable, paginated, filterable by date/agent/context |
+| Audit Trail (`/audit`) | `fact_outcomes` full join | Human-readable, CSV export button, date range filter |
+| Trust Status (`/trust`) | `agent_trust_scores` + audit | TrustGauge per agent, suspension log, reinstate button |
+
+**TEST GATE — Phase 6**:
+
+```bash
+# Test 1: Trust score decays correctly under consecutive failures
+# Seed: agent with trust_score=0.7, trust_status='trusted'
+# Simulate 5 consecutive failures via POST /v1/log-outcome (success=false, x5)
+curl GET /v1/get-scores?agent_id=[test-agent]
+# Expected: trust_status='suspended', policy='escalate'
+
+# Test 2: Trust score recovers slowly after success (but stays in probation zone)
+# Start at trust_score=0.5. Simulate 3 successes.
+# Expected: trust_score = 0.5 × 1.03^3 ≈ 0.546 — still in probation (not yet 0.6)
+
+# Test 3: Human reinstatement works
+curl POST /v1/admin/reinstate-agent -d '{"agent_id":"...", "reinstated_by":"cto@company.com"}'
+# Expected: trust_score=0.4, trust_status='probation', consecutive_failures=0
+# Verify: agent_trust_audit has new record with reinstated_by='cto@company.com'
+
+# Test 4: Pruning moves old records to archive
+# Setup: Insert rows with timestamp = '2025-01-01' (>90 days ago), salience < 0.01
+# Run pruning-scheduler function manually
+SELECT COUNT(*) FROM fact_outcomes WHERE timestamp < NOW() - INTERVAL '90 days';
+-- Expected: 0 (moved to archive)
+SELECT COUNT(*) FROM fact_outcomes_archive WHERE period_start < NOW() - INTERVAL '90 days';
+-- Expected: 1 compressed aggregate record
+
+# Test 5: Dashboard loads all four pages without error
+# Start Vite dev server: cd dashboard && npm run dev
+# Manually navigate to /  /outcomes  /audit  /trust
+# Expected: all four pages render with live Supabase data
+```
+
+**ESTIMATED TIME**: 5–6 hours
+
+**RISK FLAGGED**:
+- ⚠️ The reinstatement endpoint must be protected by a higher-privilege role (customer_admin). Do NOT expose to standard API key holders.
+- ⚠️ Pruning is destructive (archive compression loses individual records outside the retention window). A backup of `fact_outcomes` must be taken before the first pruning run. Document this in README.
+- ⚠️ Dashboard reads from Supabase using the anon key (public-safe reads). ALL dashboard queries must respect RLS — customer admins can only see their own agents.
+
+---
+
+## Dependency Map
+
+```
+Phase 1 (Schema)
+    │
+    ├──→ Phase 2 (Materialized Views)
+    │         │
+    │         └──→ Phase 3 (Scoring API)
+    │                   │
+    │                   ├──→ Phase 4 (Temporal / Trend)
+    │                   │         │
+    │                   └──→ Phase 5 (Policy Engine)
+    │                                   │
+    └───────────────────────────────────└──→ Phase 6 (Trust + Dashboard)
+```
+
+**What breaks if you skip or reorder**:
+
+| Skip | Consequence |
+|---|---|
+| Phase 1 (schema) | Nothing else can exist — no tables, no views, no API |
+| Phase 2 (views) | Phase 3 API has no pre-computed scores — every query hits raw `fact_outcomes` (too slow) |
+| Phase 3 (API) | Phase 4 and Phase 5 logic has no integration point — untestable |
+| Phase 4 (trends) | Phase 5 policy engine has no trend data to factor into explore/exploit decisions |
+| Phase 5 (policy) | Phase 6 trust system has no policy context — trust scores exist but cannot route decisions |
+| Build Phase 2 first | `REFRESH CONCURRENTLY` fails — no tables exist for the view to query |
+
+---
+
+## Environment Setup Checklist
+
+Complete these before Phase 1 begins:
+
+```
+□ Supabase account created at supabase.com
+□ New Supabase project created (region: closest to Hyderabad = ap-south-1)
+□ Project URL saved: SUPABASE_URL=https://[project-ref].supabase.co
+□ Anon key saved:    SUPABASE_ANON_KEY=[from Supabase dashboard]
+□ Service role key saved (NEVER commit): SUPABASE_SERVICE_ROLE_KEY=[from dashboard]
+
+□ Supabase CLI installed: npm install -g supabase
+□ CLI authenticated: supabase login
+□ CLI linked to project: supabase link --project-ref [project-ref]
+
+□ pgvector extension enabled:
+    → Supabase Dashboard → Database → Extensions → Search "vector" → Enable
+□ uuid-ossp confirmed active (usually on by default in Supabase PostgreSQL):
+    → SELECT * FROM pg_extension WHERE extname = 'uuid-ossp';
+
+□ Git repository initialized: git init
+□ .gitignore created (must include: .env, node_modules/, supabase/.branches/)
+□ .env.example created (template with all required keys, no real values)
+□ Node.js v20+ confirmed: node --version
+
+□ API project bootstrapped: cd api && npm init -y && npm install hono @supabase/supabase-js
+□ TypeScript configured: npm install -D typescript tsx @types/node
+□ Test runner installed: npm install -D vitest
+□ Dashboard project bootstrapped: cd dashboard && npm create vite@latest . -- --template react-ts
+
+□ First migration dry-run: supabase db push --dry-run
+    → Expected: no errors on schema validation
+
+□ README.md created with: project overview, setup steps, migration run order, test commands
+```
+
+---
+
+## Critical Non-Negotiable Rules
+
+| # | Rule | Violation Flag |
+|---|---|---|
+| 1 | `fact_outcomes` is APPEND-ONLY | Any UPDATE on fact_outcomes → STOP. Flag immediately. |
+| 2 | UUID everywhere | Any `SERIAL` or `INT` primary key → STOP. Rewrite with `gen_random_uuid()`. |
+| 3 | TIMESTAMPTZ everywhere | Any `TIMESTAMP WITHOUT TIME ZONE` → STOP. Replace with `TIMESTAMPTZ`. |
+| 4 | CONCURRENTLY for all view refreshes | Any `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` → STOP. Requires unique index first. |
+| 5 | Indexes before data | Index created after table population = potential hours of downtime on prod. Never. |
+| 6 | RLS on all tenant-scoped tables | Any table with `customer_id` missing RLS policy → STOP. |
+| 7 | Hallucination prevention mandatory | Any path that writes to `fact_outcomes` before validating `action_name` against `dim_actions` → STOP. |
+| 8 | One phase = one git commit | Do not begin next phase until previous phase passes test gate and is committed. `git commit -m "feat: layer-[N] complete"` |
+
+---
+
+## Approval Protocol
+
+After reviewing this document:
+
+1. Leave comments on any section you want revised — I will update the plan
+2. When you are satisfied with a phase, type exactly: `APPROVED — BEGIN PHASE [N]`
+3. I will build **only** that phase — no adjacent code will be written
+4. After building, I will run the test gate and show you results
+5. Only when you type `APPROVED — BEGIN PHASE [N+1]` will the next phase begin
+
+> [!IMPORTANT]
+> No code will be written until you type the explicit approval command for a specific phase. The plan above is the complete contract for what will be built.

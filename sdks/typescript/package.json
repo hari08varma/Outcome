@@ -1,0 +1,98 @@
+{
+  "name": "@layer5/sdk",
+  "version": "0.1.0",
+  "description": "Outcome-ranked decision intelligence SDK — zero dependencies, cross-runtime",
+  "author": "Layer5",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./integrations/langchain": {
+      "import": {
+        "types": "./dist/integrations/langchain.d.ts",
+        "default": "./dist/integrations/langchain.js"
+      },
+      "require": {
+        "types": "./dist/integrations/langchain.d.cts",
+        "default": "./dist/integrations/langchain.cjs"
+      }
+    },
+    "./integrations/vercel-ai": {
+      "import": {
+        "types": "./dist/integrations/vercel-ai.d.ts",
+        "default": "./dist/integrations/vercel-ai.js"
+      },
+      "require": {
+        "types": "./dist/integrations/vercel-ai.d.cts",
+        "default": "./dist/integrations/vercel-ai.cjs"
+      }
+    },
+    "./integrations/openai": {
+      "import": {
+        "types": "./dist/integrations/openai.d.ts",
+        "default": "./dist/integrations/openai.js"
+      },
+      "require": {
+        "types": "./dist/integrations/openai.d.cts",
+        "default": "./dist/integrations/openai.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "vitest": "^1.0.0",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "msw": "^2.0.0",
+    "@langchain/core": "^0.2.0",
+    "ai": "^3.0.0",
+    "openai": "^4.0.0",
+    "zod": "^3.0.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.2.0",
+    "ai": ">=3.0.0",
+    "openai": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": { "optional": true },
+    "ai": { "optional": true },
+    "openai": { "optional": true }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "layer5",
+    "ai",
+    "agent",
+    "scoring",
+    "outcomes",
+    "decision-intelligence",
+    "langchain",
+    "vercel-ai",
+    "openai"
+  ]
+}

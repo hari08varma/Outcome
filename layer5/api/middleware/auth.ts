@@ -1,0 +1,138 @@
+/**
+ * Layer5 — middleware/auth.ts
+ * ══════════════════════════════════════════════════════════════
+ * API key authentication middleware for Hono.
+ *
+ * Validates X-API-Key → agent lookup in dim_agents.
+ * Sets: agent_id, customer_id, agent_name, customer_tier
+ *
+ * DEV BYPASS: Only active when BOTH conditions are met:
+ *   NODE_ENV === 'development' AND LAYER5_DEV_BYPASS === 'true'
+ * If LAYER5_DEV_BYPASS=true in production → hard crash (refuse to start).
+ * ══════════════════════════════════════════════════════════════
+ */
+
+import { Context, Next } from 'hono';
+import { supabase } from '../lib/supabase.js';
+
+// In-memory agent auth cache (15 min TTL)
+const AUTH_CACHE_TTL_MS = 15 * 60 * 1000;
+
+interface AgentAuth {
+    agent_id: string;
+    customer_id: string;
+    agent_name: string;
+    agent_type: string;
+    llm_model: string | null;
+    customer_tier: string;
+    expires_at: number;
+}
+
+const authCache = new Map<string, AgentAuth>();
+
+function hashKey(apiKey: string): string {
+    return apiKey;
+}
+
+export async function authMiddleware(c: Context, next: Next): Promise<Response | void> {
+    // ── DEV BYPASS — NEVER active in production ────────────────
+    if (process.env.NODE_ENV === 'development' &&
+        process.env.LAYER5_DEV_BYPASS === 'true') {
+        console.warn('⚠️  DEV BYPASS ACTIVE — NEVER deploy with this enabled');
+        c.set('agent_id', process.env.DEV_AGENT_ID ?? 'd0000000-0000-0000-0000-000000000001');
+        c.set('customer_id', process.env.DEV_CUSTOMER_ID ?? 'a0000000-0000-0000-0000-000000000001');
+        c.set('agent_name', 'dev-bypass-agent');
+        c.set('customer_tier', 'enterprise');
+        await next();
+        return;
+    }
+
+    const apiKey = c.req.header('X-API-Key') ?? c.req.header('Authorization')?.replace('Bearer ', '');
+
+    if (!apiKey) {
+        return c.json(
+            { error: 'Missing API key. Provide X-API-Key header.', code: 'MISSING_API_KEY' },
+            401
+        );
+    }
+
+    // Check cache first
+    const cached = authCache.get(hashKey(apiKey));
+    if (cached && cached.expires_at > Date.now()) {
+        c.set('agent_id', cached.agent_id);
+        c.set('customer_id', cached.customer_id);
+        c.set('agent_name', cached.agent_name);
+        c.set('customer_tier', cached.customer_tier);
+        await next();
+        return;
+    }
+
+    // Validate against database — join dim_customers for tier
+    const { data, error } = await supabase
+        .from('dim_agents')
+        .select(`
+            agent_id, customer_id, agent_name, agent_type, llm_model,
+            is_active, api_key_hash,
+            dim_customers!inner(tier)
+        `)
+        .eq('api_key_hash', hashKey(apiKey))
+        .eq('is_active', true)
+        .maybeSingle();
+
+    if (error) {
+        console.error('[auth] DB error:', error.message);
+        return c.json({ error: 'Authentication service unavailable', code: 'AUTH_ERROR' }, 503);
+    }
+
+    if (!data) {
+        return c.json(
+            { error: 'Invalid or inactive API key', code: 'INVALID_API_KEY' },
+            401
+        );
+    }
+
+    const customerTier = (data as any).dim_customers?.tier ?? 'pro';
+
+    // Cache the result
+    authCache.set(hashKey(apiKey), {
+        agent_id: data.agent_id,
+        customer_id: data.customer_id,
+        agent_name: data.agent_name,
+        agent_type: data.agent_type,
+        llm_model: data.llm_model,
+        customer_tier: customerTier,
+        expires_at: Date.now() + AUTH_CACHE_TTL_MS,
+    });
+
+    c.set('agent_id', data.agent_id);
+    c.set('customer_id', data.customer_id);
+    c.set('agent_name', data.agent_name);
+    c.set('customer_tier', customerTier);
+
+    await next();
+}
+
+/**
+ * Development auth: accepts the service role key as the API key.
+ * ONLY active when NODE_ENV !== 'production'.
+ * Injects the demo agent/customer for testing.
+ */
+export async function devAuthMiddleware(c: Context, next: Next): Promise<Response | void> {
+    if (process.env.NODE_ENV === 'production') {
+        return authMiddleware(c, next);
+    }
+
+    const apiKey = c.req.header('X-API-Key') ?? c.req.header('Authorization')?.replace('Bearer ', '');
+
+    if (apiKey === process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        // Inject demo agent — ONLY in development
+        c.set('agent_id', 'd0000000-0000-0000-0000-000000000001');
+        c.set('customer_id', 'a0000000-0000-0000-0000-000000000001');
+        c.set('agent_name', 'payment-bot-1 (dev)');
+        c.set('customer_tier', 'enterprise');
+        await next();
+        return;
+    }
+
+    return authMiddleware(c, next);
+}

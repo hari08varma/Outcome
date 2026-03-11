@@ -1,0 +1,25 @@
+{
+  "name": "layer5",
+  "version": "1.0.0",
+  "description": "> The world's first Outcome-Ranked Decision Intelligence Layer for Enterprise AI Agents.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.98.0",
+    "dotenv": "^17.3.1",
+    "hono": "^4.12.5",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
+}

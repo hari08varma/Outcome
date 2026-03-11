@@ -1,0 +1,494 @@
+{
+  "name": "Layer5",
+  "label": "Layer5",
+  "description": "AI agent outcome tracking and scoring. Layer5 learns from every action your AI agent takes and recommends the best next action.",
+  "version": "1",
+  "baseUrl": "https://api.layer5.dev",
+
+  "connections": [
+    {
+      "name": "layer5-api-key",
+      "label": "Layer5 API Key",
+      "type": "apikey",
+      "apiKeyPlacement": "header",
+      "apiKeyHeaderName": "Authorization",
+      "apiKeyPrefix": "Bearer",
+      "parameters": [
+        {
+          "name": "apiKey",
+          "label": "API Key",
+          "type": "text",
+          "required": true,
+          "help": "Your Layer5 API key. Starts with 'layer5_'. Find it at app.layer5.dev/settings/api-keys"
+        }
+      ],
+      "test": {
+        "url": "/v1/get-scores?issue_type=__connection_test__",
+        "method": "GET",
+        "response": {
+          "valid": "{{statusCode}} != 401"
+        }
+      }
+    }
+  ],
+
+  "modules": [
+    {
+      "name": "getActionScores",
+      "label": "Get Action Scores",
+      "description": "Ask Layer5 which action your AI agent should take next. Returns a ranked list of actions with confidence scores.",
+      "connection": "layer5-api-key",
+      "type": "action",
+      "crud": "read",
+
+      "parameters": [
+        {
+          "name": "agent_id",
+          "label": "Agent Name",
+          "type": "text",
+          "required": true,
+          "help": "A unique name for your AI agent. Use the same name every time so Layer5 can learn from this agent's history. Example: customer-support-bot"
+        },
+        {
+          "name": "issue_type",
+          "label": "Issue Type",
+          "type": "text",
+          "required": true,
+          "help": "What kind of situation is this? Layer5 uses this to find the best actions for this problem type. Example: payment_failed"
+        },
+        {
+          "name": "top_n",
+          "label": "Max Results",
+          "type": "integer",
+          "required": false,
+          "default": 10,
+          "help": "How many action recommendations to return. Default is 10, maximum is 50."
+        }
+      ],
+
+      "api": {
+        "url": "/v1/get-scores",
+        "method": "GET",
+        "headers": {
+          "X-Agent-Id": "{{parameters.agent_id}}"
+        },
+        "qs": {
+          "issue_type": "{{parameters.issue_type}}",
+          "top_n": "{{parameters.top_n}}"
+        }
+      },
+
+      "output": [
+        {
+          "name": "top_action",
+          "label": "Recommended Action",
+          "type": "text"
+        },
+        {
+          "name": "should_escalate",
+          "label": "Should Escalate?",
+          "type": "boolean"
+        },
+        {
+          "name": "cold_start",
+          "label": "Cold Start?",
+          "type": "boolean"
+        },
+        {
+          "name": "context_id",
+          "label": "Context ID",
+          "type": "text"
+        },
+        {
+          "name": "ranked_actions",
+          "label": "Ranked Actions",
+          "type": "array",
+          "spec": [
+            { "name": "action_name", "label": "Action Name", "type": "text" },
+            { "name": "score", "label": "Score (0-1)", "type": "number" },
+            { "name": "confidence", "label": "Confidence (0-1)", "type": "number" },
+            { "name": "trend", "label": "Trend", "type": "text" },
+            { "name": "rank", "label": "Rank", "type": "integer" },
+            { "name": "recommendation", "label": "Recommendation", "type": "text" }
+          ]
+        },
+        {
+          "name": "policy",
+          "label": "Policy",
+          "type": "collection",
+          "spec": [
+            { "name": "decision", "label": "Decision", "type": "text" },
+            { "name": "reason", "label": "Reason", "type": "text" }
+          ]
+        }
+      ],
+
+      "errors": {
+        "401": "Your Layer5 API key is invalid. Check your connection settings. Keys start with 'layer5_'.",
+        "429": "You've hit the rate limit. Wait a moment and try again.",
+        "400:MISSING_PARAM": "Issue Type is required. Fill in what kind of problem this is."
+      }
+    },
+
+    {
+      "name": "logActionOutcome",
+      "label": "Log Action Outcome",
+      "description": "Tell Layer5 what happened after your AI agent took an action. Layer5 learns from every outcome to give better recommendations next time.",
+      "connection": "layer5-api-key",
+      "type": "action",
+      "crud": "create",
+
+      "parameters": [
+        {
+          "name": "agent_id",
+          "label": "Agent Name",
+          "type": "text",
+          "required": true,
+          "help": "A unique name for your AI agent. Use the same name every time so Layer5 can learn from this agent's history. Example: customer-support-bot"
+        },
+        {
+          "name": "action_name",
+          "label": "Action Name",
+          "type": "text",
+          "required": true,
+          "help": "The name of the action your agent just took. This must be registered in your Layer5 dashboard. Example: send_refund"
+        },
+        {
+          "name": "success",
+          "label": "Did It Work?",
+          "type": "boolean",
+          "required": true,
+          "help": "Did the action work as expected? Toggle on for success, off for failure."
+        },
+        {
+          "name": "outcome_score",
+          "label": "Outcome Score (Optional)",
+          "type": "number",
+          "required": false,
+          "help": "How well did the action actually work? 0.0 = completely failed, 0.5 = partially worked, 1.0 = worked perfectly. Leave empty to use the success toggle only."
+        },
+        {
+          "name": "response_ms",
+          "label": "Response Time in ms (Optional)",
+          "type": "integer",
+          "required": false,
+          "help": "How long did the action take in milliseconds? Layer5 uses this to detect when actions are getting slower. Example: 1200"
+        },
+        {
+          "name": "session_id",
+          "label": "Session ID (Optional)",
+          "type": "text",
+          "required": false,
+          "help": "A unique ID for this conversation or workflow run. Groups related actions together."
+        },
+        {
+          "name": "context",
+          "label": "Context (JSON, Optional)",
+          "type": "text",
+          "required": false,
+          "help": "Extra information about the situation, as JSON. Example: {\"issue_type\": \"payment_failed\", \"customer_tier\": \"enterprise\"}. Layer5 uses this to give better recommendations."
+        }
+      ],
+
+      "api": {
+        "url": "/v1/log-outcome",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Agent-Id": "{{parameters.agent_id}}"
+        },
+        "body": {
+          "action_name": "{{parameters.action_name}}",
+          "success": "{{parameters.success}}",
+          "outcome_score": "{{parameters.outcome_score}}",
+          "response_ms": "{{parameters.response_ms}}",
+          "session_id": "{{parameters.session_id}}",
+          "context": "{{parameters.context}}"
+        }
+      },
+
+      "output": [
+        {
+          "name": "success",
+          "label": "Success",
+          "type": "boolean"
+        },
+        {
+          "name": "outcome_id",
+          "label": "Outcome ID",
+          "type": "text"
+        },
+        {
+          "name": "action_id",
+          "label": "Action ID",
+          "type": "text"
+        },
+        {
+          "name": "context_id",
+          "label": "Context ID",
+          "type": "text"
+        },
+        {
+          "name": "timestamp",
+          "label": "Recorded At",
+          "type": "text"
+        },
+        {
+          "name": "message",
+          "label": "Message",
+          "type": "text"
+        },
+        {
+          "name": "recommendation",
+          "label": "Recommendation",
+          "type": "collection",
+          "spec": [
+            { "name": "policy", "label": "Policy", "type": "text" },
+            { "name": "reason", "label": "Reason", "type": "text" },
+            { "name": "selected_action", "label": "Next Action", "type": "text" }
+          ]
+        }
+      ],
+
+      "errors": {
+        "401": "Your Layer5 API key is invalid. Check your connection settings.",
+        "429": "You've hit the rate limit. Wait a moment and try again.",
+        "400:UNKNOWN_ACTION": "This action is not registered in Layer5. Add it at app.layer5.dev/actions.",
+        "400:ACTION_DISABLED": "This action has been disabled. Re-enable it at app.layer5.dev/actions.",
+        "400:MISSING_FIELD": "Action Name is required. Fill in the name of the action your agent took."
+      }
+    },
+
+    {
+      "name": "submitOutcomeFeedback",
+      "label": "Submit Outcome Feedback",
+      "description": "Update a previous outcome with a final score. Use this when you learn later how well an action really worked.",
+      "connection": "layer5-api-key",
+      "type": "action",
+      "crud": "update",
+
+      "parameters": [
+        {
+          "name": "outcome_id",
+          "label": "Outcome ID",
+          "type": "text",
+          "required": true,
+          "help": "The outcome ID returned when you logged the original action. You get this from the 'Log Action Outcome' step."
+        },
+        {
+          "name": "final_score",
+          "label": "Final Score",
+          "type": "number",
+          "required": true,
+          "help": "How well did the action really work in the end? 0.0 = completely failed, 1.0 = worked perfectly."
+        },
+        {
+          "name": "business_outcome",
+          "label": "Business Outcome",
+          "type": "select",
+          "required": true,
+          "options": [
+            { "label": "Resolved — issue fully fixed", "value": "resolved" },
+            { "label": "Partial — partially fixed", "value": "partial" },
+            { "label": "Failed — did not help", "value": "failed" },
+            { "label": "Unknown — not sure yet", "value": "unknown" }
+          ],
+          "help": "What was the final business result? Choose the option that best describes what happened."
+        },
+        {
+          "name": "feedback_notes",
+          "label": "Notes (Optional)",
+          "type": "text",
+          "required": false,
+          "help": "Any extra notes about the outcome. Stored for your team's reference."
+        }
+      ],
+
+      "api": {
+        "url": "/v1/outcome-feedback",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "outcome_id": "{{parameters.outcome_id}}",
+          "final_score": "{{parameters.final_score}}",
+          "business_outcome": "{{parameters.business_outcome}}",
+          "feedback_notes": "{{parameters.feedback_notes}}"
+        }
+      },
+
+      "output": [
+        {
+          "name": "updated",
+          "label": "Updated",
+          "type": "boolean"
+        },
+        {
+          "name": "outcome_id",
+          "label": "Outcome ID",
+          "type": "text"
+        },
+        {
+          "name": "final_score",
+          "label": "Final Score",
+          "type": "number"
+        },
+        {
+          "name": "business_outcome",
+          "label": "Business Outcome",
+          "type": "text"
+        }
+      ],
+
+      "errors": {
+        "401": "Your Layer5 API key is invalid. Check your connection settings.",
+        "404": "Outcome not found. Check the Outcome ID — it comes from the 'Log Action Outcome' step.",
+        "429": "You've hit the rate limit. Wait a moment and try again."
+      }
+    },
+
+    {
+      "name": "simulateSequence",
+      "label": "Simulate Action Sequence",
+      "description": "Predict the outcome of a proposed action sequence before execution. Layer5 uses historical data and ML models to estimate success probability and suggest better paths.",
+      "connection": "layer5-api-key",
+      "type": "action",
+      "crud": "read",
+
+      "parameters": [
+        {
+          "name": "agent_id",
+          "label": "Agent ID",
+          "type": "text",
+          "required": true,
+          "help": "Your Layer5 agent identifier. Found in your Layer5 dashboard."
+        },
+        {
+          "name": "context",
+          "label": "Context (JSON)",
+          "type": "text",
+          "required": true,
+          "help": "The situation as JSON. Example: {\"issue_type\":\"payment_failed\"}"
+        },
+        {
+          "name": "proposed_sequence",
+          "label": "Proposed Actions (comma-separated)",
+          "type": "text",
+          "required": true,
+          "help": "Actions to evaluate, in order. Example: clear_cache,restart_service. Max 5."
+        },
+        {
+          "name": "episode_history",
+          "label": "Already Tried (Optional)",
+          "type": "text",
+          "required": false,
+          "help": "Actions already attempted, comma-separated."
+        },
+        {
+          "name": "simulate_alternatives",
+          "label": "Alternatives to Generate (Optional)",
+          "type": "integer",
+          "required": false,
+          "default": 2,
+          "help": "How many alternative sequences to suggest. 0–3."
+        }
+      ],
+
+      "api": {
+        "url": "/v1/simulate",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "agent_id": "{{parameters.agent_id}}",
+          "context": "{{parameters.context}}",
+          "proposed_sequence": "{{split(parameters.proposed_sequence, ',')}}",
+          "episode_history": "{{if(parameters.episode_history, split(parameters.episode_history, ','), undefined)}}",
+          "simulate_alternatives": "{{parameters.simulate_alternatives}}"
+        }
+      },
+
+      "output": [
+        {
+          "name": "predicted_outcome",
+          "label": "Predicted Outcome (0–1)",
+          "type": "number"
+        },
+        {
+          "name": "confidence",
+          "label": "Confidence (0–1)",
+          "type": "number"
+        },
+        {
+          "name": "confidence_low",
+          "label": "Confidence Low",
+          "type": "number"
+        },
+        {
+          "name": "confidence_high",
+          "label": "Confidence High",
+          "type": "number"
+        },
+        {
+          "name": "predicted_resolution",
+          "label": "Predicted Resolution",
+          "type": "number"
+        },
+        {
+          "name": "predicted_steps",
+          "label": "Predicted Steps",
+          "type": "integer"
+        },
+        {
+          "name": "actions",
+          "label": "Actions",
+          "type": "text"
+        },
+        {
+          "name": "simulation_tier",
+          "label": "Simulation Tier",
+          "type": "integer"
+        },
+        {
+          "name": "tier_explanation",
+          "label": "Tier Explanation",
+          "type": "text"
+        },
+        {
+          "name": "data_source",
+          "label": "Data Source",
+          "type": "text"
+        },
+        {
+          "name": "episode_count",
+          "label": "Episode Count",
+          "type": "integer"
+        },
+        {
+          "name": "simulation_warning",
+          "label": "Simulation Warning",
+          "type": "text"
+        },
+        {
+          "name": "best_alternative_actions",
+          "label": "Best Alternative Actions",
+          "type": "text"
+        },
+        {
+          "name": "best_alternative_outcome",
+          "label": "Best Alternative Outcome",
+          "type": "number"
+        }
+      ],
+
+      "errors": {
+        "401": "Your Layer5 API key is invalid. Check your connection settings.",
+        "404": "Agent not found. Check your Agent ID in the Layer5 dashboard.",
+        "400": "Invalid simulation request. Check that all required fields are filled in correctly.",
+        "429": "You've hit the rate limit. Wait a moment and try again."
+      }
+    }
+  ]
+}

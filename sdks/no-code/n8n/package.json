@@ -1,0 +1,43 @@
+{
+  "name": "n8n-nodes-layer5",
+  "version": "0.1.0",
+  "description": "n8n community node for Layer5 — AI agent outcome tracking and scoring",
+  "license": "MIT",
+  "homepage": "https://github.com/layer5-dev/n8n-nodes-layer5",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/layer5-dev/n8n-nodes-layer5.git"
+  },
+  "keywords": [
+    "n8n-community-node-package",
+    "layer5",
+    "ai-agent",
+    "scoring",
+    "outcome-tracking"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/Layer5.credentials.js"
+    ],
+    "nodes": [
+      "dist/Layer5.node.js"
+    ]
+  },
+  "main": "dist/Layer5.node.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit"
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "n8n-workflow": "^1.0.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "^1.0.0"
+  }
+}

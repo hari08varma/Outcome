@@ -1,0 +1,58 @@
+# Layer5 — Production Build Planning
+
+## Phase 0: Planning Artifact
+- [/] Generate full implementation plan artifact (implementation_plan.md)
+  - [/] Project structure with explanations
+  - [/] Phase-by-phase build plan (6 phases)
+  - [/] Dependency map
+  - [/] Environment setup checklist
+  - [/] Critical rules summary
+
+## Pending User Approval
+- [ ] User reviews and approves plan
+- [ ] User types "APPROVED — BEGIN PHASE 1"
+
+## Phase 1 — Layer 1: Structured Experience Memory (post-approval)
+- [ ] Supabase project setup + CLI auth
+- [ ] 001_create_dimensions.sql
+- [ ] 002_create_fact_outcomes.sql
+- [ ] 003_create_episodes.sql
+- [ ] 005_create_indexes.sql
+- [ ] 006_create_rls_policies.sql
+- [ ] Seed: cold_start_priors.sql
+- [ ] Test gate: schema validation queries
+
+## Phase 2 — Layer 2: Outcome-Aggregated Learning (post-approval)
+- [ ] 004_create_materialized_views.sql
+- [ ] mv_action_scores + mv_episode_patterns
+- [ ] Unique indexes for CONCURRENTLY refresh
+- [ ] scoring-engine Edge Function
+- [ ] Test gate: view refresh + score accuracy
+
+## Phase 3 — Layer 3: Advanced ML Scoring Engine (post-approval)
+- [ ] api/lib/scoring.ts (full formula implementation)
+- [ ] api/routes/log-outcome.ts
+- [ ] api/routes/get-scores.ts
+- [ ] api/middleware/validate-action.ts (hallucination prevention)
+- [ ] api/middleware/auth.ts + rate-limit.ts
+- [ ] Test gate: scoring formula unit tests
+
+## Phase 4 — Layer 4: Temporal Memory & Trend Detection (post-approval)
+- [ ] Trend detection in mv_action_scores
+- [ ] Contradiction detection logic
+- [ ] degradation_alert events table
+- [ ] temporal-analyzer Edge Function
+- [ ] Test gate: trend delta accuracy
+
+## Phase 5 — Layer 5: Adaptive Policy Engine (post-approval)
+- [ ] api/lib/policy-engine.ts (decision tree)
+- [ ] cold-start-bootstrap Edge Function
+- [ ] Cross-agent transfer logic
+- [ ] Test gate: policy routing accuracy
+
+## Phase 6 — Layer 6: Trust-Aware Decision System (post-approval)
+- [ ] 007_create_trust_scores.sql
+- [ ] trust-updater Edge Function
+- [ ] api/routes/audit.ts
+- [ ] Dashboard pages (score leaderboard, outcomes, audit, trust)
+- [ ] Test gate: trust suspension + reinstatement

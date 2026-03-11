@@ -1,0 +1,17 @@
+{
+  "name": "zapier-platform-layer5",
+  "version": "0.1.0",
+  "description": "Zapier integration for Layer5 — AI agent outcome tracking and scoring",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "zapier-platform-core": "15.*"
+  },
+  "devDependencies": {
+    "zapier-platform-cli": "15.*"
+  },
+  "scripts": {
+    "test": "zapier test",
+    "push": "zapier push"
+  }
+}

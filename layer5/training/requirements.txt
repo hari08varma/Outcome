@@ -1,0 +1,11 @@
+lightgbm==4.5.0
+scikit-learn==1.6.1
+pandas==2.2.3
+numpy==2.2.3
+supabase==2.4.0
+python-dotenv==1.0.1
+pydantic==2.10.6
+pytest==8.3.4
+
+# Pin every version. No floating requirements in production.
+# Versions selected for Python 3.13 compatibility.
