@@ -268,14 +268,18 @@ logOutcomeRouter.post('/', async (c) => {
         );
     }
 
-    // ── Sanitize Inputs (Defensive Posture) ──────────────────
-    if (body.raw_context !== undefined) {
+    // ── Sanitize all user-supplied string and object fields ──
+    // Applied after Zod validation (type safety confirmed) and
+    // before DB insertion. Protects against prototype pollution,
+    // deeply nested payloads, null-byte injection, and 
+    // oversized string fields. sanitizeContext never throws.
+    if (body.raw_context) {
         body.raw_context = sanitizeContext(body.raw_context);
     }
-    if (body.error_message !== undefined) {
+    if (body.error_message) {
         body.error_message = sanitizeString(body.error_message, 1000);
     }
-    if (body.error_code !== undefined) {
+    if (body.error_code) {
         body.error_code = sanitizeString(body.error_code, 100);
     }
 

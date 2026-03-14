@@ -13,6 +13,10 @@
     "keywords": [],
     "author": "",
     "license": "ISC",
+    "engines": {
+        "node": ">=20.0.0",
+        "npm": ">=9.0.0"
+    },
     "type": "module",
     "dependencies": {
         "@hono/node-server": "^1.19.11",

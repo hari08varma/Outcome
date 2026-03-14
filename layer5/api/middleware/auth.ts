@@ -167,7 +167,7 @@ export async function devAuthMiddleware(c: Context, next: Next): Promise<Respons
 
     const apiKey = c.req.header('X-API-Key') ?? c.req.header('Authorization')?.replace('Bearer ', '');
 
-    if (apiKey && apiKey === process.env.LAYER5_INTERNAL_SECRET) {
+    if (apiKey && apiKey === process.env.LAYER5_DEV_API_KEY) {
         // Inject demo agent — ONLY in development
         c.set('agent_id', 'd0000000-0000-0000-0000-000000000001');
         c.set('customer_id', 'a0000000-0000-0000-0000-000000000001');

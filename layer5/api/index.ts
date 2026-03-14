@@ -53,6 +53,17 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
+// In development, LAYER5_DEV_API_KEY is optional 
+// (falls back to real auth). Never required in production.
+if (process.env.NODE_ENV !== 'production' &&
+    !process.env.LAYER5_DEV_API_KEY) {
+    console.warn(
+        '⚠️  LAYER5_DEV_API_KEY not set. ' +
+        'Dev bypass will require real API keys. ' +
+        'Set it in .env for local testing convenience.'
+    );
+}
+
 import { authMiddleware, devAuthMiddleware } from './middleware/auth.js';
 import { adminAuthMiddleware } from './middleware/admin-auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
