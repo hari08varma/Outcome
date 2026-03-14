@@ -21,6 +21,7 @@ import {
 } from '../lib/policy-engine.js';
 import { writeCounterfactuals } from '../lib/ips-engine.js';
 import { upsertSequence, closeSequence } from '../lib/sequence-tracker.js';
+import { backpropagateReward } from '../lib/reward-backprop.js';
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 
@@ -439,6 +440,7 @@ logOutcomeRouter.post('/', async (c) => {
             verifier_source: body.verifier_signal?.source ?? null,
             verifier_value: body.verifier_signal?.value?.toString() ?? null,
             discrepancy_detected: verification.discrepancy_detected,
+            backprop_episode_id: body.episode_id ?? null,
         })
         .select('outcome_id, timestamp')
         .single();
@@ -558,6 +560,15 @@ logOutcomeRouter.post('/', async (c) => {
                 finalOutcome: finalScore,
             }).catch(err =>
                 console.error('[LogOutcome] Sequence close failed:', err)
+            );
+
+            // Backpropagate reward to all prior steps in this episode (fire-and-forget)
+            backpropagateReward({
+                episode_id:    body.episode_id,
+                final_outcome: finalScore,
+                gamma:         0.85,
+            }).catch(err =>
+                console.error('[BackpropReward] failed:', err)
             );
         }
 

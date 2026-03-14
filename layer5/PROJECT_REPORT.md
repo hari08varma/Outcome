@@ -13,8 +13,8 @@ Layer5 is a 10-layer, append-only, outcome-ranked decision intelligence middlewa
 
 | Metric | Value |
 |--------|-------|
-| Total Tests | **224 passing** (16 backend test suites) + **86 Python SDK** + **13 TS SDK simulate** |
-| SQL Migrations | **26 total** (18 deployed + 8 ready) |
+| Total Tests | **230 passing** (16 backend test suites) + **86 Python SDK** + **13 TS SDK simulate** |
+| SQL Migrations | **32 total** (18 deployed + 14 ready) |
 | Edge Functions | **5 / 5 deployed** to Supabase Edge |
 | API Endpoints | **15 routes** fully implemented (incl. POST /v1/simulate) |
 | Dashboard Pages | **8 pages** fully built |
@@ -1143,7 +1143,7 @@ AND tablename IN (
 
 ## Test Suite Summary
 
-**224 tests across 16 backend test files — all passing ✅**
+**230 tests across 16 backend test files — all passing ✅**
 **+ 86 Python SDK tests passing ✅**
 **+ 13 TypeScript SDK simulate tests passing ✅**
 **+ TypeScript SDK core test suite passing ✅**
@@ -1168,7 +1168,7 @@ AND tablename IN (
 
 ```
  Test Files  16 passed (16)     [backend]
-      Tests  224 passed (224)
+      Tests  230 passed (230)
    Duration  ~5s
 
  Python SDK:  86 passed          [sdks/python/]
@@ -1320,21 +1320,24 @@ AND tablename IN (
 
 ---
 
-## Production-Readiness Fixes Applied
+## Phase 3 Hardening & Audit Fixes Applied
 
-The following 9 production-readiness issues have been resolved:
+The following 12 critical architecture and security auditing capabilities have been completely resolved and merged into production:
 
-| Fix | Issue | Resolution |
-|-----|-------|------------|
-| ✅ FIX 1 | CORS locked to localhost | `ALLOWED_ORIGINS` env variable drives CORS — supports any production domain |
-| ✅ FIX 4 | pg_cron not configured | Migration 011 creates 4 cron jobs (scoring 5-min, trust 5-min, trend nightly, pruning nightly) |
-| ✅ FIX 5 | No backup before pruning | `scripts/verify-backup-status.js` + PITR instructions in DEPLOY.md |
-| ✅ FIX 6 | Embedding on fallback only | `context-embed.ts` updated to use Supabase AI inference endpoint (gte-small, free) |
-| ✅ FIX 7 | pgvector index missing | Migration 012 creates IVFFlat index on `dim_contexts.context_vector` |
-| ✅ FIX 8 | No health monitoring | `/health` enhanced with DB + materialized view checks; UptimeRobot guide created |
-| ✅ FIX 10 | Immutable outcome verifier lacking | `log-outcome.ts` updated accepting rigid `verifier_signal` replacing purely subjective agent logs |
-| ✅ FIX 11 | Binary suspension loop | Granular 4-Tier Graduated Trust recovery `sandbox` logic provisioned preserving outcome data loops |
-| ✅ FIX 12 | Harsh validative rejection | `validation_mode` DB toggle replaces immediate 400 exceptions with `advisory` array warnings |
+| Fix | Component | Resolution Detailed |
+|-----|-----------|---------------------|
+| ✅ FIX 1 | Context Isolation | Abstracted `context-embed.ts` extracting embedding, cosine similarity, and findClosest operations |
+| ✅ FIX 2 | Policy Orchestration | Implemented `policy-engine.ts` solidifying the Explore/Exploit/Escalate bandit tree logic |
+| ✅ FIX 3 | Admin Security | Secured unauthenticated administrative endpoints via `admin-auth.ts` checking `customer_admin` roles |
+| ✅ FIX 4 | Bypass Protections | Hard-crashed development auth bypasses resolving production fatal flaw exposures in `auth.ts` |
+| ✅ FIX 5 | Rate Limiting | Scaled limits to `1000/2000/5000` per tier accommodating heavy parallel inference patterns |
+| ✅ FIX 6 | Exception Bounds | Remapped 422 codes to strictly enforced 400s upon unidentified hallucinated agent actions |
+| ✅ FIX 7 | Middleware Chaining | Expatriated isolated `validate-action.ts` routines directly into the Hono pipeline middleware folder |
+| ✅ FIX 8 | Cold Start Priority | Downgraded fallback escalate biases shifting `escalate_human` beneath empirical validations |
+| ✅ FIX 9 | Data Siloing Tests | Injected `audit/:id` test assertions aggressively barring external tenant boundary data access |
+| ✅ FIX 10 | Immutable Validation | Updated `log-outcome.ts` preventing subjective success reports by accepting rigid `verifier_signal` payload criteria |
+| ✅ FIX 11 | Graduated Reinstatement | Converted raw agent shutdown binaries into a 4-Tier Graduated System allocating `sandbox` recovery isolation environments |
+| ✅ FIX 12 | Soft Validation Toggles | Migrated structural API exceptions toward database-driven `validation_mode` toggles capturing advisory JSON array omissions gracefully |
 
 ## What Needs To Be Done (Remaining Work)
 
@@ -1469,7 +1472,7 @@ npx supabase functions deploy pruning-scheduler --project-ref <project-ref>
 
 Layer5 is **100% feature-complete** against the full implementation plan — all 6 core phases, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
 
-The project passes all **148 automated tests** across **13 test suites** covering layers 3–6, auth, and gap detection. The **Python SDK** passes **71 tests** across 11 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. All **26 SQL migrations** are created (16 deployed to live Supabase, 2 ready, 8 new foundation migrations). **5 Edge Functions** are deployed. The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
+The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. All **32 SQL migrations** are created (18 deployed to live Supabase, 14 ready). **5 Edge Functions** are deployed. The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
 
 **Key capabilities built:**
 - **6-layer decision intelligence** — structured memory → aggregation → scoring → temporal trends → adaptive policy → trust management

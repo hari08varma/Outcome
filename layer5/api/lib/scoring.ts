@@ -33,6 +33,9 @@ const W_TREND = 0.20;  // directional momentum
 const W_SALIENCE = 0.10;  // action importance
 const W_RECENCY = 0.10;  // freshness bonus
 
+export const PRIOR_ALPHA = 1.0;  // prior successes (neutral)
+export const PRIOR_BETA = 1.0;  // prior failures (neutral)
+
 // ── Thresholds ───────────────────────────────────────────────
 const MIN_CONFIDENCE = 0.30;  // below this → cold-start fallback
 const ESCALATION_SCORE = 0.20;  // below this → escalate_human
@@ -119,6 +122,7 @@ export interface ScoredAction {
     trend: TrendLabel;
     total_attempts: number;
     is_cold_start: boolean;
+    is_low_sample: boolean;
     recommendation: 'recommend' | 'neutral' | 'avoid' | 'escalate';
 }
 
@@ -140,7 +144,13 @@ export interface ScoringResult {
  */
 export function computeCompositeScore(row: ActionScore, contextMatch: number | null = null): number {
     // Factor 1: Weighted success rate (primary)
-    const f_success = row.weighted_success_rate ?? row.raw_success_rate ?? 0;
+    // Applied Bayesian smoothing (Laplace / Beta distribution prior):
+    const rawSuccessRate = row.weighted_success_rate ?? row.raw_success_rate ?? 0;
+    const n = row.total_attempts ?? 0;
+
+    // Bayesian smoothed rate:
+    // (successes + alpha) / (total + alpha + beta)
+    const f_success = (rawSuccessRate * n + PRIOR_ALPHA) / (n + PRIOR_ALPHA + PRIOR_BETA);
 
     // Factor 2: Confidence (Wilson-style: n/(n+10))
     const f_conf = row.confidence ?? 0;
@@ -228,6 +238,7 @@ async function fetchInstitutionalFallback(
         trend: 'stable',
         total_attempts: row.sample_count ?? 0,
         is_cold_start: true,
+        is_low_sample: (row.sample_count ?? 0) < 3,
         recommendation: toRecommendation(row.avg_success_rate ?? 0, false),
     }));
 }
@@ -280,11 +291,12 @@ export async function getScores(
                 action_name: row.action_name,
                 action_category: row.action_category,
                 composite_score: Math.round(score * 10000) / 10000,
-                confidence: row.confidence,
+                confidence: row.total_attempts < 3 ? Math.min(row.confidence, 0.25) : row.confidence,
                 trend_delta: row.trend_delta,
                 trend: trendLabel(row.trend_delta),
                 total_attempts: row.total_attempts,
                 is_cold_start: false,
+                is_low_sample: row.total_attempts < 3,
                 recommendation: toRecommendation(score, false),
             };
         }).sort((a, b) => b.composite_score - a.composite_score);

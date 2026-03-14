@@ -18,20 +18,20 @@ const MIN_PROPENSITY = 0.001;  // floor to prevent division by zero
 
 export interface RankedActionEntry {
     action_name: string;
-    action_id:   string;
-    score:       number;
-    rank:        number;
-    propensity:  number;
+    action_id: string;
+    score: number;
+    rank: number;
+    propensity: number;
 }
 
 export interface IPSInput {
-    decisionId:       string;
-    realOutcomeId:    string;
+    decisionId: string;
+    realOutcomeId: string;
     realOutcomeScore: number;   // 0.0–1.0
     chosenActionName: string;
-    rankedActions:    RankedActionEntry[];
-    contextHash:      string;
-    episodePosition:  number;
+    rankedActions: RankedActionEntry[];
+    contextHash: string;
+    episodePosition: number;
 }
 
 /**
@@ -41,7 +41,7 @@ export interface IPSInput {
  */
 export function computePropensities(
     rankedActions: Array<{ action_name: string; score: number }>,
-    temperature:   number = TEMPERATURE
+    temperature: number = TEMPERATURE
 ): Map<string, number> {
     const scores = rankedActions.map(a => a.score / temperature);
     const maxScore = Math.max(...scores);  // numerical stability
@@ -60,6 +60,8 @@ export function computePropensities(
     return propensityMap;
 }
 
+export const PROPENSITY_RATIO_CAP = 5.0;
+
 /**
  * Compute IPS estimate for one unchosen action.
  *
@@ -70,11 +72,15 @@ export function computePropensities(
  *   weight  = min(weight, IPS_WEIGHT_CAP)
  */
 export function computeIPSEstimate(
-    realOutcome:        number,
-    propensityChosen:   number,
+    realOutcome: number,
+    propensityChosen: number,
     propensityUnchosen: number
 ): { estimate: number; weight: number } {
-    const rawEstimate = realOutcome * (propensityUnchosen / propensityChosen);
+    const propensityRatio = Math.min(
+        propensityUnchosen / propensityChosen,
+        PROPENSITY_RATIO_CAP
+    );
+    const rawEstimate = realOutcome * propensityRatio;
 
     // Conservative: unchosen action cannot be estimated as
     // better than what actually happened
@@ -88,7 +94,7 @@ export function computeIPSEstimate(
 
     return {
         estimate: Math.round(clippedEstimate * 10000) / 10000,
-        weight:   Math.round(weight * 10000) / 10000,
+        weight: Math.round(weight * 10000) / 10000,
     };
 }
 
@@ -128,17 +134,17 @@ export async function writeCounterfactuals(
             );
 
             return {
-                decision_id:          input.decisionId,
-                real_outcome_id:      input.realOutcomeId,
-                unchosen_action_id:   unchosenAction.action_id,
+                decision_id: input.decisionId,
+                real_outcome_id: input.realOutcomeId,
+                unchosen_action_id: unchosenAction.action_id,
                 unchosen_action_name: unchosenAction.action_name,
-                propensity_unchosen:  unchosenAction.propensity,
-                propensity_chosen:    propensityChosen,
-                real_outcome_score:   input.realOutcomeScore,
-                counterfactual_est:   estimate,
-                ips_weight:           weight,
-                context_hash:         input.contextHash,
-                episode_position:     input.episodePosition,
+                propensity_unchosen: unchosenAction.propensity,
+                propensity_chosen: propensityChosen,
+                real_outcome_score: input.realOutcomeScore,
+                counterfactual_est: estimate,
+                ips_weight: weight,
+                context_hash: input.contextHash,
+                episode_position: input.episodePosition,
             };
         })
         .filter(c => c.ips_weight > 0.001);  // skip negligible weights
