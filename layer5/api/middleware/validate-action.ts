@@ -30,6 +30,26 @@ interface ActionCacheEntry {
 // Cache by action_name
 const actionCache = new Map<string, ActionCacheEntry>();
 
+// Evict expired entries every 5 minutes
+const CLEANUP_INTERVAL_MS = 5 * 60_000;
+setInterval(() => {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [key, entry] of actionCache.entries()) {
+        if (entry.expires_at < now) {
+            actionCache.delete(key);
+            evicted++;
+        }
+    }
+    if (evicted > 0) {
+        console.info(`[cache-cleanup] Evicted ${evicted} expired entries from actionCache`);
+    }
+}, CLEANUP_INTERVAL_MS).unref();
+
+setInterval(() => {
+    console.info(`[cache-size] actionCache: ${actionCache.size} entries`);
+}, 15 * 60_000).unref();
+
 export interface ActionValidationResult {
     valid: boolean;
     action_id?: string;
@@ -72,9 +92,9 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
 
     // Store validated action in context for downstream handlers
     c.set('validated_action', {
-        action_id: result.action_id,
-        action_name: result.action_name,
-        action_category: result.action_category,
+        action_id: result.action_id!,
+        action_name: result.action_name!,
+        action_category: result.action_category!,
     });
     // Store parsed body so handlers don't need to re-parse
     c.set('parsed_body', body);

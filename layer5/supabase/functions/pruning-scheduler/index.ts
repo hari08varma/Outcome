@@ -21,6 +21,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const LAYER5_INTERNAL_SECRET = Deno.env.get('LAYER5_INTERNAL_SECRET');
 
 // Retention windows
 const HOT_RETENTION_DAYS = 90;
@@ -34,7 +35,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const isCronInvocation = req.headers.get('x-supabase-event') === 'cron';
 
-    if (!isCronInvocation && authHeader !== `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`) {
+    if (!isCronInvocation && (!LAYER5_INTERNAL_SECRET || authHeader !== `Bearer ${LAYER5_INTERNAL_SECRET}`)) {
         return new Response(
             JSON.stringify({ error: 'Unauthorized' }),
             { status: 401, headers: { 'Content-Type': 'application/json' } }

@@ -46,6 +46,26 @@ interface CacheEntry {
 
 const scoreCache = new Map<string, CacheEntry>();
 
+// Evict expired entries every 5 minutes
+const CLEANUP_INTERVAL_MS = 5 * 60_000;
+setInterval(() => {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [key, entry] of scoreCache.entries()) {
+        if (entry.expires_at < now) {
+            scoreCache.delete(key);
+            evicted++;
+        }
+    }
+    if (evicted > 0) {
+        console.info(`[cache-cleanup] Evicted ${evicted} expired entries from scoreCache`);
+    }
+}, CLEANUP_INTERVAL_MS).unref();
+
+setInterval(() => {
+    console.info(`[cache-size] scoreCache: ${scoreCache.size} entries`);
+}, 15 * 60_000).unref();
+
 function cacheKey(customerId: string, contextId: string): string {
     return `${customerId}:${contextId}`;
 }

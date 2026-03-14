@@ -26,6 +26,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const LAYER5_INTERNAL_SECRET = Deno.env.get('LAYER5_INTERNAL_SECRET');
 
 // How many synthetic priors to inject per action-context pair
 const SYNTHETIC_PRIOR_COUNT = 5;
@@ -45,7 +46,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // ── Auth check ─────────────────────────────────────────────
     const authHeader = req.headers.get('Authorization') ?? '';
-    if (authHeader !== `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`) {
+    if (!LAYER5_INTERNAL_SECRET || authHeader !== `Bearer ${LAYER5_INTERNAL_SECRET}`) {
         return new Response(
             JSON.stringify({ error: 'Unauthorized' }),
             { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -273,9 +274,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
             old_status: null,
             new_status: 'trusted',
             performed_by: 'cold-start-bootstrap',
-            reason: `Cold start: inserted ${totalPriorsInserted} synthetic priors via ${
-                crossAgentTransferred ? 'cross-agent transfer' : 'institutional knowledge'
-            }`,
+            reason: `Cold start: inserted ${totalPriorsInserted} synthetic priors via ${crossAgentTransferred ? 'cross-agent transfer' : 'institutional knowledge'
+                }`,
         });
     }
 

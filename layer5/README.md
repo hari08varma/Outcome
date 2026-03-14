@@ -35,7 +35,7 @@ cd api && npm install && cd ..
 
 # 3. Create environment file
 cp api/.env.example api/.env
-# Fill in: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, DB_URL
+# Fill in: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, LAYER5_INTERNAL_SECRET, DB_URL
 
 # 4. Run migrations (in order, 001 → 010)
 node scripts/run-migrations.js

@@ -35,6 +35,10 @@ const REQUIRED_ENV_VARS = [
     'SUPABASE_ANON_KEY',
 ];
 
+if (process.env.NODE_ENV === 'production') {
+    REQUIRED_ENV_VARS.push('LAYER5_INTERNAL_SECRET');
+}
+
 const missing = REQUIRED_ENV_VARS.filter(
     v => !process.env[v]
 );
@@ -94,6 +98,44 @@ app.use('*', cors({
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
 }));
 app.use('*', prettyJSON());
+
+// ── Global Timeout Middleware ─────────────────────────────────
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS ?? '10000', 10);
+
+app.use('*', async (c, next) => {
+    // Explicit health endpoint exemption — health checks must always respond 
+    // to load balancers, even if the database triggers 'degraded' states 
+    // due to slow connections.
+    if (c.req.path === '/health' || c.req.path === '/') {
+        return next();
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const start = Date.now();
+
+    try {
+        await Promise.race([
+            next(),
+            new Promise((_, reject) => {
+                controller.signal.addEventListener('abort',
+                    () => reject(new Error('TIMEOUT')));
+            })
+        ]);
+    } catch (e: any) {
+        if (e?.message === 'TIMEOUT') {
+            const elapsed = Date.now() - start;
+            console.warn(`[layer5] Request timeout on ${c.req.path} after ${elapsed}ms`);
+            return c.json(
+                { error: 'Request timeout', code: 'GATEWAY_TIMEOUT', timeout_ms: REQUEST_TIMEOUT_MS },
+                504
+            );
+        }
+        throw e;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+});
 
 // ── Health check (no auth, no rate limiting) ──────────────────
 app.get('/', (c) => c.json({
@@ -163,7 +205,8 @@ app.get('/health', async (c) => {
 // ── Internal: scoring cache refresh ───────────────────────────
 app.post('/internal/refresh-score-cache', async (c) => {
     const auth = c.req.header('Authorization');
-    if (auth !== `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`) {
+    const internalSecret = process.env.LAYER5_INTERNAL_SECRET;
+    if (!internalSecret || auth !== `Bearer ${internalSecret}`) {
         return c.json({ error: 'Unauthorized' }, 401);
     }
     const { invalidateCache } = await import('./lib/scoring.js');

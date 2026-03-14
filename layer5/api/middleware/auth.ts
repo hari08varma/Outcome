@@ -13,6 +13,7 @@
  */
 
 import { Context, Next } from 'hono';
+import crypto from 'node:crypto';
 import { supabase } from '../lib/supabase.js';
 
 // TTL reduced to 60s for security:
@@ -35,8 +36,37 @@ interface AgentAuth {
 
 const authCache = new Map<string, AgentAuth>();
 
+// Evict expired entries every 5 minutes
+const CLEANUP_INTERVAL_MS = 5 * 60_000;
+setInterval(() => {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [key, entry] of authCache.entries()) {
+        if (entry.expires_at < now) {
+            authCache.delete(key);
+            evicted++;
+        }
+    }
+    if (evicted > 0) {
+        console.info(`[cache-cleanup] Evicted ${evicted} expired entries from authCache`);
+    }
+}, CLEANUP_INTERVAL_MS).unref();
+
+setInterval(() => {
+    console.info(`[cache-size] authCache: ${authCache.size} entries`);
+}, 15 * 60_000).unref();
+
+/**
+ * Hashes an incoming API key to compare against database records.
+ * 
+ * Algorithm: SHA-256
+ * Rationale: MD5 is cryptographically broken. bcrypt is strictly for passwords
+ *   because its intentional slowness causes DoS vulnerabilities on API limits.
+ *   HMAC-SHA256 (or fast SHA-256) is industry standard for API token validation.
+ * Date of fix: 2026-03-14
+ */
 function hashKey(apiKey: string): string {
-    return apiKey;
+    return crypto.createHash('sha256').update(apiKey).digest('hex');
 }
 
 export function invalidateAuthCacheByAgentId(agentId: string) {
@@ -137,7 +167,7 @@ export async function devAuthMiddleware(c: Context, next: Next): Promise<Respons
 
     const apiKey = c.req.header('X-API-Key') ?? c.req.header('Authorization')?.replace('Bearer ', '');
 
-    if (apiKey === process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    if (apiKey && apiKey === process.env.LAYER5_INTERNAL_SECRET) {
         // Inject demo agent — ONLY in development
         c.set('agent_id', 'd0000000-0000-0000-0000-000000000001');
         c.set('customer_id', 'a0000000-0000-0000-0000-000000000001');

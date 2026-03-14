@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+buildCommand = "cd layer5/api && npm install && npm run build"
+
+[deploy]
+startCommand = "cd layer5/api && npm run start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[environments.production]
+NODE_ENV = "production"

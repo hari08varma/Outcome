@@ -17,11 +17,7 @@ SELECT cron.schedule(
   SELECT net.http_post(
     url := current_setting('app.supabase_url') ||
            '/functions/v1/notification-dispatcher',
-    headers := jsonb_build_object(
-      'Authorization',
-      'Bearer ' || current_setting('app.service_role_key'),
-      'Content-Type', 'application/json'
-    ),
+    headers := '{"Content-Type": "application/json", "Authorization": "Bearer ' || current_setting('app.settings.layer5_internal_secret', true) || '"}'::jsonb,
     body := '{}'::jsonb
   );
   $$

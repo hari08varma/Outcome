@@ -17,6 +17,8 @@
  */
 
 import { Context, Next } from 'hono';
+import crypto from 'node:crypto';
+import { supabase } from '../lib/supabase.js';
 
 // ── Tiered limits ─────────────────────────────────────────────
 interface TierLimits {
@@ -33,98 +35,105 @@ const TIER_LIMITS: Record<string, TierLimits> = {
 
 const DEFAULT_LIMITS: TierLimits = { maxPerMin: 200, burstLimit: 20 };
 
-// ── Bucket store ──────────────────────────────────────────────
-interface Bucket {
-    count: number;
-    resetAt: number;
-    burstCount: number;
-    burstAt: number;
-}
-
-const WINDOW_MS = 60_000;  // 1-minute window
-const BURST_WINDOW = 1_000;   // 1-second burst window
-
-const buckets = new Map<string, Bucket>();
-
-// Cleanup stale buckets every 5 minutes
-setInterval(() => {
-    const now = Date.now();
-    for (const [key, bucket] of buckets.entries()) {
-        if (bucket.resetAt < now) buckets.delete(key);
-    }
-}, 5 * 60_000);
-
-// ── Middleware ────────────────────────────────────────────────
+/**
+ * Fail-open design:
+ * If the persistent rate limit store (Supabase) is down or times out (>50ms),
+ * we log a warning and explicitly ALLOW the request. 
+ * Enterprise APIs should never block critical traffic because quota telemetry is slow.
+ */
 export function rateLimitMiddleware() {
     return async (c: Context, next: Next): Promise<Response | void> => {
         // Identify by API key
-        const apiKey = c.req.header('X-API-Key')
+        const rawKey = c.req.header('X-API-Key')
             ?? c.req.header('Authorization')?.replace('Bearer ', '')
             ?? c.req.header('x-forwarded-for')
             ?? 'anonymous';
 
+        const apiKeyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+
         // Get tier from auth middleware (set on context)
-        const tier = (c.get('customer_tier') as string) ?? 'standard';
+        const tier = (c.get('customer_tier') as string) ?? 'free';
         const limits = TIER_LIMITS[tier] ?? DEFAULT_LIMITS;
-        const maxPerWindow = limits.maxPerMin;
-        const burstLimit = limits.burstLimit;
+        const maxTokens = limits.maxPerMin;
 
         const now = Date.now();
-        let bucket = buckets.get(apiKey);
+        let tokens = maxTokens;
 
-        // ── Initialise or reset window ─────────────────────
-        if (!bucket || bucket.resetAt <= now) {
-            bucket = {
-                count: 0,
-                resetAt: now + WINDOW_MS,
-                burstCount: 0,
-                burstAt: now + BURST_WINDOW,
-            };
-        }
+        try {
+            // Read rate limit state with strict 50ms latency budget
+            const fetchPromise = supabase
+                .from('rate_limit_buckets')
+                .select('tokens, last_refill_at')
+                .eq('api_key_hash', apiKeyHash)
+                .maybeSingle();
 
-        // ── Burst protection ───────────────────────────────
-        if (bucket.burstAt <= now) {
-            bucket.burstCount = 0;
-            bucket.burstAt = now + BURST_WINDOW;
-        }
-        bucket.burstCount++;
-
-        if (bucket.burstCount > burstLimit) {
-            buckets.set(apiKey, bucket);
-            c.header('Retry-After', '1');
-            c.header('X-RateLimit-Limit', String(maxPerWindow));
-            c.header('X-RateLimit-Remaining', '0');
-            c.header('X-RateLimit-Reset', String(Math.ceil(bucket.burstAt / 1000)));
-            return c.json(
-                { error: `Burst limit exceeded. Max ${burstLimit} requests/second.`, code: 'BURST_LIMIT' },
-                429
+            const timeoutPromise = new Promise<{ error: { message: string } }>((_, reject) =>
+                setTimeout(() => reject(new Error('Rate limit read timeout (>50ms)')), 50)
             );
+
+            // Fetch racing the latency budget
+            const { data, error } = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+
+            if (error) {
+                console.warn(`[rate-limit] Supabase error: ${error.message} — FAILING OPEN`);
+            } else if (data) {
+                // Compute token refill based on last_refill_at timestamp delta
+                const lastRefillMs = new Date(data.last_refill_at).getTime();
+                const deltaMs = Math.max(0, now - lastRefillMs);
+                const refillRate = maxTokens / 60_000; // tokens per ms
+
+                tokens = Math.min(maxTokens, data.tokens + (deltaMs * refillRate));
+            }
+        } catch (err: any) {
+            console.warn(`[rate-limit] DB Exception: ${err.message} — FAILING OPEN`);
+            // Tokens remains at maxTokens: request is allowed through
         }
 
-        // ── Per-minute window ──────────────────────────────
-        bucket.count++;
-        buckets.set(apiKey, bucket);
+        // ── Enforce Per-minute Window ──────────────────────────────
+        if (tokens < 1) {
+            const refillRate = maxTokens / 60_000;
+            const msToNextToken = (1 - tokens) / refillRate;
+            const retryAfterSec = Math.ceil(msToNextToken / 1000) || 1;
 
-        const remaining = Math.max(0, maxPerWindow - bucket.count);
-        const resetSec = Math.ceil(bucket.resetAt / 1000);
+            c.header('Retry-After', String(retryAfterSec));
+            c.header('X-RateLimit-Limit', String(maxTokens));
+            c.header('X-RateLimit-Remaining', '0');
+            c.header('X-RateLimit-Reset', String(Math.ceil((now + msToNextToken) / 1000)));
 
-        c.header('X-RateLimit-Limit', String(maxPerWindow));
-        c.header('X-RateLimit-Remaining', String(remaining));
-        c.header('X-RateLimit-Reset', String(resetSec));
-
-        if (bucket.count > maxPerWindow) {
-            const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
-            c.header('Retry-After', String(retryAfter));
             return c.json(
                 {
-                    error: `Rate limit exceeded. Max ${maxPerWindow} req/min for ${tier} tier.`,
+                    error: `Rate limit exceeded. Max ${maxTokens} req/min for ${tier} tier.`,
                     code: 'RATE_LIMIT_EXCEEDED',
                     tier: tier,
-                    retry_after: retryAfter,
+                    retry_after: retryAfterSec,
                 },
                 429
             );
         }
+
+        // Consume 1 token
+        const newTokens = tokens - 1;
+
+        // Async fire-and-forget Atomic UPSERT (Latency path offloaded)
+        Promise.resolve(
+            supabase.from('rate_limit_buckets').upsert({
+                api_key_hash: apiKeyHash,
+                tokens: newTokens,
+                last_refill_at: new Date(now).toISOString(),
+                tier: tier,
+                updated_at: new Date(now).toISOString()
+            }, { onConflict: 'api_key_hash' })
+        ).then(({ error }) => {
+            if (error) console.error('[rate-limit] Upsert failed:', error.message);
+        }).catch(err => console.error('[rate-limit] Upsert exception:', err));
+
+        // Estimate when bucket hits max capacity for reset header
+        const refillRateMs = maxTokens / 60_000;
+        const msToFull = (maxTokens - newTokens) / refillRateMs;
+
+        c.header('X-RateLimit-Limit', String(maxTokens));
+        c.header('X-RateLimit-Remaining', String(Math.floor(newTokens)));
+        c.header('X-RateLimit-Reset', String(Math.ceil((now + msToFull) / 1000)));
 
         await next();
     };

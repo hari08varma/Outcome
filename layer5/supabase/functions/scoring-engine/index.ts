@@ -15,6 +15,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const LAYER5_INTERNAL_SECRET = Deno.env.get('LAYER5_INTERNAL_SECRET');
 
 // Internal endpoint to notify API server of cache refresh
 // (The API server maintains an in-memory score cache with 5-min TTL)
@@ -32,7 +33,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const isCronInvocation = req.headers.get('x-supabase-event') === 'cron';
 
-    if (!isCronInvocation && authHeader !== `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`) {
+    if (!isCronInvocation && (!LAYER5_INTERNAL_SECRET || authHeader !== `Bearer ${LAYER5_INTERNAL_SECRET}`)) {
         return new Response(
             JSON.stringify({ error: 'Unauthorized' }),
             { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -113,7 +114,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
             const cacheRes = await fetch(`${API_CACHE_REFRESH_URL}/internal/refresh-score-cache`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                    'Authorization': `Bearer ${LAYER5_INTERNAL_SECRET}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ triggered_by: 'scoring-engine' }),

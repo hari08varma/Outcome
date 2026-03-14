@@ -21,6 +21,7 @@ import {
 } from '../lib/policy-engine.js';
 import { writeCounterfactuals } from '../lib/ips-engine.js';
 import { upsertSequence, closeSequence } from '../lib/sequence-tracker.js';
+import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -133,15 +134,24 @@ async function detectContextDrift(
     contextType: string,
     agentId: string
 ): Promise<void> {
-    // Count outcomes for this exact context_type
-    const { count } = await sb
-        .from('fact_outcomes')
-        .select('outcome_id', { count: 'exact', head: true })
-        .eq('customer_id', customerId)
-        .contains('raw_context', { issue_type: contextType });
+    // Step 1: Check if this issue_type exists in dim_contexts for this customer
+    const { data: existingContext } = await sb
+        .from('dim_contexts')
+        .select('context_id')
+        .eq('issue_type', contextType)
+        .limit(1)
+        .maybeSingle();
 
-    const isNewContext = (count ?? 0) === 0;
-    if (!isNewContext) return;
+    // Step 2: If context exists, check if any outcomes exist for this customer+context
+    if (existingContext) {
+        const { count } = await sb
+            .from('fact_outcomes')
+            .select('outcome_id', { count: 'exact', head: true })
+            .eq('customer_id', customerId)
+            .eq('context_id', existingContext.context_id);
+
+        if ((count ?? 0) > 0) return; // Not new — has history
+    }
 
     // 24h dedup — don't spam on every request
     const { data: recentAlert } = await sb
@@ -158,7 +168,7 @@ async function detectContextDrift(
         customer_id: customerId,
         alert_type: 'context_drift',
         severity: 'warning',
-        message: `New context type detected: "${contextType}". No outcome history exists. Cold-start protocol will activate. Monitor this agent closely.`,
+        message: `New context type "${contextType}" encountered by agent ${agentId}. No prior outcomes for this customer. Cold-start protocol activated.`,
     });
 }
 
@@ -256,6 +266,17 @@ logOutcomeRouter.post('/', async (c) => {
             { error: 'Invalid request body', details: err.errors ?? err.message, code: 'VALIDATION_ERROR' },
             400
         );
+    }
+
+    // ── Sanitize Inputs (Defensive Posture) ──────────────────
+    if (body.raw_context !== undefined) {
+        body.raw_context = sanitizeContext(body.raw_context);
+    }
+    if (body.error_message !== undefined) {
+        body.error_message = sanitizeString(body.error_message, 1000);
+    }
+    if (body.error_code !== undefined) {
+        body.error_code = sanitizeString(body.error_code, 100);
     }
 
     // ── Idempotency Check (FIX 2) ───────────────────────────
