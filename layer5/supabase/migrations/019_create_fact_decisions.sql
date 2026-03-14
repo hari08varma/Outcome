@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 019: Decision Tracking (fact_decisions)
+-- LAYERINFINITE — Migration 019: Decision Tracking (fact_decisions)
 -- ============================================================
 -- Records the complete ranked list and propensities at every
 -- get-scores call. This is what makes counterfactual learning

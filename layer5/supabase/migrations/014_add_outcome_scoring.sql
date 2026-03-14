@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 014: Outcome Scoring (3-Tier Outcome Model)
+-- LAYERINFINITE — Migration 014: Outcome Scoring (3-Tier Outcome Model)
 -- ============================================================
 -- Adds nuanced outcome scoring to fact_outcomes:
 --   outcome_score      → 0.0–1.0 (NULL = binary fallback)

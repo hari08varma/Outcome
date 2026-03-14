@@ -1,5 +1,5 @@
 """
-Layer5 — training/validate_model.py
+Layerinfinite — training/validate_model.py
 ══════════════════════════════════════════════════════════════
 Validate the trained model before deploying.
 A model that fails validation is NEVER deployed.

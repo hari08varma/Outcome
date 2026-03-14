@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/admin/reinstate-agent.ts
+ * Layerinfinite — routes/admin/reinstate-agent.ts
  * POST /v1/admin/reinstate-agent
  * ══════════════════════════════════════════════════════════════
  * Reinstates a suspended agent to probation status.

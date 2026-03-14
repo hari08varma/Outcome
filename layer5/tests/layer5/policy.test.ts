@@ -1,10 +1,10 @@
 /**
- * Layer5 — Phase 5 Unit Tests: Adaptive Policy Engine
+ * Layerinfinite — Phase 5 Unit Tests: Adaptive Policy Engine
  * ══════════════════════════════════════════════════════════════
  * Tests the policy-engine decision tree with Phase 5 real-trust
  * wiring scenarios. Uses injectable randomFn for determinism.
  *
- * Run: npx vitest run tests/layer5/policy.test.ts
+ * Run: npx vitest run tests/layerinfinite/policy.test.ts
  * ══════════════════════════════════════════════════════════════
  */
 

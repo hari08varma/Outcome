@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: 3-Tier Simulation Engine
+ * Layerinfinite — Unit Tests: 3-Tier Simulation Engine
  * Tests world model, tier 1/2/3, tier selector, and simulate endpoint.
  * Run: npx vitest run tests/layer8/simulation.test.ts
  */

@@ -1,16 +1,16 @@
-// Layer5 SDK — client.ts
-// Production-ready Layer5 client using native fetch with retry logic.
+// Layerinfinite SDK — client.ts
+// Production-ready Layerinfinite client using native fetch with retry logic.
 
 import {
-    Layer5AuthError,
-    Layer5Error,
-    Layer5NotFoundError,
-    Layer5RateLimitError,
-    Layer5ServerError,
+    LayerinfiniteAuthError,
+    LayerinfiniteError,
+    LayerinfiniteNotFoundError,
+    LayerinfiniteRateLimitError,
+    LayerinfiniteServerError,
 } from './errors.js';
 import type {
+    LayerinfiniteConfig,
     GetScoresResponse,
-    Layer5Config,
     LogOutcomeRequest,
     LogOutcomeResponse,
 } from './types.js';
@@ -23,14 +23,14 @@ function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export class Layer5Client {
+export class LayerinfiniteClient {
     private readonly apiKey: string;
     private readonly baseUrl: string;
     private readonly timeout: number;
     private readonly maxRetries: number;
 
-    constructor(config: Layer5Config) {
-        if (!config.apiKey) throw new Layer5Error('apiKey is required');
+    constructor(config: LayerinfiniteConfig) {
+        if (!config.apiKey) throw new LayerinfiniteError('apiKey is required');
         this.apiKey = config.apiKey;
         this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
         this.timeout = config.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -44,23 +44,23 @@ export class Layer5Client {
 
         const code = response.status;
 
-        if (code === 401) throw new Layer5AuthError(
+        if (code === 401) throw new LayerinfiniteAuthError(
             'Invalid or missing API key. Verify your X-API-Key.',
             body,
         );
-        if (code === 404) throw new Layer5NotFoundError('Resource not found.', body);
+        if (code === 404) throw new LayerinfiniteNotFoundError('Resource not found.', body);
         if (code === 429) {
             const retryAfter = parseInt(response.headers.get('Retry-After') ?? '60', 10);
-            throw new Layer5RateLimitError(
+            throw new LayerinfiniteRateLimitError(
                 `Rate limit exceeded. Retry after ${retryAfter}s.`,
                 retryAfter,
             );
         }
         if (code >= 500) {
             const msg = (body as Record<string, unknown>)?.error ?? 'unknown server error';
-            throw new Layer5ServerError(`Layer5 server error [${code}]: ${msg}`, code, body);
+            throw new LayerinfiniteServerError(`Layerinfinite server error [${code}]: ${msg}`, code, body);
         }
-        throw new Layer5Error(`Request error [${code}]`, code, body);
+        throw new LayerinfiniteError(`Request error [${code}]`, code, body);
     }
 
     // ── Internal: fetch with timeout + retry ───────────────────
@@ -97,11 +97,11 @@ export class Layer5Client {
                 return response;
 
             } catch (err: unknown) {
-                if (err instanceof Layer5Error) throw err; // never retry typed errors
+                if (err instanceof LayerinfiniteError) throw err;
                 if (err instanceof Error && err.name === 'AbortError') {
-                    lastErr = new Layer5Error(`Request timed out after ${this.timeout}ms`);
+                    lastErr = new LayerinfiniteError(`Request timed out after ${this.timeout}ms`);
                 } else {
-                    lastErr = new Layer5Error(`Network error: ${String(err)}`);
+                    lastErr = new LayerinfiniteError(`Network error: ${String(err)}`);
                 }
                 if (attempt >= this.maxRetries) throw lastErr;
             } finally {
@@ -109,7 +109,7 @@ export class Layer5Client {
             }
         }
 
-        throw lastErr ?? new Layer5Error('Max retries exceeded');
+        throw lastErr ?? new LayerinfiniteError('Max retries exceeded');
     }
 
     // ── Public API ──────────────────────────────────────────────
@@ -117,9 +117,9 @@ export class Layer5Client {
     /**
      * Fetch ranked action scores for the given agent and context.
      *
-     * @throws {Layer5AuthError} on 401
-     * @throws {Layer5RateLimitError} on 429
-     * @throws {Layer5ServerError} on 5xx
+     * @throws {LayerinfiniteAuthError} on 401
+     * @throws {LayerinfiniteRateLimitError} on 429
+     * @throws {LayerinfiniteServerError} on 5xx
      */
     async getScores(params: {
         agentId: string;
@@ -151,9 +151,9 @@ export class Layer5Client {
     /**
      * Log the outcome of an action taken by the agent.
      *
-     * @throws {Layer5AuthError} on 401
-     * @throws {Layer5RateLimitError} on 429
-     * @throws {Layer5ServerError} on 5xx
+     * @throws {LayerinfiniteAuthError} on 401
+     * @throws {LayerinfiniteRateLimitError} on 429
+     * @throws {LayerinfiniteServerError} on 5xx
      */
     async logOutcome(request: LogOutcomeRequest): Promise<LogOutcomeResponse> {
         const url = `${this.baseUrl}/v1/log-outcome`;
@@ -186,7 +186,7 @@ export class Layer5Client {
                 signal: controller.signal,
             });
             if (!response.ok) {
-                throw new Layer5Error(`Health check failed [${response.status}]`);
+                throw new LayerinfiniteError(`Health check failed [${response.status}]`);
             }
             return response.json() as Promise<{ status: string; version: string }>;
         } finally {

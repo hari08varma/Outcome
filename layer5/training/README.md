@@ -1,4 +1,4 @@
-# Layer5 — World Model Training Pipeline
+# Layerinfinite — World Model Training Pipeline
 
 Production training pipeline for the LightGBM world model
 used by the 3-tier simulation engine.
@@ -101,13 +101,13 @@ python train_world_model.py
 ### Build
 
 ```bash
-docker build -t layer5-training .
+docker build -t layerinfinite-training .
 ```
 
 ### Run
 
 ```bash
-docker run --env-file .env layer5-training
+docker run --env-file .env layerinfinite-training
 ```
 
 Exit codes:
@@ -119,7 +119,7 @@ Exit codes:
 ### Cron Job Setup
 
 1. Create a new Railway service from this directory
-2. Set the build command: `docker build -t layer5-training .`
+2. Set the build command: `docker build -t layerinfinite-training .`
 3. Set environment variables in Railway dashboard:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`

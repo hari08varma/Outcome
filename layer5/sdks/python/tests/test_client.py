@@ -1,5 +1,5 @@
 """
-Tests for the Layer5 Python SDK client.
+Tests for the Layerinfinite Python SDK client.
 
 Uses respx to mock httpx calls — no real network requests made.
 Run with: pytest tests/test_client.py -v
@@ -11,16 +11,16 @@ import httpx
 import pytest
 import respx
 
-from layer5 import (
-    Layer5Client,
-    Layer5AuthError,
-    Layer5RateLimitError,
+from layerinfinite import (
+    LayerinfiniteClient,
+    LayerinfiniteAuthError,
+    LayerinfiniteRateLimitError,
     LogOutcomeRequest,
 )
-from layer5.models import GetScoresResponse, LogOutcomeResponse, ScoredAction
+from layerinfinite.models import GetScoresResponse, LogOutcomeResponse, ScoredAction
 
-BASE_URL = "https://test.layer5.ai"
-API_KEY = "layer5_testkey123456789"
+BASE_URL = "https://test.layerinfinite.ai"
+API_KEY = "layerinfinite_testkey123456789"
 
 MOCK_SCORED_ACTION = {
     "action_id": "act-uuid-1",
@@ -60,7 +60,7 @@ def test_get_scores_returns_typed_response():
         return_value=httpx.Response(200, json=MOCK_GET_SCORES_RESPONSE)
     )
 
-    client = Layer5Client(api_key=API_KEY, base_url=BASE_URL)
+    client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL)
     response = client.get_scores(agent_id="my-agent", issue_type="billing_dispute")
 
     assert isinstance(response, GetScoresResponse)
@@ -70,21 +70,21 @@ def test_get_scores_returns_typed_response():
     assert response.top_action.composite_score == pytest.approx(0.87)
 
 
-# ── Test 2: 401 raises Layer5AuthError ────────────────────────
+# ── Test 2: 401 raises LayerinfiniteAuthError ─────────────────
 @respx.mock
 def test_get_scores_401_raises_auth_error():
     respx.get(f"{BASE_URL}/v1/get-scores").mock(
         return_value=httpx.Response(401, json={"error": "Unauthorized"})
     )
 
-    client = Layer5Client(api_key="bad_key", base_url=BASE_URL)
-    with pytest.raises(Layer5AuthError) as exc_info:
+    client = LayerinfiniteClient(api_key="bad_key", base_url=BASE_URL)
+    with pytest.raises(LayerinfiniteAuthError) as exc_info:
         client.get_scores(agent_id="agent-1", issue_type="test")
 
     assert exc_info.value.status_code == 401
 
 
-# ── Test 3: 429 raises Layer5RateLimitError with retry_after ─
+# ── Test 3: 429 raises LayerinfiniteRateLimitError with retry_after ──
 @respx.mock
 def test_get_scores_429_raises_rate_limit_error():
     respx.get(f"{BASE_URL}/v1/get-scores").mock(
@@ -95,9 +95,8 @@ def test_get_scores_429_raises_rate_limit_error():
         )
     )
 
-    # max_retries=0 so we get the error immediately without waiting
-    client = Layer5Client(api_key=API_KEY, base_url=BASE_URL, max_retries=0)
-    with pytest.raises(Layer5RateLimitError) as exc_info:
+    client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL, max_retries=0)
+    with pytest.raises(LayerinfiniteRateLimitError) as exc_info:
         client.get_scores(agent_id="agent-1", issue_type="test")
 
     assert exc_info.value.status_code == 429
@@ -111,7 +110,7 @@ def test_log_outcome_returns_typed_response():
         return_value=httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
     )
 
-    client = Layer5Client(api_key=API_KEY, base_url=BASE_URL)
+    client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL)
     request = LogOutcomeRequest(
         agent_id="my-agent",
         action_id="act-uuid-1",
@@ -133,7 +132,7 @@ def test_log_outcome_returns_typed_response():
 def test_context_manager_closes_session():
     client_ref = None
 
-    with Layer5Client(api_key=API_KEY, base_url=BASE_URL) as client:
+    with LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL) as client:
         client_ref = client
         assert not client._session.is_closed
 

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 021: Counterfactuals (fact_outcome_counterfactuals)
+-- LAYERINFINITE — Migration 021: Counterfactuals (fact_outcome_counterfactuals)
 -- ============================================================
 -- Stores IPS (Inverse Propensity Scoring) estimates for every
 -- action that was NOT chosen at a decision point.

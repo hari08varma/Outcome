@@ -1,4 +1,4 @@
-# Layer5 — Pre-Launch Production Checklist
+# Layerinfinite — Pre-Launch Production Checklist
 
 ## Before Deploying
 
@@ -35,7 +35,7 @@ Set on Railway: Settings → Variables
 - [ ] `ALLOWED_ORIGINS` (API) — Verify this includes the production dashboard URL before deploying
 - [ ] `VITE_SUPABASE_URL` (Dashboard)
 - [ ] `VITE_SUPABASE_ANON_KEY` (Dashboard)
-- [ ] `VITE_LAYER5_API_URL` (Dashboard)
+- [ ] `VITE_LAYERINFINITE_API_URL` (Dashboard)
 
 **OPTIONAL / RECOMMENDED**
 - [ ] `SENTRY_DSN` (API)
@@ -66,8 +66,8 @@ Before launch:
 □ Run: make test (both SDKs must pass)
 □ Run: make test-publish (dry run verification)
 □ Tag release: git tag sdk-v0.1.0 && git push --tags
-□ Verify: pip install layer5-sdk succeeds
-□ Verify: npm install @layer5/sdk succeeds
+□ Verify: pip install layerinfinite-sdk succeeds
+□ Verify: npm install @layerinfinite/sdk succeeds
 □ Update onboarding page install commands if package names changed
 
 ## Before First Customer

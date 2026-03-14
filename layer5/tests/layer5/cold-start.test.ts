@@ -1,10 +1,10 @@
 /**
- * Layer5 — Phase 5 Unit Tests: Cold Start Protocol
+ * Layerinfinite — Phase 5 Unit Tests: Cold Start Protocol
  * ══════════════════════════════════════════════════════════════
  * Tests the cold start detection, prior injection semantics,
  * and exit conditions. Pure unit tests — no DB calls.
  *
- * Run: npx vitest run tests/layer5/cold-start.test.ts
+ * Run: npx vitest run tests/layerinfinite/cold-start.test.ts
  * ══════════════════════════════════════════════════════════════
  */
 

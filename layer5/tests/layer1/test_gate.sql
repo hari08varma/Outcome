@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Phase 1 Test Gate
+-- LAYERINFINITE — Phase 1 Test Gate
 -- ============================================================
 -- Run this script against your Supabase database AFTER
 -- applying all Phase 1 migrations (001, 002, 003, 005, 006)

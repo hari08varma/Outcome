@@ -1,5 +1,5 @@
 /**
- * Layer5 — Phase 6 Unit Tests: Pruning & Archival
+ * Layerinfinite — Phase 6 Unit Tests: Pruning & Archival
  * ══════════════════════════════════════════════════════════════
  * Tests the data lifecycle rules: archive conditions,
  * cold-delete conditions, and salience stat computation.

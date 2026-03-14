@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/log-outcome.ts
+ * Layerinfinite — routes/log-outcome.ts
  * POST /v1/log-outcome
  * ══════════════════════════════════════════════════════════════
  * Appends one outcome to fact_outcomes.
@@ -216,7 +216,7 @@ const LogOutcomeBody = z.object({
     // idempotency_key: Optional. Include a unique string
     // (UUID recommended) to make this call idempotent.
     // If you retry with the same key within 24 hours,
-    // Layer5 returns the original result without creating
+    // Layerinfinite returns the original result without creating
     // a duplicate outcome record.
     // Example: idempotency_key: crypto.randomUUID()
     idempotency_key: z.string().max(255).optional(),

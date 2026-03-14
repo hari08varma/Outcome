@@ -1,13 +1,13 @@
 """
-Layer5 SDK — exceptions.py
+Layerinfinite SDK — exceptions.py
 Typed exception hierarchy for all API failure modes.
 """
 
 from __future__ import annotations
 
 
-class Layer5Error(Exception):
-    """Base exception for all Layer5 SDK errors."""
+class LayerinfiniteError(Exception):
+    """Base exception for all Layerinfinite SDK errors."""
 
     def __init__(
         self,
@@ -28,11 +28,11 @@ class Layer5Error(Exception):
         )
 
 
-class Layer5AuthError(Layer5Error):
+class LayerinfiniteAuthError(LayerinfiniteError):
     """Raised on HTTP 401 — invalid or missing API key."""
 
 
-class Layer5RateLimitError(Layer5Error):
+class LayerinfiniteRateLimitError(LayerinfiniteError):
     """Raised on HTTP 429 — rate limit exceeded."""
 
     def __init__(
@@ -46,9 +46,9 @@ class Layer5RateLimitError(Layer5Error):
         self.retry_after = retry_after
 
 
-class Layer5NotFoundError(Layer5Error):
+class LayerinfiniteNotFoundError(LayerinfiniteError):
     """Raised on HTTP 404 — resource not found."""
 
 
-class Layer5ServerError(Layer5Error):
+class LayerinfiniteServerError(LayerinfiniteError):
     """Raised on HTTP 5xx — server-side error."""

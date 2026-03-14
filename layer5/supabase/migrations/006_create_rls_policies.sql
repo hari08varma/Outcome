@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 006: Row Level Security Policies
+-- LAYERINFINITE — Migration 006: Row Level Security Policies
 -- ============================================================
 -- Every customer-scoped table gets RLS enforced.
 -- The API uses the service role key server-side and enforces

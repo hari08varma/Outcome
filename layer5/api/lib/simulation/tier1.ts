@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/simulation/tier1.ts
+ * Layerinfinite — lib/simulation/tier1.ts
  * ══════════════════════════════════════════════════════════════
  * Tier 1 simulation using Wilson CI on historical sequences.
  * Always available. Day 1, zero training data.

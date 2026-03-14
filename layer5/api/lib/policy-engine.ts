@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/policy-engine.ts
+ * Layerinfinite — lib/policy-engine.ts
  * ══════════════════════════════════════════════════════════════
  * Explore / Exploit / Escalate decision tree.
  *

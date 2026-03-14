@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════════════════
--- LAYER5 — Migration 027: Notification Channels + Delivery Log
+-- LAYERINFINITE — Migration 027: Notification Channels + Delivery Log
 -- ══════════════════════════════════════════════════════════════
 -- Stores customer notification channel configuration.
 -- One customer can have multiple channels

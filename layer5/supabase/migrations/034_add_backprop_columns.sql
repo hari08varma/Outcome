@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 034: Reward Backpropagation
+-- LAYERINFINITE — Migration 034: Reward Backpropagation
 -- ============================================================
 -- Adds columns to track Temporal Difference (TD) updates.
 -- ============================================================

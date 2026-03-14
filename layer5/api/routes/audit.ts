@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/audit.ts
+ * Layerinfinite — routes/audit.ts
  * GET /v1/audit
  * ══════════════════════════════════════════════════════════════
  * Immutable audit trail for compliance teams.

@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/scoring.ts
+ * Layerinfinite — lib/scoring.ts
  * ══════════════════════════════════════════════════════════════
  * 5-Factor Composite Scoring Engine
  * ══════════════════════════════════════════════════════════════

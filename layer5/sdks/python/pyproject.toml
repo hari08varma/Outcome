@@ -1,12 +1,12 @@
 [project]
-name = "layer5-sdk"
+name = "layerinfinite-sdk"
 version = "0.1.0"
-description = "Decision intelligence layer for AI agents"
+description = "Decision intelligence layer for AI agents — Layerinfinite"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
-authors = [{ name = "Layer5", email = "sdk@layer5.ai" }]
-keywords = ["ai", "agents", "decision-intelligence", "llm", "mlops"]
+authors = [{ name = "Layerinfinite", email = "sdk@layerinfinite.ai" }]
+keywords = ["ai", "agents", "decision-intelligence", "llm", "layerinfinite", "mlops"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -31,9 +31,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://layer5.ai"
+Homepage = "https://layerinfinite.ai"
 Repository = "https://github.com/hari08varma/Outcome"
-Documentation = "https://docs.layer5.ai"
+Documentation = "https://docs.layerinfinite.ai"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -41,4 +41,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["layer5*"]
+include = ["layerinfinite*"]

@@ -1,5 +1,5 @@
 /**
- * Layer5 — Verify all migrations are deployed to live Supabase
+ * Layerinfinite — Verify all migrations are deployed to live Supabase
  */
 require('dotenv').config({ path: require('path').join(__dirname, '..', 'api', '.env') });
 const { Client } = require('pg');

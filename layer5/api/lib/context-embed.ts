@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/context-embed.ts
+ * Layerinfinite — lib/context-embed.ts
  * ══════════════════════════════════════════════════════════════
  * Context embedding: generate vectors + cosine similarity.
  *

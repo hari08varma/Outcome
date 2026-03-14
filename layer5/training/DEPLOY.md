@@ -6,15 +6,15 @@
 
 ```bash
 PROJECT_ID=[your-gcp-project]
-docker build -t gcr.io/$PROJECT_ID/layer5-training .
-docker push gcr.io/$PROJECT_ID/layer5-training
+docker build -t gcr.io/$PROJECT_ID/layerinfinite-training .
+docker push gcr.io/$PROJECT_ID/layerinfinite-training
 ```
 
 ### Create Cloud Run Job:
 
 ```bash
-gcloud run jobs create layer5-world-model-trainer \
-  --image gcr.io/$PROJECT_ID/layer5-training \
+gcloud run jobs create layerinfinite-world-model-trainer \
+  --image gcr.io/$PROJECT_ID/layerinfinite-training \
   --region asia-south1 \
   --memory 2Gi \
   --cpu 2 \
@@ -27,9 +27,9 @@ gcloud run jobs create layer5-world-model-trainer \
 
 ```bash
 gcloud scheduler jobs create http \
-  layer5-training-weekly \
+  layerinfinite-training-weekly \
   --schedule "0 2 * * 0" \
-  --uri https://[region]-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/[project]/jobs/layer5-world-model-trainer:run \
+  --uri https://[region]-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/[project]/jobs/layerinfinite-world-model-trainer:run \
   --http-method POST \
   --location asia-south1
 ```
@@ -38,7 +38,7 @@ gcloud scheduler jobs create http \
 ### Manual run:
 
 ```bash
-gcloud run jobs execute layer5-world-model-trainer
+gcloud run jobs execute layerinfinite-world-model-trainer
 ```
 
 ## Option 2: Railway cron (simpler, less control)

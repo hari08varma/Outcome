@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/get-scores.ts
+ * Layerinfinite — routes/get-scores.ts
  * GET /v1/get-scores
  * ══════════════════════════════════════════════════════════════
  * Returns ranked action scores for a given context.

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 004: Materialized Views
+-- LAYERINFINITE — Migration 004: Materialized Views
 -- ============================================================
 -- Creates pre-computed aggregation views that power sub-5ms
 -- decision queries at scale.

@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/get-patterns.ts
+ * Layerinfinite — routes/get-patterns.ts
  * GET /v1/get-patterns
  * ══════════════════════════════════════════════════════════════
  * Returns the most successful action sequences (episodes)

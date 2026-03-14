@@ -1,8 +1,8 @@
-# Layer5 — Outcome-Ranked Decision Intelligence Layer
+# Layerinfinite — Outcome-Ranked Decision Intelligence Layer
 
 > The world's first Outcome-Ranked Decision Intelligence Layer for Enterprise AI Agents.
 
-Layer5 is a 6-layer middleware that sits between AI agents and enterprise systems, providing outcome-based scoring, adaptive policy decisions, trust management, and a full audit trail.
+Layerinfinite is a 6-layer middleware that sits between AI agents and enterprise systems, providing outcome-based scoring, adaptive policy decisions, trust management, and a full audit trail.
 
 ## Architecture
 
@@ -28,14 +28,14 @@ Layer5 is a 6-layer middleware that sits between AI agents and enterprise system
 ```bash
 # 1. Clone & enter
 git clone <repo-url>
-cd layer5
+cd layerinfinite
 
 # 2. Install API dependencies
 cd api && npm install && cd ..
 
 # 3. Create environment file
 cp api/.env.example api/.env
-# Fill in: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, LAYER5_INTERNAL_SECRET, DB_URL
+# Fill in: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, LAYERINFINITE_INTERNAL_SECRET, DB_URL
 
 # 4. Run migrations (in order, 001 → 010)
 node scripts/run-migrations.js
@@ -61,7 +61,7 @@ npm run dev
 ## Project Structure
 
 ```
-layer5/
+layerinfinite/
 ├── api/                     ← REST API (Hono + TypeScript)
 │   ├── lib/                 ← Core logic (scoring, policy-engine, context-embed)
 │   ├── middleware/           ← Auth, rate-limit, hallucination guard
@@ -78,7 +78,7 @@ layer5/
 ├── tests/                   ← Tests organized by layer
 │   ├── layer3/              ← Scoring, policy, hallucination, audit, admin (55 tests)
 │   ├── layer4/              ← Trend detection (24 tests)
-│   ├── layer5/              ← Adaptive policy, cold-start (10 tests)
+│   ├── layerinfinite/              ← Adaptive policy, cold-start (10 tests)
 │   └── layer6/              ← Trust system, pruning (16 tests)
 └── scripts/                 ← Deploy & migration helpers
 ```
@@ -138,8 +138,8 @@ npx vitest run tests/layer6 # Run only layer 6 tests
 | layer3/audit-isolation | 5 | Customer-scoped audit isolation |
 | layer3/admin-auth | 5 | Admin role enforcement |
 | layer4/trend | 24 | Trend labeling, SMA, degradation detection |
-| layer5/policy | 6 | Trust-aware policy with real DB config |
-| layer5/cold-start | 4 | 4-stage cold-start protocol |
+| layerinfinite/policy | 6 | Trust-aware policy with real DB config |
+| layerinfinite/cold-start | 4 | 4-stage cold-start protocol |
 | layer6/trust | 7 | Trust decay, recovery, reinstatement |
 | layer6/pruning | 9 | Archive rules, cold-delete, salience stats |
 

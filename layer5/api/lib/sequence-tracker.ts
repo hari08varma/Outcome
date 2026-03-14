@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/sequence-tracker.ts
+ * Layerinfinite — lib/sequence-tracker.ts
  * ══════════════════════════════════════════════════════════════
  * Manages action_sequences records.
  * Called from log-outcome.ts to maintain sequence state.

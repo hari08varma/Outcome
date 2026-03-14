@@ -36,7 +36,7 @@ Share it with enterprise customers as proof of uptime.
 
 Settings → Status Pages → Create Status Page
 Add your API monitor to the status page.
-Set custom domain if desired: `status.layer5.dev`
+Set custom domain if desired: `status.layerinfinite.dev`
 
 ## Alerting thresholds recommended
 

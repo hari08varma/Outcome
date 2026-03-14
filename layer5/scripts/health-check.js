@@ -2,7 +2,7 @@
 // Run locally to verify the health endpoint works
 // before setting up external monitoring.
 
-const API_URL = process.env.LAYER5_API_URL
+const API_URL = process.env.LAYERINFINITE_API_URL
     || 'http://localhost:3000';
 
 async function checkHealth() {
@@ -35,7 +35,7 @@ async function checkHealth() {
             console.error('❌ Cannot reach API:', err);
         }
         console.error('Check that the API is running and');
-        console.error('LAYER5_API_URL is set correctly.');
+        console.error('LAYERINFINITE_API_URL is set correctly.');
         process.exit(1);
     }
 }

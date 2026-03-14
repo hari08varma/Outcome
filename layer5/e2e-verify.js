@@ -1,7 +1,7 @@
 const http = require('http');
 
 async function checkE2E() {
-    console.log('--- LAYER5 E2E VERIFICATION ---');
+    console.log('--- LAYERINFINITE E2E VERIFICATION ---');
     let allPassed = true;
 
     // 1. GET /v1/get-scores -> update_app is top recommendation

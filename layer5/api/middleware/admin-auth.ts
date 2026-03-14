@@ -1,5 +1,5 @@
 /**
- * Layer5 — middleware/admin-auth.ts
+ * Layerinfinite — middleware/admin-auth.ts
  * ══════════════════════════════════════════════════════════════
  * Admin authentication middleware.
  * Verifies the caller has customer_admin role.

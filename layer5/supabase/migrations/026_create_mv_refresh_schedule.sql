@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 026: Add mv_sequence_scores to Refresh Schedule
+-- LAYERINFINITE — Migration 026: Add mv_sequence_scores to Refresh Schedule
 -- ============================================================
 -- Adds mv_sequence_scores to the existing cron refresh schedule.
 -- Uses REFRESH MATERIALIZED VIEW CONCURRENTLY (requires the

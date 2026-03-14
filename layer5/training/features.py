@@ -1,5 +1,5 @@
 """
-Layer5 — training/features.py
+Layerinfinite — training/features.py
 ══════════════════════════════════════════════════════════════
 Extract features from raw Supabase records.
 Feature order MUST match world-model.ts exactly.

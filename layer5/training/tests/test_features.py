@@ -1,5 +1,5 @@
 """
-Layer5 — tests/test_features.py
+Layerinfinite — tests/test_features.py
 ══════════════════════════════════════════════════════════════
 Tests for features.py, export_model.py, and validate_model.py.
 No external services required — all data is synthetic.

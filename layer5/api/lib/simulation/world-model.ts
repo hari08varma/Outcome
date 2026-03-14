@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/simulation/world-model.ts
+ * Layerinfinite — lib/simulation/world-model.ts
  * ══════════════════════════════════════════════════════════════
  * Loads, caches, and evaluates the Tier 2 LightGBM world model.
  * Model trained in Python, serialized as JSON trees, stored in

@@ -74,7 +74,7 @@ export default function AuditTrail() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `layer5-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.download = `layerinfinite-audit-${new Date().toISOString().slice(0, 10)}.csv`;
         a.click();
         URL.revokeObjectURL(url);
     }

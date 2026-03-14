@@ -14,21 +14,21 @@ export default function TermsOfService() {
             <section>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>1. ACCEPTANCE OF TERMS</h2>
                 <p style={{ color: '#DDDDDD', fontSize: '0.95rem', margin: 0 }}>
-                    By accessing or using the Layer5 API and dashboard ("Service"), you agree to be bound by these Terms of Service. If you disagree with any part of the terms, you do not have permission to access the Service.
+                    By accessing or using the Layerinfinite API and dashboard ("Service"), you agree to be bound by these Terms of Service. If you disagree with any part of the terms, you do not have permission to access the Service.
                 </p>
             </section>
 
             <section>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>2. SERVICE DESCRIPTION</h2>
                 <p style={{ color: '#DDDDDD', fontSize: '0.95rem', margin: 0 }}>
-                    Layer5 provides an outcome-ranked decision intelligence API for AI agents. The service captures agent outcomes, scores them, and provides recommendations for subsequent actions. The service is provided "as is" and "as available".
+                    Layerinfinite provides an outcome-ranked decision intelligence API for AI agents. The service captures agent outcomes, scores them, and provides recommendations for subsequent actions. The service is provided "as is" and "as available".
                 </p>
             </section>
 
             <section>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>3. ACCEPTABLE USE</h2>
                 <div style={{ color: '#DDDDDD', fontSize: '0.95rem' }}>
-                    <p style={{ marginBottom: '0.5rem' }}>When using Layer5, you agree not to:</p>
+                    <p style={{ marginBottom: '0.5rem' }}>When using Layerinfinite, you agree not to:</p>
                     <ul style={{ margin: 0, paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                         <li>Violate any laws, third party rights, or our policies.</li>
                         <li>Use the Service to transmit malicious code, malware, or illegal content.</li>
@@ -50,7 +50,7 @@ export default function TermsOfService() {
             <section>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. LIMITATION OF LIABILITY</h2>
                 <p style={{ color: '#DDDDDD', fontSize: '0.95rem', margin: 0 }}>
-                    In no event shall Layer5, nor its directors, employees, partners, agents, suppliers, or affiliates, be liable for any indirect, incidental, special, consequential or punitive damages, including without limitation, loss of profits, data, use, goodwill, or other intangible losses, resulting from (i) your access to or use of or inability to access or use the Service; (ii) any conduct or content of any third party on the Service; (iii) any outcomes or decisions made by your AI agents integrated with the Service.
+                    In no event shall Layerinfinite, nor its directors, employees, partners, agents, suppliers, or affiliates, be liable for any indirect, incidental, special, consequential or punitive damages, including without limitation, loss of profits, data, use, goodwill, or other intangible losses, resulting from (i) your access to or use of or inability to access or use the Service; (ii) any conduct or content of any third party on the Service; (iii) any outcomes or decisions made by your AI agents integrated with the Service.
                 </p>
             </section>
 
@@ -66,7 +66,7 @@ export default function TermsOfService() {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>7. CONTACT US</h2>
                 <div style={{ color: '#DDDDDD', fontSize: '0.95rem' }}>
                     <p style={{ marginBottom: '0.5rem' }}>If you have any questions about these Terms, please contact us:</p>
-                    <p style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>Email: legal@layer5.ai</p>
+                    <p style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>Email: legal@layerinfinite.ai</p>
                 </div>
             </section>
         </div>

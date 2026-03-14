@@ -1,5 +1,5 @@
 /**
- * Layer5 — middleware/rate-limit.ts
+ * Layerinfinite — middleware/rate-limit.ts
  * ══════════════════════════════════════════════════════════════
  * Tiered token-bucket rate limiter (in-memory, per-API-key).
  *

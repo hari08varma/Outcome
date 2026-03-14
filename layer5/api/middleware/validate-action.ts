@@ -1,5 +1,5 @@
 /**
- * Layer5 — middleware/validate-action.ts
+ * Layerinfinite — middleware/validate-action.ts
  * ══════════════════════════════════════════════════════════════
  * Hallucination Prevention Middleware for Hono.
  *

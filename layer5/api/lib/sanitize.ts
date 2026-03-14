@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/sanitize.ts
+ * Layerinfinite — lib/sanitize.ts
  * ══════════════════════════════════════════════════════════════
  * Security utilities to harden JSON payloads against prototype 
  * pollution and resource exhaustion (DoS).

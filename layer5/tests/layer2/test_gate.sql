@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Test Gate: Phase 2
+-- LAYERINFINITE — Test Gate: Phase 2
 -- ============================================================
 -- Run after applying migrations 004 and 009 and seeding data.
 -- All tests must pass before proceeding to Phase 3.

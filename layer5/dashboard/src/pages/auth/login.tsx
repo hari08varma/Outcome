@@ -39,7 +39,7 @@ export default function LoginPage() {
     return (
         <div style={container}>
             <div style={card}>
-                <h1 style={{ margin: 0, fontSize: '1.5rem', color: '#1e293b' }}>Layer5</h1>
+                <h1 style={{ margin: 0, fontSize: '1.5rem', color: '#1e293b' }}>Layerinfinite</h1>
                 <p style={{ color: '#64748b', margin: '0.25rem 0 1.5rem' }}>Sign in to your account</p>
 
                 {error && <div style={errorBox}>{error}</div>}

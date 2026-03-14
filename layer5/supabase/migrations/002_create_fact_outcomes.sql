@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 002: Fact Outcomes (APPEND-ONLY)
+-- LAYERINFINITE — Migration 002: Fact Outcomes (APPEND-ONLY)
 -- ============================================================
 -- CRITICAL: This table is APPEND-ONLY.
 -- A BEFORE UPDATE trigger enforces this with a loud EXCEPTION.

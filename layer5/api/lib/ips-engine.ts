@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/ips-engine.ts
+ * Layerinfinite — lib/ips-engine.ts
  * ══════════════════════════════════════════════════════════════
  * Computes IPS (Inverse Propensity Scoring) estimates
  * for unchosen actions and writes them to

@@ -1,5 +1,5 @@
 /**
- * Layer5 — Phase 6 Unit Tests: Trust Score System
+ * Layerinfinite — Phase 6 Unit Tests: Trust Score System
  * ══════════════════════════════════════════════════════════════
  * Tests the trust update rules, decay math, status thresholds,
  * and reinstatement logic.

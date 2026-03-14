@@ -1,5 +1,5 @@
 /**
- * Layer5 — migrate.js (Phase 1)
+ * Layerinfinite — migrate.js (Phase 1)
  * 
  * Runs all Phase 1 migrations + seed + test gate against Supabase.
  *
@@ -120,7 +120,7 @@ async function runFile(client, filePath, label) {
 async function main() {
     console.log('\n' +
         '═══════════════════════════════════════════════════\n' +
-        '   LAYER5 — Phase 1 Migration Runner\n' +
+        '   LAYERINFINITE — Phase 1 Migration Runner\n' +
         `   Project: ${PROJECT_REF}\n` +
         '═══════════════════════════════════════════════════\n'
     );

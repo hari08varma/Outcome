@@ -9,7 +9,7 @@ test-publish:
 	cd sdks/python && \
 	twine upload --repository testpypi dist/*
 	# Verify: pip install -i https://test.pypi.org/
-	#         simple/ layer5-sdk
+	#         simple/ layerinfinite-sdk
 
 publish:
 	cd sdks/python && \

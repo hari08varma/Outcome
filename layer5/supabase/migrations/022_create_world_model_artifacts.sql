@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 022: World Model Artifacts
+-- LAYERINFINITE — Migration 022: World Model Artifacts
 -- ============================================================
 -- Stores trained world model artifacts for simulation.
 -- The training service (Python/LightGBM) writes here.

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 013: Auth System (Supabase Auth Integration)
+-- LAYERINFINITE — Migration 013: Auth System (Supabase Auth Integration)
 -- ============================================================
 -- Links Supabase Auth users to dim_customers via user_profiles.
 -- On signup, auto-creates a dim_customers record and

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 020: Action Sequences (action_sequences)
+-- LAYERINFINITE — Migration 020: Action Sequences (action_sequences)
 -- ============================================================
 -- Tracks ordered action sequences within episodes.
 -- Enables learning that specific multi-step paths have

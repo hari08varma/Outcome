@@ -1,6 +1,6 @@
 // @ts-nocheck — Deno runtime (not Node.js)
 // ==============================================================
-// LAYER5 — Edge Function: notification-dispatcher
+// LAYERINFINITE — Edge Function: notification-dispatcher
 // ==============================================================
 // Called by pg_cron every 2 minutes.
 // Finds undelivered alerts for all active channels.
@@ -17,9 +17,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const LAYER5_INTERNAL_SECRET = Deno.env.get('LAYER5_INTERNAL_SECRET');
+const LAYERINFINITE_INTERNAL_SECRET = Deno.env.get('LAYERINFINITE_INTERNAL_SECRET');
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const ALERT_FROM_EMAIL = Deno.env.get('ALERT_FROM_EMAIL') ?? 'alerts@layer5.dev';
+const ALERT_FROM_EMAIL = Deno.env.get('ALERT_FROM_EMAIL') ?? 'alerts@layerinfinite.dev';
 const DASHBOARD_URL = Deno.env.get('DASHBOARD_URL') ?? '';
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -76,7 +76,7 @@ async function deliverSlack(
                 type: 'header',
                 text: {
                     type: 'plain_text',
-                    text: `${severityEmoji(alert.severity)} Layer5 Alert: ${alertTypeLabel(alert.alert_type)}`,
+                    text: `${severityEmoji(alert.severity)} Layerinfinite Alert: ${alertTypeLabel(alert.alert_type)}`,
                 },
             },
             {
@@ -126,16 +126,16 @@ async function deliverWebhook(
         action_name: alert.action_name,
         metadata: alert.metadata,
         detected_at: alert.detected_at,
-        source: 'layer5',
+        source: 'layerinfinite',
     };
 
     const response = await fetch(destination, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'User-Agent': 'Layer5-Alerts/1.0',
-            'X-Layer5-Alert-Type': alert.alert_type ?? '',
-            'X-Layer5-Severity': alert.severity ?? '',
+            'User-Agent': 'Layerinfinite-Alerts/1.0',
+            'X-Layerinfinite-Alert-Type': alert.alert_type ?? '',
+            'X-Layerinfinite-Severity': alert.severity ?? '',
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
@@ -167,12 +167,12 @@ async function deliverEmail(
         };
     }
 
-    const subject = `[Layer5] ${alert.severity.toUpperCase()}: ${alertTypeLabel(alert.alert_type)} detected`;
+    const subject = `[Layerinfinite] ${alert.severity.toUpperCase()}: ${alertTypeLabel(alert.alert_type)} detected`;
     const alertsLink = DASHBOARD_URL ? `${DASHBOARD_URL}/alerts` : '';
     const settingsLink = DASHBOARD_URL ? `${DASHBOARD_URL}/settings/notifications` : '';
 
     const textBody = [
-        `Layer5 Alert: ${alertTypeLabel(alert.alert_type)}`,
+        `Layerinfinite Alert: ${alertTypeLabel(alert.alert_type)}`,
         `Severity: ${alert.severity}`,
         '',
         alert.message ?? 'No message provided.',
@@ -225,7 +225,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const isCronInvocation = req.headers.get('x-supabase-event') === 'cron';
 
-    if (!isCronInvocation && (!LAYER5_INTERNAL_SECRET || authHeader !== `Bearer ${LAYER5_INTERNAL_SECRET}`)) {
+    if (!isCronInvocation && (!LAYERINFINITE_INTERNAL_SECRET || authHeader !== `Bearer ${LAYERINFINITE_INTERNAL_SECRET}`)) {
         return new Response(
             JSON.stringify({ error: 'Unauthorized' }),
             { status: 401, headers: { 'Content-Type': 'application/json' } },
@@ -258,7 +258,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
                     alert_id: '00000000-0000-0000-0000-000000000000',
                     alert_type: body.alert_type ?? 'latency_spike',
                     severity: body.severity ?? 'warning',
-                    message: body.message ?? 'This is a test notification from Layer5. Your alert channel is configured correctly.',
+                    message: body.message ?? 'This is a test notification from Layerinfinite. Your alert channel is configured correctly.',
                     agent_id: null,
                     action_name: 'test_action',
                     metadata: { test: true },

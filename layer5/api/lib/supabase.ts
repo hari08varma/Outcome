@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/supabase.ts
+ * Layerinfinite — lib/supabase.ts
  * Singleton Supabase client for server-side operations.
  * Always uses service_role key to bypass RLS.
  * Customer isolation is enforced in query logic, not RLS.

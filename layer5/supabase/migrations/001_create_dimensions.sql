@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 001: Dimension Tables
+-- LAYERINFINITE — Migration 001: Dimension Tables
 -- ============================================================
 -- Creates all dimension tables in dependency order.
 -- RULES: All PKs are UUID. All timestamps are TIMESTAMPTZ.

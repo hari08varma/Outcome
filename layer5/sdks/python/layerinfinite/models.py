@@ -1,5 +1,5 @@
 """
-Layer5 SDK — models.py
+Layerinfinite SDK — models.py
 Pydantic v2 request/response models.
 """
 

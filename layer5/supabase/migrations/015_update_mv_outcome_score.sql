@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 015: Update mv_action_scores for Outcome Scoring
+-- LAYERINFINITE — Migration 015: Update mv_action_scores for Outcome Scoring
 -- ============================================================
 -- Replaces success::INT with COALESCE(outcome_score, success::FLOAT)
 -- throughout the materialized view. This makes the scoring system

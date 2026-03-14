@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Helper RPC Functions for Edge Function
+-- LAYERINFINITE — Helper RPC Functions for Edge Function
 -- ============================================================
 -- The scoring-engine Edge Function calls these via supabase.rpc()
 -- so the REFRESH happens inside a SECURITY DEFINER function

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Seed: Cold Start Priors
+-- LAYERINFINITE — Seed: Cold Start Priors
 -- ============================================================
 -- Industry-average synthetic priors injected during cold start.
 -- These provide initial score distributions before real
@@ -16,7 +16,7 @@
 -- Seed: Default Customers (for testing only)
 -- ────────────────────────────────────────────
 INSERT INTO dim_customers (customer_id, company_name, industry, tier, config) VALUES
-  ('a0000000-0000-0000-0000-000000000001', 'Layer5 Demo Company', 'SaaS', 'enterprise', 
+  ('a0000000-0000-0000-0000-000000000001', 'Layerinfinite Demo Company', 'SaaS', 'enterprise', 
    '{"role": "customer_admin", "risk_tolerance": "balanced", "min_confidence": 0.5, "escalation_score": 0.2, "exploration_rate": 0.05}')
 ON CONFLICT DO NOTHING;
 

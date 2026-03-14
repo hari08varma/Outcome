@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Gap Detection Logic
+ * Layerinfinite — Unit Tests: Gap Detection Logic
  * Tests latency spikes, context drift, coordinated failure,
  * and silent failure detection.
  * Run: npx vitest run tests/layer4/gap-detection.test.ts

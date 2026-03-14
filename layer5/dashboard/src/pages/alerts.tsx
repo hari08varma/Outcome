@@ -1,7 +1,7 @@
 /**
  * Alerts Page (/alerts)
  * Data Source: degradation_alert_events (migrations 008 + 017)
- * Gap detection dashboard — surfaces all anomalies Layer5 detects.
+ * Gap detection dashboard — surfaces all anomalies Layerinfinite detects.
  */
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../supabaseClient';
@@ -399,7 +399,7 @@ function AlertFeed({
                     No alerts detected.
                 </div>
                 <div style={{ fontSize: '0.85rem' }}>
-                    Layer5 is monitoring your agents. Alerts appear here when anomalies are detected.
+                    Layerinfinite is monitoring your agents. Alerts appear here when anomalies are detected.
                 </div>
             </div>
         );
@@ -656,7 +656,7 @@ export default function AlertsPage() {
                         margin: '0.25rem 0 0',
                         fontFamily: FONT_SANS,
                     }}>
-                        Layer5 is monitoring your agents continuously
+                        Layerinfinite is monitoring your agents continuously
                     </p>
                 </div>
                 <LiveIndicator isConnected={realtimeConnected} />

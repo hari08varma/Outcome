@@ -1,5 +1,5 @@
 /**
- * Layer5 — Tests: Sequence & Counterfactual Engine
+ * Layerinfinite — Tests: Sequence & Counterfactual Engine
  * ══════════════════════════════════════════════════════════════
  * Suite 1: IPS Engine (pure unit tests)
  * Suite 2: Sequence Tracker (mock supabase)

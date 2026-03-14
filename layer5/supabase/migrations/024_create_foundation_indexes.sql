@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 024: Foundation Indexes
+-- LAYERINFINITE — Migration 024: Foundation Indexes
 -- ============================================================
 -- Creates all indexes for the new foundation tables:
 --   fact_decisions, action_sequences,

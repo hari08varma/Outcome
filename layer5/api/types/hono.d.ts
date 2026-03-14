@@ -1,5 +1,5 @@
 /**
- * Layer5 — Hono Context Variables Type Declaration
+ * Layerinfinite — Hono Context Variables Type Declaration
  * Extends Hono's context to include our custom variables
  * set by the auth middleware.
  */

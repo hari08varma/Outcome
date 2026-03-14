@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/auth/api-keys.ts
+ * Layerinfinite — routes/auth/api-keys.ts
  * ══════════════════════════════════════════════════════════════
  * API key management for authenticated human users.
  *
@@ -19,13 +19,13 @@ export const apiKeysRouter = new Hono();
 
 /**
  * Generate a cryptographically random API key.
- * Format: layer5_<32 random hex chars>
+ * Format: layerinfinite_<32 random hex chars>
  */
 function generateApiKey(): string {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-    return `layer5_${hex}`;
+    return `layerinfinite_${hex}`;
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: API Key Management
+ * Layerinfinite — Unit Tests: API Key Management
  * Tests POST, GET, DELETE /v1/auth/api-keys
  * Run: npx vitest run tests/auth/api-keys.test.ts
  */
@@ -57,7 +57,7 @@ describe('API Key Management — /v1/auth/api-keys', () => {
     // POST /v1/auth/api-keys
     // ────────────────────────────────────────────────────────────
     describe('POST /api-keys', () => {
-        it('returns full key once, starting with layer5_', async () => {
+        it('returns full key once, starting with layerinfinite_', async () => {
             const chain = getChain();
             chain.single.mockResolvedValueOnce({
                 data: { agent_id: 'key-1', agent_name: 'My Agent', created_at: '2026-01-01' },
@@ -76,14 +76,14 @@ describe('API Key Management — /v1/auth/api-keys', () => {
             expect(res.status).toBe(201);
             const json = await res.json() as any;
 
-            // Key starts with layer5_
-            expect(json.key).toMatch(/^layer5_[0-9a-f]{32}$/);
+            // Key starts with layerinfinite_
+            expect(json.key).toMatch(/^layerinfinite_[0-9a-f]{32}$/);
             expect(json.key_id).toBe('key-1');
             expect(json.name).toBe('My Agent');
             expect(json.warning).toContain('cannot be shown again');
         });
 
-        it('key format: layer5_ + 32 hex chars', async () => {
+        it('key format: layerinfinite_ + 32 hex chars', async () => {
             const chain = getChain();
             chain.single.mockResolvedValueOnce({
                 data: { agent_id: 'key-2', agent_name: 'Test', created_at: '2026-01-01' },
@@ -100,9 +100,9 @@ describe('API Key Management — /v1/auth/api-keys', () => {
             );
 
             const json = await res.json() as any;
-            // layer5_ (7 chars) + 32 hex chars = 39 total
+            // layerinfinite_ (7 chars) + 32 hex chars = 39 total
             expect(json.key).toHaveLength(39);
-            expect(json.key.slice(0, 7)).toBe('layer5_');
+            expect(json.key.slice(0, 7)).toBe('layerinfinite_');
         });
     });
 

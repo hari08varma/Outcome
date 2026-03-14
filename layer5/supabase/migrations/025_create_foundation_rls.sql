@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 025: Foundation RLS Policies
+-- LAYERINFINITE — Migration 025: Foundation RLS Policies
 -- ============================================================
 -- Enables Row Level Security on all new foundation tables
 -- and creates customer isolation policies following the

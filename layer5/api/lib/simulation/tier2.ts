@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/simulation/tier2.ts
+ * Layerinfinite — lib/simulation/tier2.ts
  * ══════════════════════════════════════════════════════════════
  * Tier 2 simulation using LightGBM model.
  * Available after 200 episodes and model training.

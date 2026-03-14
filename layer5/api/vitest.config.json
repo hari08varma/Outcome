@@ -3,7 +3,7 @@
         "include": [
             "tests/layer3/**/*.test.ts",
             "tests/layer4/**/*.test.ts",
-            "tests/layer5/**/*.test.ts",
+            "tests/layerinfinite/**/*.test.ts",
             "tests/layer6/**/*.test.ts",
             "tests/layer7/**/*.test.ts",
             "tests/layer8/**/*.test.ts",

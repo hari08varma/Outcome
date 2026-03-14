@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Audit Trail + Customer Isolation
+ * Layerinfinite — Unit Tests: Audit Trail + Customer Isolation
  * Tests GET /v1/audit/:id customer isolation.
  * Run: npx vitest run tests/layer3/audit-isolation.test.ts
  */

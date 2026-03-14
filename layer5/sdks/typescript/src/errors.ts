@@ -1,7 +1,7 @@
-// Layer5 SDK — errors.ts
-// Typed exception hierarchy for all Layer5 API failure modes.
+// Layerinfinite SDK — errors.ts
+// Typed exception hierarchy for all Layerinfinite API failure modes.
 
-export class Layer5Error extends Error {
+export class LayerinfiniteError extends Error {
     public readonly statusCode?: number;
     public readonly responseBody?: unknown;
 
@@ -11,17 +11,16 @@ export class Layer5Error extends Error {
         responseBody?: unknown,
     ) {
         super(message);
-        this.name = 'Layer5Error';
+        this.name = 'LayerinfiniteError';
         this.statusCode = statusCode;
         this.responseBody = responseBody;
-        // Correct instanceof behavior in transpiled code
         Object.setPrototypeOf(this, new.target.prototype);
     }
 }
 
 /** Raised on HTTP 401 — invalid or missing API key. */
-export class Layer5AuthError extends Layer5Error {
-    override name = 'Layer5AuthError';
+export class LayerinfiniteAuthError extends LayerinfiniteError {
+    override name = 'LayerinfiniteAuthError';
     constructor(message: string, responseBody?: unknown) {
         super(message, 401, responseBody);
         Object.setPrototypeOf(this, new.target.prototype);
@@ -29,8 +28,8 @@ export class Layer5AuthError extends Layer5Error {
 }
 
 /** Raised on HTTP 429 — rate limit exceeded. */
-export class Layer5RateLimitError extends Layer5Error {
-    override name = 'Layer5RateLimitError';
+export class LayerinfiniteRateLimitError extends LayerinfiniteError {
+    override name = 'LayerinfiniteRateLimitError';
     public readonly retryAfter: number;
 
     constructor(message: string, retryAfter: number) {
@@ -41,8 +40,8 @@ export class Layer5RateLimitError extends Layer5Error {
 }
 
 /** Raised on HTTP 404 — resource not found. */
-export class Layer5NotFoundError extends Layer5Error {
-    override name = 'Layer5NotFoundError';
+export class LayerinfiniteNotFoundError extends LayerinfiniteError {
+    override name = 'LayerinfiniteNotFoundError';
     constructor(message: string, responseBody?: unknown) {
         super(message, 404, responseBody);
         Object.setPrototypeOf(this, new.target.prototype);
@@ -50,8 +49,8 @@ export class Layer5NotFoundError extends Layer5Error {
 }
 
 /** Raised on HTTP 5xx — server-side error. */
-export class Layer5ServerError extends Layer5Error {
-    override name = 'Layer5ServerError';
+export class LayerinfiniteServerError extends LayerinfiniteError {
+    override name = 'LayerinfiniteServerError';
     constructor(message: string, statusCode: number, responseBody?: unknown) {
         super(message, statusCode, responseBody);
         Object.setPrototypeOf(this, new.target.prototype);

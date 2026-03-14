@@ -1,11 +1,11 @@
-# Layer5 — Deployment Guide
+# Layerinfinite — Deployment Guide
 
 ## Prerequisites
 
 - Node.js v20+
 - Supabase project running (10 migrations already deployed)
 - 5 Edge Functions already deployed
-- GitHub repo with layer5 code pushed
+- GitHub repo with layerinfinite code pushed
 
 ---
 
@@ -25,11 +25,11 @@
    | `SUPABASE_SERVICE_ROLE_KEY` | *(from Supabase dashboard)* |
    | `SUPABASE_ANON_KEY` | *(from Supabase dashboard)* |
    | `EMBEDDING_PROVIDER` | `supabase` |
-   | `LAYER5_DEV_BYPASS` | `false` |
+   | `LAYERINFINITE_DEV_BYPASS` | `false` |
    | `ALLOWED_ORIGINS` | `https://your-dashboard.vercel.app` |
 
 4. Railway auto-detects Node.js and deploys
-5. Copy the generated Railway URL (e.g. `layer5-api-production.up.railway.app`)
+5. Copy the generated Railway URL (e.g. `layerinfinite-api-production.up.railway.app`)
 6. Update `ALLOWED_ORIGINS` to include the final dashboard URL after Step 2
 
 ### Option B: Any Node.js Host

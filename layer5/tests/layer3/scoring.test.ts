@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Scoring Engine
+ * Layerinfinite — Unit Tests: Scoring Engine
  * Tests the 5-factor composite formula and cache behaviour.
  * Run: npm test (from api/)
  */

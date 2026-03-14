@@ -2,7 +2,7 @@
  * Onboarding.tsx — 3-step first-time user onboarding flow.
  * Step 1: Name your first agent
  * Step 2: Your API key (shown once)
- * Step 3: Integrate Layer5 (code snippets)
+ * Step 3: Integrate Layerinfinite (code snippets)
  */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -26,7 +26,7 @@ const AGENT_TYPES = ['customer_support', 'devops', 'data_pipeline', 'general', '
 
 function generateApiKey(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = 'layer5_';
+    let result = 'layerinfinite_';
     for (let i = 0; i < 32; i++) {
         result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
@@ -192,7 +192,7 @@ export default function Onboarding() {
                             Connect your first agent.
                         </h1>
                         <p style={{ fontFamily: FONT_SANS, fontSize: 14, color: C.muted, marginTop: 8, marginBottom: 32, lineHeight: 1.6 }}>
-                            Layer5 works with any LLM framework. Name this agent so you can track it.
+                            Layerinfinite works with any LLM framework. Name this agent so you can track it.
                         </p>
 
                         {error && (
@@ -293,7 +293,7 @@ export default function Onboarding() {
                             padding: '16px 18px', fontFamily: FONT_MONO, fontSize: 12, color: C.muted, lineHeight: 1.8,
                         }}>
                             <div style={{ color: C.muted }}>{'// In your agent code:'}</div>
-                            <div><span style={{ color: '#C678DD' }}>const</span> <span style={{ color: C.white }}>layer5</span> = <span style={{ color: '#C678DD' }}>new</span> <span style={{ color: '#61AFEF' }}>Layer5Client</span>{'({'}</div>
+                            <div><span style={{ color: '#C678DD' }}>const</span> <span style={{ color: C.white }}>layerinfinite</span> = <span style={{ color: '#C678DD' }}>new</span> <span style={{ color: '#61AFEF' }}>LayerinfiniteClient</span>{'({'}</div>
                             <div>{'  '}<span style={{ color: C.accent }}>apiKey</span>: <span style={{ color: '#98C379' }}>'{apiKey.slice(0, 12)}...'</span>,</div>
                             <div>{'  '}<span style={{ color: C.accent }}>agentId</span>: <span style={{ color: '#98C379' }}>'{agentName}'</span></div>
                             <div>{'});'}</div>
@@ -403,40 +403,40 @@ export default function Onboarding() {
 // ─── Code snippets per language ──────────────────────
 function getBeforeCode(lang: 'node' | 'python' | 'curl', agentName: string): string {
     if (lang === 'node') {
-        return `const scores = await layer5.getScores({
+        return `const scores = await layerinfinite.getScores({
   context: { issue_type: 'payment_failed' }
 });
 agent.execute(scores.ranked_actions[0].action);`;
     }
     if (lang === 'python') {
-        return `scores = layer5.get_scores(
+        return `scores = layerinfinite.get_scores(
   context={"issue_type": "payment_failed"}
 )
 agent.execute(scores["ranked_actions"][0]["action"])`;
     }
-    return `curl -X GET https://api.layer5.dev/v1/get-scores \\
-  -H "Authorization: Bearer layer5_..." \\
+    return `curl -X GET https://api.layerinfinite.dev/v1/get-scores \\
+  -H "Authorization: Bearer layerinfinite_..." \\
   -H "Content-Type: application/json" \\
   -d '{"agent_id":"${agentName}","context":{"issue_type":"payment_failed"}}'`;
 }
 
 function getAfterCode(lang: 'node' | 'python' | 'curl'): string {
     if (lang === 'node') {
-        return `await layer5.logOutcome({
+        return `await layerinfinite.logOutcome({
   action: 'update_app',
   success: true,
   response_ms: 241
 });`;
     }
     if (lang === 'python') {
-        return `layer5.log_outcome(
+        return `layerinfinite.log_outcome(
   action="update_app",
   success=True,
   response_ms=241
 )`;
     }
-    return `curl -X POST https://api.layer5.dev/v1/log-outcome \\
-  -H "Authorization: Bearer layer5_..." \\
+    return `curl -X POST https://api.layerinfinite.dev/v1/log-outcome \\
+  -H "Authorization: Bearer layerinfinite_..." \\
   -H "Content-Type: application/json" \\
   -d '{"action":"update_app","success":true,"response_ms":241}'`;
 }

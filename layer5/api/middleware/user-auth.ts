@@ -1,5 +1,5 @@
 /**
- * Layer5 — middleware/user-auth.ts
+ * Layerinfinite — middleware/user-auth.ts
  * ══════════════════════════════════════════════════════════════
  * Human user authentication middleware (Supabase JWT).
  *

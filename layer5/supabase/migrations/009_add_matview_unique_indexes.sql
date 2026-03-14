@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 009: UNIQUE Indexes for CONCURRENTLY Refresh
+-- LAYERINFINITE — Migration 009: UNIQUE Indexes for CONCURRENTLY Refresh
 -- ============================================================
 -- CRITICAL: REFRESH MATERIALIZED VIEW CONCURRENTLY requires
 -- a UNIQUE index on the view. Without it, the command errors:

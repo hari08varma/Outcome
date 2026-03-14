@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 023: Materialized View — mv_sequence_scores
+-- LAYERINFINITE — Migration 023: Materialized View — mv_sequence_scores
 -- ============================================================
 -- Computes statistical performance of every observed action
 -- sequence per context type. Used by Tier 1 simulation

@@ -1,4 +1,4 @@
-# Layer5 — Project Report
+# Layerinfinite — Project Report
 
 ### Outcome-Ranked Decision Intelligence Middleware
 **Version:** 3.0.0 | **Report Date:** March 11, 2026 | **Status:** Production-Ready
@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-Layer5 is a 10-layer, append-only, outcome-ranked decision intelligence middleware designed to sit between any LLM-powered AI agent and enterprise infrastructure. It provides real-time scoring, adaptive policy decisions, trust management, temporal trend detection, gap detection intelligence, sequence tracking with IPS counterfactual learning, a 3-tier simulation engine (Wilson CI → LightGBM → MCTS), an ML training pipeline, a full audit trail, and a complete auth + onboarding flow with an admin dashboard.
+Layerinfinite is a 10-layer, append-only, outcome-ranked decision intelligence middleware designed to sit between any LLM-powered AI agent and enterprise infrastructure. It provides real-time scoring, adaptive policy decisions, trust management, temporal trend detection, gap detection intelligence, sequence tracking with IPS counterfactual learning, a 3-tier simulation engine (Wilson CI → LightGBM → MCTS), an ML training pipeline, a full audit trail, and a complete auth + onboarding flow with an admin dashboard.
 
 **Overall Completion: 100% — All 10 Phases + Auth + Scoring + Gap Detection + SDKs (with simulate()) + No-Code Complete**
 
@@ -403,7 +403,7 @@ $$\text{composite\_score} = (w_{success} \times f_{success} + w_{conf} \times f_
 | Email/Password login | ✅ Built | Remember me checkbox, error handling |
 | Forgot Password | ✅ Built | `resetPasswordForEmail()` flow with success confirmation |
 | Mode switching | ✅ Built | Toggle between Login ↔ Signup via URL param `?mode=login` / `?mode=signup` |
-| Terminal animation | ✅ Built | Animated typing effect showing Layer5 scoring commands |
+| Terminal animation | ✅ Built | Animated typing effect showing Layerinfinite scoring commands |
 | Error handling | ✅ Built | Inline error messages for all auth failure modes |
 | Post-auth redirect | ✅ Built | New users → `/onboarding`, existing users → `/dashboard` |
 | Dark theme | ✅ Built | Consistent with landing page, `@media` rules via `<style>` tag |
@@ -685,7 +685,7 @@ detect_coordinated_failures(
 
 **Objective:** Python-based ML training pipeline for LightGBM world models. Reads historical data from Supabase, extracts 10-feature vectors, trains three quantile regression models (q50, q025, q975), validates against quality thresholds, and exports to JSON matching the TypeScript inference engine format.
 
-**Location:** `layer5/training/` | **Runtime:** Python 3.9+ | **Dependencies:** lightgbm, numpy, pandas, supabase-py
+**Location:** `layerinfinite/training/` | **Runtime:** Python 3.9+ | **Dependencies:** lightgbm, numpy, pandas, supabase-py
 
 | Deliverable | Status | Details |
 |-------------|--------|---------|
@@ -803,23 +803,23 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 
 ### Python SDK ✅ COMPLETE
 
-**Objective:** Production-ready Python client for the Layer5 API — sync and async, zero-config, with framework integrations for LangChain, LlamaIndex, CrewAI, AutoGen, OpenAI, and a decorator pattern. Updated with `simulate()` and `decision_id` threading.
+**Objective:** Production-ready Python client for the Layerinfinite API — sync and async, zero-config, with framework integrations for LangChain, LlamaIndex, CrewAI, AutoGen, OpenAI, and a decorator pattern. Updated with `simulate()` and `decision_id` threading.
 
-**Package:** `layer5-sdk` | **Location:** `sdks/python/` | **Tests:** 86/86 passing
+**Package:** `layerinfinite-sdk` | **Location:** `sdks/python/` | **Tests:** 86/86 passing
 
 | Deliverable | Status | Details |
 |-------------|--------|---------|
-| `layer5/client.py` | ✅ Built | Synchronous client — `get_scores()`, `log_outcome()`, `log_outcome_feedback()`, `simulate()` |
-| `layer5/async_client.py` | ✅ Built | Async client — same API with `async`/`await`, uses `httpx.AsyncClient` |
-| `layer5/exceptions.py` | ✅ Built | Error hierarchy: `Layer5Error` → `AuthError`, `RateLimitError`, `ValidationError`, `NetworkError`, `TimeoutError`, `ServerError`, `UnknownActionError`, `AgentSuspendedError` |
-| `layer5/models.py` | ✅ Built | Pydantic models: `RankedAction`, `PolicyResult`, `GetScoresResponse`, `LogOutcomeResponse`, `OutcomeFeedbackResponse`, `SequencePrediction`, `SimulateResponse` |
-| `layer5/retry.py` | ✅ Built | Exponential backoff with jitter — retries on 5xx, 429, timeout, network errors |
-| `layer5/integrations/langchain.py` | ✅ Built | `Layer5CallbackHandler` — `on_tool_start`, `on_tool_end`, `on_tool_error` + auto `decision_id` threading |
-| `layer5/integrations/llamaindex.py` | ✅ Built | `Layer5CallbackHandler` for LlamaIndex spans |
-| `layer5/integrations/crewai.py` | ✅ Built | `Layer5CrewAICallback` for CrewAI tool events + auto `decision_id` threading |
-| `layer5/integrations/autogen.py` | ✅ Built | `Layer5AutoGenCallback` for AutoGen function calls + auto `decision_id` threading |
-| `layer5/integrations/openai.py` | ✅ Built | `track_tool_calls()` — extracts tool_calls from OpenAI responses, logs outcomes + auto `decision_id` threading |
-| `layer5/integrations/decorator.py` | ✅ Built | `@layer5_track` decorator — auto-logs any function as an outcome + auto `decision_id` threading |
+| `layerinfinite/client.py` | ✅ Built | Synchronous client — `get_scores()`, `log_outcome()`, `log_outcome_feedback()`, `simulate()` |
+| `layerinfinite/async_client.py` | ✅ Built | Async client — same API with `async`/`await`, uses `httpx.AsyncClient` |
+| `layerinfinite/exceptions.py` | ✅ Built | Error hierarchy: `LayerinfiniteError` → `AuthError`, `RateLimitError`, `ValidationError`, `NetworkError`, `TimeoutError`, `ServerError`, `UnknownActionError`, `AgentSuspendedError` |
+| `layerinfinite/models.py` | ✅ Built | Pydantic models: `RankedAction`, `PolicyResult`, `GetScoresResponse`, `LogOutcomeResponse`, `OutcomeFeedbackResponse`, `SequencePrediction`, `SimulateResponse` |
+| `layerinfinite/retry.py` | ✅ Built | Exponential backoff with jitter — retries on 5xx, 429, timeout, network errors |
+| `layerinfinite/integrations/langchain.py` | ✅ Built | `LayerinfiniteCallbackHandler` — `on_tool_start`, `on_tool_end`, `on_tool_error` + auto `decision_id` threading |
+| `layerinfinite/integrations/llamaindex.py` | ✅ Built | `LayerinfiniteCallbackHandler` for LlamaIndex spans |
+| `layerinfinite/integrations/crewai.py` | ✅ Built | `LayerinfiniteCrewAICallback` for CrewAI tool events + auto `decision_id` threading |
+| `layerinfinite/integrations/autogen.py` | ✅ Built | `LayerinfiniteAutoGenCallback` for AutoGen function calls + auto `decision_id` threading |
+| `layerinfinite/integrations/openai.py` | ✅ Built | `track_tool_calls()` — extracts tool_calls from OpenAI responses, logs outcomes + auto `decision_id` threading |
+| `layerinfinite/integrations/decorator.py` | ✅ Built | `@layerinfinite_track` decorator — auto-logs any function as an outcome + auto `decision_id` threading |
 | `pyproject.toml` | ✅ Built | Python 3.9+, deps: `httpx>=0.24`, `pydantic>=2.0` |
 | `tests/` (13 files) | ✅ Passing | 86 tests covering client, async_client, retry, models, all 6 integrations, simulate, decision_id threading |
 
@@ -831,7 +831,7 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 **Key Design Decisions:**
 - `httpx` for HTTP (sync + async in one library, modern Python)
 - Pydantic v2 for response models (validation + serialization)
-- API key resolved from `LAYER5_API_KEY` env var or constructor param
+- API key resolved from `LAYERINFINITE_API_KEY` env var or constructor param
 - All integrations are optional imports — no hard dependency on LangChain, etc.
 - `silent_errors=True` default on all framework callbacks (never crash the agent)
 
@@ -841,17 +841,17 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 
 **Objective:** Zero-dependency TypeScript client for Node.js 18+, Deno, Bun, Cloudflare Workers, and Browser — uses only native `fetch`. CJS + ESM dual output with separate entry points for integrations (tree-shakeable). Updated with `simulate()` and `decisionId` threading.
 
-**Package:** `@layer5/sdk` v0.2.0 | **Location:** `sdks/typescript/` | **Build output:** `dist/` (CJS + ESM + .d.ts)
+**Package:** `@layerinfinite/sdk` v0.2.0 | **Location:** `sdks/typescript/` | **Build output:** `dist/` (CJS + ESM + .d.ts)
 
 | Deliverable | Status | Details |
 |-------------|--------|---------|
-| `src/errors.ts` | ✅ Built | Error hierarchy with `Object.setPrototypeOf()` — `Layer5Error`, `AuthError`, `RateLimitError`, `ValidationError`, `NetworkError`, `TimeoutError`, `ServerError`, `UnknownActionError`, `AgentSuspendedError` |
+| `src/errors.ts` | ✅ Built | Error hierarchy with `Object.setPrototypeOf()` — `LayerinfiniteError`, `AuthError`, `RateLimitError`, `ValidationError`, `NetworkError`, `TimeoutError`, `ServerError`, `UnknownActionError`, `AgentSuspendedError` |
 | `src/types.ts` | ✅ Built | TypeScript interfaces: `GetScoresOptions`, `GetScoresResponse` (+ `decisionId`, `recommendedSequence`), `LogOutcomeOptions` (+ `decisionId`, `episodeHistory`), `LogOutcomeResponse` (+ `counterfactualsComputed`, `sequencePosition`), `SimulateOptions`, `SimulateResponse`, `SequencePrediction` |
 | `src/retry.ts` | ✅ Built | `exponentialBackoff(attempt, baseDelay=500, maxDelay=30000, jitter=true)` + `sleep(ms)` |
-| `src/client.ts` | ✅ Built | `Layer5` class — `getScores()`, `logOutcome()`, `logOutcomeFeedback()`, `simulate()`, multi-runtime env var resolution |
-| `src/integrations/langchain.ts` | ✅ Built | `Layer5Callback` — `handleToolStart`, `handleToolEnd`, `handleToolError` + auto `decisionId` threading |
-| `src/integrations/vercel-ai.ts` | ✅ Built | `wrapTools()` + `wrapTool()` — wraps Vercel AI SDK tools with Layer5 tracking + auto `decisionId` threading |
-| `src/integrations/openai.ts` | ✅ Built | `trackToolCalls()` + `withLayer5()` — Proxy wrapper for `chat.completions.create` + auto `decisionId` threading |
+| `src/client.ts` | ✅ Built | `Layerinfinite` class — `getScores()`, `logOutcome()`, `logOutcomeFeedback()`, `simulate()`, multi-runtime env var resolution |
+| `src/integrations/langchain.ts` | ✅ Built | `LayerinfiniteCallback` — `handleToolStart`, `handleToolEnd`, `handleToolError` + auto `decisionId` threading |
+| `src/integrations/vercel-ai.ts` | ✅ Built | `wrapTools()` + `wrapTool()` — wraps Vercel AI SDK tools with Layerinfinite tracking + auto `decisionId` threading |
+| `src/integrations/openai.ts` | ✅ Built | `trackToolCalls()` + `withLayerinfinite()` — Proxy wrapper for `chat.completions.create` + auto `decisionId` threading |
 | `src/index.ts` | ✅ Built | Barrel exports — integrations NOT re-exported (separate entry points) |
 | `tsup.config.ts` | ✅ Built | Two build configs — main package + integrations. CJS + ESM, dts, sourcemap, treeshake |
 | `package.json` | ✅ Built | Exports map: `.`, `./integrations/langchain`, `./integrations/vercel-ai`, `./integrations/openai`. `sideEffects: false` |
@@ -875,7 +875,7 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 - Zero runtime dependencies — native `fetch` only (no axios, no node-fetch)
 - `Object.setPrototypeOf(this, new.target.prototype)` on every error class (correct `instanceof` in transpiled code)
 - Multi-runtime env var resolution: `process.env` (Node/Bun), `Deno.env.get()` (Deno), explicit-only (Workers/Browser)
-- API key regex validation: `^layer5_[a-zA-Z0-9]{20,}$`
+- API key regex validation: `^layerinfinite_[a-zA-Z0-9]{20,}$`
 - Integrations as separate package exports — consumers only import what they use
 
 ---
@@ -890,9 +890,9 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 
 | Deliverable | Status | Details |
 |-------------|--------|---------|
-| `n8n/Layer5.credentials.ts` | ✅ Built | `layer5Api` credential type — API key (password-masked), configurable base URL, Bearer auth |
-| `n8n/Layer5.node.ts` | ✅ Built | 4 operations: Get Scores, Log Outcome, Log Feedback, Get Patterns |
-| `n8n/package.json` | ✅ Built | `n8n-nodes-layer5` package with `n8n.nodes` + `n8n.credentials` registration |
+| `n8n/Layerinfinite.credentials.ts` | ✅ Built | `layerinfiniteApi` credential type — API key (password-masked), configurable base URL, Bearer auth |
+| `n8n/Layerinfinite.node.ts` | ✅ Built | 4 operations: Get Scores, Log Outcome, Log Feedback, Get Patterns |
+| `n8n/package.json` | ✅ Built | `n8n-nodes-layerinfinite` package with `n8n.nodes` + `n8n.credentials` registration |
 
 **n8n Operations:**
 
@@ -907,11 +907,11 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 
 | API Code | User-Friendly Message |
 |----------|-----------------------|
-| `INVALID_API_KEY` | "Your Layer5 API key is invalid. Check it in n8n credentials." |
-| `UNKNOWN_ACTION` | "This action is not registered in Layer5. Add it at app.layer5.dev/actions" |
-| `AGENT_SUSPENDED` | "This agent has been suspended due to too many failures. Check status at app.layer5.dev/agents" |
+| `INVALID_API_KEY` | "Your Layerinfinite API key is invalid. Check it in n8n credentials." |
+| `UNKNOWN_ACTION` | "This action is not registered in Layerinfinite. Add it at app.layerinfinite.dev/actions" |
+| `AGENT_SUSPENDED` | "This agent has been suspended due to too many failures. Check status at app.layerinfinite.dev/agents" |
 | `RATE_LIMITED` | "You've hit the rate limit. Wait a moment and try again." |
-| `ACTION_DISABLED` | "This action has been disabled. Re-enable it at app.layer5.dev/actions" |
+| `ACTION_DISABLED` | "This action has been disabled. Re-enable it at app.layerinfinite.dev/actions" |
 | `MISSING_FIELD` | "A required field is missing. Check that all required fields are filled in." |
 
 #### Zapier Integration
@@ -922,20 +922,20 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 | `zapier/creates/log_outcome.js` | ✅ Built | "Log Action Outcome" — 7 input fields, typed output, friendly error handler |
 | `zapier/searches/get_scores.js` | ✅ Built | "Get Action Scores" — 3 input fields, ranked actions output, auto-ID for Zapier |
 | `zapier/index.js` | ✅ Built | App entry point — wires auth, searches, creates |
-| `zapier/package.json` | ✅ Built | `zapier-platform-layer5` with `zapier-platform-core` v15 |
+| `zapier/package.json` | ✅ Built | `zapier-platform-layerinfinite` with `zapier-platform-core` v15 |
 
 **Zapier Actions:**
 
 | Action | Type | Description |
 |--------|------|-------------|
-| Log Action Outcome | Create | Tell Layer5 what happened after an action |
+| Log Action Outcome | Create | Tell Layerinfinite what happened after an action |
 | Get Action Scores | Search | Ask which action to take next |
 
 #### Make.com (Integromat) Module
 
 | Deliverable | Status | Details |
 |-------------|--------|---------|
-| `make/layer5-make-spec.json` | ✅ Built | Full app spec — connection + 3 modules, typed inputs/outputs, error messages |
+| `make/layerinfinite-make-spec.json` | ✅ Built | Full app spec — connection + 3 modules, typed inputs/outputs, error messages |
 
 **Make.com Modules:**
 
@@ -1158,7 +1158,7 @@ AND tablename IN (
 | `outcome-scoring.test.ts` | 9 | 3 | 3-tier outcome scoring, feedback loop, backward compatibility |
 | `trend.test.ts` | 24 | 4 | Trend labeling, SMA, degradation thresholds, time-of-day |
 | `gap-detection.test.ts` | 28 | 4 | Latency spikes, context drift, coordinated failure, silent failures |
-| `policy.test.ts` (layer5) | 6 | 5 | Trust-aware policy with customer config |
+| `policy.test.ts` (layerinfinite) | 6 | 5 | Trust-aware policy with customer config |
 | `cold-start.test.ts` | 4 | 5 | 4-stage cold-start protocol, cross-agent transfer |
 | `trust.test.ts` | 7 | 6 | Trust decay, recovery, suspension, reinstatement |
 | `pruning.test.ts` | 9 | 6 | Archive rules, cold-delete, salience stats, compression |
@@ -1288,7 +1288,7 @@ AND tablename IN (
 | `dashboard/src/components/` | 5 | ~400 | ScoreCard, TrendBadge, OutcomeTable, TrustGauge, ProtectedRoute |
 | `dashboard/src/` | 3 | ~50 | main.tsx, supabaseClient.ts, vite-env.d.ts |
 | `training/` | 6 | ~800 | Python ML pipeline — train, features, validate, export, Dockerfile, requirements |
-| `sdks/python/layer5/` | 9 | ~1,400 | Python SDK — sync/async client, models (+ SimulateResponse), exceptions, retry, 6 integrations (all with decision_id threading) |
+| `sdks/python/layerinfinite/` | 9 | ~1,400 | Python SDK — sync/async client, models (+ SimulateResponse), exceptions, retry, 6 integrations (all with decision_id threading) |
 | `sdks/python/tests/` | 13 | ~2,400 | Python SDK tests — 86 tests across client, async, retry, models, all integrations, simulate |
 | `sdks/typescript/src/` | 8 | ~1,600 | TypeScript SDK — client (+ simulate), errors, types (+ SimulateOptions/Response), retry, 3 integrations (all with decisionId threading), barrel export |
 | `sdks/typescript/tests/` | 5 | ~1,400 | TypeScript SDK tests — client, errors, retry, simulate |
@@ -1312,7 +1312,7 @@ AND tablename IN (
 | **Admin Role Enforcement** | Separate `admin-auth.ts` middleware, `customer_admin` role required |
 | **Hallucination Prevention** | `validate-action.ts` blocks unregistered action names (30-min cache) |
 | **Rate Limiting** | Tiered token-bucket: free=200/min, pro=1000/min, enterprise=5000/min |
-| **Dev Bypass Safety** | `LAYER5_DEV_BYPASS=true` in production → `process.exit(1)` (fatal) |
+| **Dev Bypass Safety** | `LAYERINFINITE_DEV_BYPASS=true` in production → `process.exit(1)` (fatal) |
 | **Input Validation** | Zod schema validation, 64KB `raw_context` size limit |
 | **Secure Headers** | Hono `secureHeaders()` middleware on all responses |
 | **CORS Policy** | Environment-variable-driven (`ALLOWED_ORIGINS`) — supports any production domain |
@@ -1354,8 +1354,8 @@ The following 12 critical architecture and security auditing capabilities have b
 | **Configure Google OAuth** | HIGH | Add `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` in Supabase Auth dashboard |
 | **Set up UptimeRobot** | MEDIUM | Monitor `/health` endpoint every 5 minutes (see `scripts/setup-monitoring.md`) |
 | **Schedule training pipeline** | MEDIUM | Run `training/train_world_model.py` weekly once 200+ outcomes collected |
-| **Publish Python SDK** | MEDIUM | `pip install layer5-sdk` — publish to PyPI |
-| **Publish TypeScript SDK** | MEDIUM | `npm install @layer5/sdk` — publish to npm |
+| **Publish Python SDK** | MEDIUM | `pip install layerinfinite-sdk` — publish to PyPI |
+| **Publish TypeScript SDK** | MEDIUM | `npm install @layerinfinite/sdk` — publish to npm |
 | **Seasonal anomaly detection** | LOW | Requires 90+ days of production data for meaningful baselines |
 
 See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) and [DEPLOY.md](DEPLOY.md) for step-by-step instructions.
@@ -1364,9 +1364,9 @@ See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) and [DEPLOY.md](DEPLOY.md
 
 | Task | Priority | Description |
 |------|----------|-------------|
-| **Submit n8n node to community** | HIGH | Submit `n8n-nodes-layer5` to n8n community node registry |
+| **Submit n8n node to community** | HIGH | Submit `n8n-nodes-layerinfinite` to n8n community node registry |
 | **Submit Zapier app for review** | HIGH | `zapier push` + submit for Zapier marketplace approval |
-| **Submit Make.com app** | MEDIUM | Upload `layer5-make-spec.json` via Make.com developer portal |
+| **Submit Make.com app** | MEDIUM | Upload `layerinfinite-make-spec.json` via Make.com developer portal |
 | **Seasonal anomaly detection (Gap 4)** | MEDIUM | Build after 90 days of production data — day_of_week + hour_of_day baselines |
 | **API key rotation mechanism** | LOW | Implement key rotation without downtime for `agent_api_keys` |
 | **Log aggregation** | MEDIUM | Route API logs to centralized logging (Datadog / Sentry / Supabase logs) |
@@ -1430,7 +1430,7 @@ npm run build        # Production build
 cd sdks/python
 pip install -e ".[dev]"          # Install in development mode
 python -m pytest tests/ -v       # Run all 71 tests
-pip install layer5-sdk           # Install from PyPI (when published)
+pip install layerinfinite-sdk           # Install from PyPI (when published)
 ```
 
 ### TypeScript SDK
@@ -1447,7 +1447,7 @@ npm test             # Run all tests
 cd sdks/no-code/n8n
 npm install
 npm run build        # Compiles TypeScript → dist/
-# Install in n8n: Settings → Community Nodes → n8n-nodes-layer5
+# Install in n8n: Settings → Community Nodes → n8n-nodes-layerinfinite
 ```
 
 ### Migrations
@@ -1470,7 +1470,7 @@ npx supabase functions deploy pruning-scheduler --project-ref <project-ref>
 
 ## Conclusion
 
-Layer5 is **100% feature-complete** against the full implementation plan — all 6 core phases, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
+Layerinfinite is **100% feature-complete** against the full implementation plan — all 6 core phases, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
 
 The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. All **32 SQL migrations** are created (18 deployed to live Supabase, 14 ready). **5 Edge Functions** are deployed. The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
 

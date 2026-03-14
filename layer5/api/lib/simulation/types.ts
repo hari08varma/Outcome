@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/simulation/types.ts
+ * Layerinfinite — lib/simulation/types.ts
  * ══════════════════════════════════════════════════════════════
  * Shared type definitions for the 3-tier simulation engine.
  * Everything depends on this — no runtime code, types only.

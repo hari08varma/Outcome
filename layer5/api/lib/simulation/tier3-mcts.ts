@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/simulation/tier3-mcts.ts
+ * Layerinfinite — lib/simulation/tier3-mcts.ts
  * ══════════════════════════════════════════════════════════════
  * Tier 3: Monte Carlo Tree Search over the Tier 2 world model.
  * Finds the optimal multi-step sequence, not just scores

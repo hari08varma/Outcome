@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 017: Extend degradation_alert_events
+-- LAYERINFINITE — Migration 017: Extend degradation_alert_events
 -- ============================================================
 -- Makes action_id, context_id, trend_delta nullable to support
 -- new alert types that may not reference a specific action/context.

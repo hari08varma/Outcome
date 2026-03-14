@@ -1,5 +1,5 @@
 """
-Layer5 — training/export_model.py
+Layerinfinite — training/export_model.py
 ══════════════════════════════════════════════════════════════
 Export trained LightGBM model to JSON format
 that the TypeScript inference code can read.

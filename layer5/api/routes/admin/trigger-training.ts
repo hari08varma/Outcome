@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/admin/trigger-training.ts
+ * Layerinfinite — routes/admin/trigger-training.ts
  * POST /v1/admin/trigger-training
  * ══════════════════════════════════════════════════════════════
  * Check training readiness and trigger training manually.

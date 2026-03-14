@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/admin/reinstate-sandbox.ts
+ * Layerinfinite — routes/admin/reinstate-sandbox.ts
  * POST /v1/admin/agents/:agent_id/sandbox-reinstate
  * ══════════════════════════════════════════════════════════════
  * Reinstates a suspended agent directly into the Sandbox protocol

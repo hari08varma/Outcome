@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 035: Reward Backpropagation Columns
+-- LAYERINFINITE — Migration 035: Reward Backpropagation Columns
 -- ============================================================
 -- Adds columns to fact_outcomes to track Temporal Difference
 -- (TD) reward adjustments. Safe to run multiple times.

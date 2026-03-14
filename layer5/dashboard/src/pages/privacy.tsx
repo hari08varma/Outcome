@@ -25,7 +25,7 @@ export default function PrivacyPolicy() {
                     </div>
                     <div>
                         <h3 style={{ color: '#00FF85', fontWeight: 600, marginBottom: '0.25rem' }}>Agent outcome data:</h3>
-                        <p style={{ margin: '0 0 0.5rem 0' }}>Action names, success/failure outcomes, response times, and context metadata that your AI agents log to Layer5.</p>
+                        <p style={{ margin: '0 0 0.5rem 0' }}>Action names, success/failure outcomes, response times, and context metadata that your AI agents log to Layerinfinite.</p>
                         <ul style={{ color: '#888888', margin: 0, paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                             <li>Used to: compute scores and recommendations.</li>
                             <li>Stored in: our Supabase PostgreSQL database.</li>
@@ -57,7 +57,7 @@ export default function PrivacyPolicy() {
                 <div style={{ color: '#DDDDDD', fontSize: '0.95rem' }}>
                     <p style={{ marginBottom: '0.5rem' }}>We use collected data exclusively to:</p>
                     <ul style={{ margin: '0 0 1rem 0', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        <li>Provide the Layer5 service</li>
+                        <li>Provide the Layerinfinite service</li>
                         <li>Compute action scores and recommendations</li>
                         <li>Detect anomalies in your agent performance</li>
                         <li>Authenticate API requests</li>
@@ -91,18 +91,18 @@ export default function PrivacyPolicy() {
                     <ul style={{ margin: '0 0 1rem 0', paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                         <li>Access your data: <code style={{ color: '#00FF85', background: '#111', padding: '0.1rem 0.3rem', borderRadius: '4px' }}>GET /v1/audit</code></li>
                         <li>Export your data: <code style={{ color: '#00FF85', background: '#111', padding: '0.1rem 0.3rem', borderRadius: '4px' }}>GET /v1/audit?format=csv</code></li>
-                        <li>Delete your data: email privacy@layer5.ai (We will delete all your data within 30 days)</li>
+                        <li>Delete your data: email privacy@layerinfinite.ai (We will delete all your data within 30 days)</li>
                         <li>Correct inaccurate data: contact us</li>
                     </ul>
                     <p style={{ marginBottom: '0.5rem' }}>Under DPDPA 2023 (India), you additionally have the right to nominate a representative to exercise rights on your behalf.</p>
-                    <p>To exercise any right: email privacy@layer5.ai</p>
+                    <p>To exercise any right: email privacy@layerinfinite.ai</p>
                 </div>
             </section>
 
             <section>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>5. COOKIES</h2>
                 <div style={{ color: '#DDDDDD', fontSize: '0.95rem' }}>
-                    <p>Layer5 does not use tracking cookies. We use localStorage only for session tokens (required for authentication).</p>
+                    <p>Layerinfinite does not use tracking cookies. We use localStorage only for session tokens (required for authentication).</p>
                 </div>
             </section>
 
@@ -133,7 +133,7 @@ export default function PrivacyPolicy() {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, borderBottom: '1px solid #1A1A1A', paddingBottom: '0.5rem', marginBottom: '1rem' }}>8. CONTACT</h2>
                 <div style={{ color: '#DDDDDD', fontSize: '0.95rem' }}>
                     <p style={{ marginBottom: '0.5rem' }}>For privacy inquiries or data deletion requests:</p>
-                    <p style={{ margin: '0 0 0.5rem 0', fontFamily: "'JetBrains Mono', monospace" }}>Email: privacy@layer5.ai</p>
+                    <p style={{ margin: '0 0 0.5rem 0', fontFamily: "'JetBrains Mono', monospace" }}>Email: privacy@layerinfinite.ai</p>
                     <p>Response time: within 30 business days.</p>
                 </div>
             </section>

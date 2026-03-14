@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: 3-Tier Outcome Scoring
+ * Layerinfinite — Unit Tests: 3-Tier Outcome Scoring
  * Tests computeEffectiveScore logic and outcome scoring routes.
  * Run: npm test (from api/)
  */

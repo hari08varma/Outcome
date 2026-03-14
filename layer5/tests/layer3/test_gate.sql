@@ -1,5 +1,5 @@
 /**
- * Layer5 — Phase 3 E2E Test Gate
+ * Layerinfinite — Phase 3 E2E Test Gate
  * Tests the API layer against live Supabase.
  * Run: node scripts/deploy.js sql tests/layer3/test_gate.sql
  * (or use the Supabase SQL editor for the SQL tests below)

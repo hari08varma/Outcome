@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/admin/actions.ts
+ * Layerinfinite — routes/admin/actions.ts
  * Admin action management endpoints.
  * ══════════════════════════════════════════════════════════════
  * POST /register-action   — register a new action

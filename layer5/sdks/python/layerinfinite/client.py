@@ -1,5 +1,5 @@
 """
-Layer5 SDK — client.py
+Layerinfinite SDK — client.py
 Synchronous HTTP client using httpx with retry logic.
 """
 
@@ -12,24 +12,24 @@ from typing import Any
 import httpx
 
 from .exceptions import (
-    Layer5AuthError,
-    Layer5Error,
-    Layer5NotFoundError,
-    Layer5RateLimitError,
-    Layer5ServerError,
+    LayerinfiniteAuthError,
+    LayerinfiniteError,
+    LayerinfiniteNotFoundError,
+    LayerinfiniteRateLimitError,
+    LayerinfiniteServerError,
 )
 from .models import GetScoresResponse, LogOutcomeRequest, LogOutcomeResponse
 
-logger = logging.getLogger("layer5")
+logger = logging.getLogger("layerinfinite")
 
 
-class Layer5Client:
+class LayerinfiniteClient:
     """
-    Synchronous client for the Layer5 Decision Intelligence API.
+    Synchronous client for the Layerinfinite Decision Intelligence API.
 
     Usage::
 
-        client = Layer5Client(api_key="layer5_your_key")
+        client = LayerinfiniteClient(api_key="layerinfinite_your_key")
         scores = client.get_scores(agent_id="my-agent", issue_type="billing")
         print(scores.top_action.action_name)
     """
@@ -50,13 +50,13 @@ class Layer5Client:
             timeout=timeout,
             headers={
                 "X-API-Key": api_key,
-                "User-Agent": "layer5-python-sdk/0.1.0",
+                "User-Agent": "layerinfinite-python-sdk/0.1.0",
                 "Accept": "application/json",
             },
         )
 
     # ── Context Manager ───────────────────────────────────────
-    def __enter__(self) -> "Layer5Client":
+    def __enter__(self) -> "LayerinfiniteClient":
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -72,33 +72,33 @@ class Layer5Client:
             body = {}
 
         if code == 401:
-            raise Layer5AuthError(
+            raise LayerinfiniteAuthError(
                 "Invalid or missing API key. Verify your X-API-Key header.",
                 status_code=code,
                 response_body=body,
             )
         if code == 404:
-            raise Layer5NotFoundError(
+            raise LayerinfiniteNotFoundError(
                 "Resource not found.",
                 status_code=code,
                 response_body=body,
             )
         if code == 429:
             retry_after = int(response.headers.get("Retry-After", 60))
-            raise Layer5RateLimitError(
+            raise LayerinfiniteRateLimitError(
                 f"Rate limit exceeded. Retry after {retry_after}s.",
                 status_code=code,
                 response_body=body,
                 retry_after=retry_after,
             )
         if code >= 500:
-            raise Layer5ServerError(
-                f"Layer5 server error [{code}]: {body.get('error', 'unknown error')}",
+            raise LayerinfiniteServerError(
+                f"Layerinfinite server error [{code}]: {body.get('error', 'unknown error')}",
                 status_code=code,
                 response_body=body,
             )
         if code >= 400:
-            raise Layer5Error(
+            raise LayerinfiniteError(
                 f"Request error [{code}]: {body.get('error', 'unknown')}",
                 status_code=code,
                 response_body=body,
@@ -141,10 +141,9 @@ class Layer5Client:
                 self._raise_for_status(response)
                 return response
 
-            except (Layer5AuthError, Layer5NotFoundError, Layer5Error) as exc:
-                # Auth/client errors — never retry
+            except (LayerinfiniteAuthError, LayerinfiniteNotFoundError, LayerinfiniteError) as exc:
                 raise exc from None
-            except (Layer5RateLimitError, Layer5ServerError) as exc:
+            except (LayerinfiniteRateLimitError, LayerinfiniteServerError) as exc:
                 last_exc = exc
                 if attempt >= self._max_retries:
                     raise
@@ -152,14 +151,14 @@ class Layer5Client:
                 last_exc = exc
                 logger.warning("Request timeout (attempt %d/%d).", attempt + 1, self._max_retries)
                 if attempt >= self._max_retries:
-                    raise Layer5Error(f"Request timed out after {self._timeout}s") from exc
+                    raise LayerinfiniteError(f"Request timed out after {self._timeout}s") from exc
             except httpx.RequestError as exc:
                 last_exc = exc
                 logger.warning("Request error: %s (attempt %d/%d).", exc, attempt + 1, self._max_retries)
                 if attempt >= self._max_retries:
-                    raise Layer5Error(f"Network error: {exc}") from exc
+                    raise LayerinfiniteError(f"Network error: {exc}") from exc
 
-        raise Layer5Error("Max retries exceeded") from last_exc
+        raise LayerinfiniteError("Max retries exceeded") from last_exc
 
     # ── Public API ────────────────────────────────────────────
     def get_scores(
@@ -180,9 +179,9 @@ class Layer5Client:
             GetScoresResponse with ranked_actions, top_action, and policy.
 
         Raises:
-            Layer5AuthError: Invalid API key.
-            Layer5RateLimitError: Too many requests.
-            Layer5ServerError: Server-side error.
+            LayerinfiniteAuthError: Invalid API key.
+            LayerinfiniteRateLimitError: Too many requests.
+            LayerinfiniteServerError: Server-side error.
         """
         params = {
             "agent_id": agent_id,
@@ -192,7 +191,6 @@ class Layer5Client:
         logger.debug("GET /v1/get-scores agent_id=%s issue_type=%s", agent_id, issue_type)
         response = self._request_with_retry("GET", "/v1/get-scores", params=params)
         data = response.json()
-        # Inject agent_id if not returned by the server
         if "agent_id" not in data:
             data["agent_id"] = agent_id
         return GetScoresResponse.model_validate(data)
@@ -211,9 +209,9 @@ class Layer5Client:
             LogOutcomeResponse with trust_score and policy recommendation.
 
         Raises:
-            Layer5AuthError: Invalid API key.
-            Layer5RateLimitError: Too many requests.
-            Layer5ServerError: Server-side error.
+            LayerinfiniteAuthError: Invalid API key.
+            LayerinfiniteRateLimitError: Too many requests.
+            LayerinfiniteServerError: Server-side error.
         """
         logger.debug(
             "POST /v1/log-outcome agent_id=%s action_id=%s success=%s",

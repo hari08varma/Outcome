@@ -1,6 +1,6 @@
 {
-    "name": "@layer5/sdk",
-    "version": "0.1.0",
+    "name": "@layerinfinite/sdk",
+    "version": "0.1.1",
     "description": "Decision intelligence layer for AI agents",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
@@ -23,9 +23,10 @@
         "agents",
         "llm",
         "decision-intelligence",
+        "layerinfinite",
         "mlops"
     ],
-    "author": "Layer5",
+    "author": "Layerinfinite",
     "license": "MIT",
     "repository": {
         "type": "git",

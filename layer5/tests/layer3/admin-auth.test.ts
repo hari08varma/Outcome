@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Admin Authentication
+ * Layerinfinite — Unit Tests: Admin Authentication
  * Tests the admin-auth middleware and reinstate-agent logic.
  * Run: npx vitest run tests/layer3/admin-auth.test.ts
  */

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 005: All Indexes (IDEMPOTENT)
+-- LAYERINFINITE — Migration 005: All Indexes (IDEMPOTENT)
 -- ============================================================
 -- CRITICAL: All indexes MUST be created BEFORE any data
 -- is written. Creating indexes after data load = potential

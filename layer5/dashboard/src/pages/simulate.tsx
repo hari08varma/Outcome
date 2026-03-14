@@ -632,7 +632,7 @@ export default function SimulatePage() {
 
     // ── API key ─────────────────────────────────────────────
     const [apiKey, setApiKey] = useState(() => {
-        try { return sessionStorage.getItem('layer5_sim_key') ?? ''; } catch { return ''; }
+        try { return sessionStorage.getItem('layerinfinite_sim_key') ?? ''; } catch { return ''; }
     });
     const [showApiKeyField, setShowApiKeyField] = useState(!apiKey);
 
@@ -679,7 +679,7 @@ export default function SimulatePage() {
     function validate(): string[] {
         const errs: string[] = [];
         if (!selectedAgentId) errs.push('Select an agent first');
-        if (!apiKey.trim()) errs.push('Enter your Layer5 API key');
+        if (!apiKey.trim()) errs.push('Enter your Layerinfinite API key');
         const filled = contextPairs.filter((p) => p.key.trim());
         if (filled.length === 0) errs.push('Add at least one context field');
         if (sequence.length === 0) errs.push('Proposed sequence must have 1–5 actions');
@@ -719,7 +719,7 @@ export default function SimulatePage() {
         }
 
         // Persist API key in session
-        try { sessionStorage.setItem('layer5_sim_key', apiKey); } catch { /* private mode */ }
+        try { sessionStorage.setItem('layerinfinite_sim_key', apiKey); } catch { /* private mode */ }
 
         try {
             const res = await fetch(`${API_BASE}/v1/simulate`, {
@@ -777,7 +777,7 @@ export default function SimulatePage() {
                 ...prev,
             ].slice(0, 5));
         } catch {
-            setError('Cannot reach Layer5. Check your connection.');
+            setError('Cannot reach Layerinfinite. Check your connection.');
             setLoading(false);
         }
     }
@@ -874,7 +874,7 @@ export default function SimulatePage() {
                     {/* API Key */}
                     <div style={sectionCard}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <label style={labelStyle}>Layer5 API Key</label>
+                            <label style={labelStyle}>Layerinfinite API Key</label>
                             {apiKey && !showApiKeyField && (
                                 <button onClick={() => setShowApiKeyField(true)} style={toggleBtn}>Change</button>
                             )}
@@ -955,7 +955,7 @@ export default function SimulatePage() {
                                     availableActions={availableActions}
                                     onChange={setEpisodeHistory}
                                     label="Actions already taken in this episode"
-                                    subtext="Tell Layer5 what has been tried already."
+                                    subtext="Tell Layerinfinite what has been tried already."
                                     emptyText="No history added"
                                 />
                             </div>
@@ -1089,7 +1089,7 @@ export default function SimulatePage() {
                                 maxWidth: '380px',
                                 margin: '0 auto 1.5rem',
                             }}>
-                                Layer5 will predict the outcome of your proposed action sequence before your agent runs it in the real environment.
+                                Layerinfinite will predict the outcome of your proposed action sequence before your agent runs it in the real environment.
                             </div>
                             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                                 {[

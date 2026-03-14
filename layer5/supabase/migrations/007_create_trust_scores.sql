@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 007: Agent Trust Scores & Audit
+-- LAYERINFINITE — Migration 007: Agent Trust Scores & Audit
 -- ============================================================
 -- Creates agent_trust_scores and agent_trust_audit tables.
 -- Required by Phase 5 (Adaptive Policy Engine) for real trust

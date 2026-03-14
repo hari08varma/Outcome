@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 029: Idempotency Tracking
+-- LAYERINFINITE — Migration 029: Idempotency Tracking
 -- ============================================================
 -- Adds idempotency tracking for fact_outcomes to prevent
 -- duplicates during client network retries.

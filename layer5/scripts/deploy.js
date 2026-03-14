@@ -1,5 +1,5 @@
 /**
- * Layer5 — deploy.js
+ * Layerinfinite — deploy.js
  * Generic deployer: runs a specific set of migration files
  * against the live Supabase database.
  *
@@ -82,7 +82,7 @@ async function main() {
     const sqlFile = args[1];
 
     console.log('\n═══════════════════════════════════════════════════');
-    console.log(`  LAYER5 — Deploy: ${target.toUpperCase()}`);
+    console.log(`  LAYERINFINITE — Deploy: ${target.toUpperCase()}`);
     console.log('═══════════════════════════════════════════════════\n');
 
     const client = new Client({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });

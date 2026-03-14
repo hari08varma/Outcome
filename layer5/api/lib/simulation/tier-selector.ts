@@ -1,5 +1,5 @@
 /**
- * Layer5 — lib/simulation/tier-selector.ts
+ * Layerinfinite — lib/simulation/tier-selector.ts
  * ══════════════════════════════════════════════════════════════
  * Automatic tier selection per prediction.
  * Central orchestration of all three tiers.

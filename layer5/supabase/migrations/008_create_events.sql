@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 008: Temporal Event Tables
+-- LAYERINFINITE — Migration 008: Temporal Event Tables
 -- ============================================================
 -- Phase 4 — Trend Detection & Degradation Alerting
 --

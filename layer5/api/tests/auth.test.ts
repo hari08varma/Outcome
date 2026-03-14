@@ -13,10 +13,10 @@ afterEach(() => {
 
 describe('Dev Auth Middleware Bypass Isolation', () => {
 
-    it('devAuthMiddleware rejects LAYER5_INTERNAL_SECRET as API key', async () => {
+    it('devAuthMiddleware rejects LAYERINFINITE_INTERNAL_SECRET as API key', async () => {
         // Step 1: Mock environment configuration
-        vi.stubEnv('LAYER5_INTERNAL_SECRET', 'secret-abc');
-        vi.stubEnv('LAYER5_DEV_API_KEY', 'dev-xyz');
+        vi.stubEnv('LAYERINFINITE_INTERNAL_SECRET', 'secret-abc');
+        vi.stubEnv('LAYERINFINITE_DEV_API_KEY', 'dev-xyz');
 
         // Setup minimal app to mount the exact dev auth middleware behavior route
         const app = new Hono();
@@ -62,11 +62,11 @@ describe('Dev Auth Middleware Bypass Isolation', () => {
         expect(nextMock).toHaveBeenCalled();
     });
 
-    it('devAuthMiddleware accepts LAYER5_DEV_API_KEY in dev', async () => {
+    it('devAuthMiddleware accepts LAYERINFINITE_DEV_API_KEY in dev', async () => {
         // Step 1: Mock dev bypass explicit conditions
         vi.stubEnv('NODE_ENV', 'development');
-        vi.stubEnv('LAYER5_DEV_BYPASS', 'true');
-        vi.stubEnv('LAYER5_DEV_API_KEY', 'dev-xyz');
+        vi.stubEnv('LAYERINFINITE_DEV_BYPASS', 'true');
+        vi.stubEnv('LAYERINFINITE_DEV_API_KEY', 'dev-xyz');
 
         const { devAuthMiddleware } = await import('../middleware/auth.js');
 

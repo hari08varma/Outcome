@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/admin/test-notification.ts
+ * Layerinfinite — routes/admin/test-notification.ts
  * POST /v1/admin/test-notification
  * ══════════════════════════════════════════════════════════════
  * Sends a test notification to a specific channel.
@@ -48,7 +48,7 @@ testNotificationRouter.post('/', async (c) => {
         alert_id: '00000000-0000-0000-0000-000000000000',
         alert_type: 'latency_spike',
         severity: 'warning',
-        message: 'This is a test notification from Layer5. Your alert channel is configured correctly.',
+        message: 'This is a test notification from Layerinfinite. Your alert channel is configured correctly.',
         agent_id: null,
         action_name: 'test_action',
         metadata: { test: true },
@@ -66,7 +66,7 @@ testNotificationRouter.post('/', async (c) => {
                 blocks: [
                     {
                         type: 'header',
-                        text: { type: 'plain_text', text: '🟡 Layer5 Test: Latency Spike' },
+                        text: { type: 'plain_text', text: '🟡 Layerinfinite Test: Latency Spike' },
                     },
                     {
                         type: 'section',
@@ -94,16 +94,16 @@ testNotificationRouter.post('/', async (c) => {
         } else if (channel.channel_type === 'webhook') {
             const payload = {
                 ...testAlert,
-                source: 'layer5',
+                source: 'layerinfinite',
             };
 
             const res = await fetch(channel.destination, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'User-Agent': 'Layer5-Alerts/1.0',
-                    'X-Layer5-Alert-Type': 'latency_spike',
-                    'X-Layer5-Severity': 'warning',
+                    'User-Agent': 'Layerinfinite-Alerts/1.0',
+                    'X-Layerinfinite-Alert-Type': 'latency_spike',
+                    'X-Layerinfinite-Severity': 'warning',
                 },
                 body: JSON.stringify(payload),
                 signal: AbortSignal.timeout(10000),
@@ -124,7 +124,7 @@ testNotificationRouter.post('/', async (c) => {
                 }, 200);
             }
 
-            const fromEmail = process.env.ALERT_FROM_EMAIL ?? 'alerts@layer5.dev';
+            const fromEmail = process.env.ALERT_FROM_EMAIL ?? 'alerts@layerinfinite.dev';
             const res = await fetch('https://api.resend.com/emails', {
                 method: 'POST',
                 headers: {
@@ -134,7 +134,7 @@ testNotificationRouter.post('/', async (c) => {
                 body: JSON.stringify({
                     from: fromEmail,
                     to: [channel.destination],
-                    subject: '[Layer5] TEST: Latency Spike detected',
+                    subject: '[Layerinfinite] TEST: Latency Spike detected',
                     text: testAlert.message,
                     html: `<p>${testAlert.message}</p>`,
                 }),

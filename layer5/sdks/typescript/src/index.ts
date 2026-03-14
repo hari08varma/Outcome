@@ -1,6 +1,6 @@
-// Layer5 SDK — index.ts
-// Public barrel export for @layer5/sdk
+// Layerinfinite SDK — index.ts
+// Public barrel export for @layerinfinite/sdk
 
-export { Layer5Client } from './client.js';
+export { LayerinfiniteClient } from './client.js';
 export * from './types.js';
 export * from './errors.js';

@@ -332,7 +332,7 @@ export default function NotificationSettings() {
                         Settings → Notifications
                     </h1>
                     <p style={{ fontSize: '0.82rem', color: '#94a3b8', margin: '0.25rem 0 0' }}>
-                        Configure where Layer5 sends alert notifications.
+                        Configure where Layerinfinite sends alert notifications.
                     </p>
                 </div>
                 {!showForm && (

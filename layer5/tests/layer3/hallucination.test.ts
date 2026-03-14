@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Hallucination Prevention
+ * Layerinfinite — Unit Tests: Hallucination Prevention
  * Tests validate-action.ts against dim_actions registry.
  * Run: npx vitest run tests/layer3/hallucination.test.ts
  */

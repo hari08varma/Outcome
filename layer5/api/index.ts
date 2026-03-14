@@ -1,5 +1,5 @@
 /**
- * Layer5 — api/index.ts
+ * Layerinfinite — api/index.ts
  * ══════════════════════════════════════════════════════════════
  * Main Hono application entry point.
  *
@@ -36,7 +36,7 @@ const REQUIRED_ENV_VARS = [
 ];
 
 if (process.env.NODE_ENV === 'production') {
-    REQUIRED_ENV_VARS.push('LAYER5_INTERNAL_SECRET');
+    REQUIRED_ENV_VARS.push('LAYERINFINITE_INTERNAL_SECRET');
 }
 
 const missing = REQUIRED_ENV_VARS.filter(
@@ -53,12 +53,12 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
-// In development, LAYER5_DEV_API_KEY is optional 
+// In development, LAYERINFINITE_DEV_API_KEY is optional 
 // (falls back to real auth). Never required in production.
 if (process.env.NODE_ENV !== 'production' &&
-    !process.env.LAYER5_DEV_API_KEY) {
+    !process.env.LAYERINFINITE_DEV_API_KEY) {
     console.warn(
-        '⚠️  LAYER5_DEV_API_KEY not set. ' +
+        '⚠️  LAYERINFINITE_DEV_API_KEY not set. ' +
         'Dev bypass will require real API keys. ' +
         'Set it in .env for local testing convenience.'
     );
@@ -87,8 +87,8 @@ const PORT = parseInt(process.env.API_PORT ?? '3000', 10);
 
 // ── FATAL: Dev bypass CANNOT be active in production ──────────
 if (process.env.NODE_ENV === 'production' &&
-    process.env.LAYER5_DEV_BYPASS === 'true') {
-    console.error('FATAL: Dev bypass cannot be active in production. Set LAYER5_DEV_BYPASS=false.');
+    process.env.LAYERINFINITE_DEV_BYPASS === 'true') {
+    console.error('FATAL: Dev bypass cannot be active in production. Set LAYERINFINITE_DEV_BYPASS=false.');
     process.exit(1);
 }
 
@@ -137,7 +137,7 @@ app.use('*', async (c, next) => {
     } catch (e: any) {
         if (e?.message === 'TIMEOUT') {
             const elapsed = Date.now() - start;
-            console.warn(`[layer5] Request timeout on ${c.req.path} after ${elapsed}ms`);
+            console.warn(`[layerinfinite] Request timeout on ${c.req.path} after ${elapsed}ms`);
             return c.json(
                 { error: 'Request timeout', code: 'GATEWAY_TIMEOUT', timeout_ms: REQUEST_TIMEOUT_MS },
                 504
@@ -151,7 +151,7 @@ app.use('*', async (c, next) => {
 
 // ── Health check (no auth, no rate limiting) ──────────────────
 app.get('/', (c) => c.json({
-    service: 'Layer5 Decision Intelligence API',
+    service: 'Layerinfinite Decision Intelligence API',
     version: '1.0.0',
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -217,7 +217,7 @@ app.get('/health', async (c) => {
 // ── Internal: scoring cache refresh ───────────────────────────
 app.post('/internal/refresh-score-cache', async (c) => {
     const auth = c.req.header('Authorization');
-    const internalSecret = process.env.LAYER5_INTERNAL_SECRET;
+    const internalSecret = process.env.LAYERINFINITE_INTERNAL_SECRET;
     if (!internalSecret || auth !== `Bearer ${internalSecret}`) {
         return c.json({ error: 'Unauthorized' }, 401);
     }
@@ -282,7 +282,7 @@ app.onError((err, c) => {
         });
     }
 
-    console.error('[layer5] Unhandled error:', err.message);
+    console.error('[layerinfinite] Unhandled error:', err.message);
     return c.json(
         { error: 'Internal server error', code: 'INTERNAL_ERROR', message: err.message },
         500
@@ -294,9 +294,9 @@ serve({
     fetch: app.fetch,
     port: PORT,
 }, (info) => {
-    console.log(`\n🚀 Layer5 API running on http://localhost:${info.port}`);
+    console.log(`\n🚀 Layerinfinite API running on http://localhost:${info.port}`);
     console.log(`   Mode:       ${process.env.NODE_ENV ?? 'development'}`);
-    console.log(`   Dev bypass: ${process.env.LAYER5_DEV_BYPASS === 'true' ? '⚠️  ACTIVE' : 'disabled'}`);
+    console.log(`   Dev bypass: ${process.env.LAYERINFINITE_DEV_BYPASS === 'true' ? '⚠️  ACTIVE' : 'disabled'}`);
     console.log(`   Endpoints:  POST /v1/log-outcome | GET /v1/get-scores | GET /v1/get-patterns | GET /v1/audit`);
     console.log(`   Admin:      POST /v1/admin/register-action | GET /v1/admin/actions | POST /v1/admin/reinstate-agent`);
     console.log(`   Rate limit: Tiered (1K/2K/5K per min by customer tier)\n`);

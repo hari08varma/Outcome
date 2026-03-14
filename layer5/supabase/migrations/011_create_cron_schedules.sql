@@ -6,7 +6,7 @@
 --   2. pg_net extension enabled (for http_post)
 --   3. Set these in Supabase Dashboard → Settings → Database → Configuration:
 --        app.supabase_url = https://[project-ref].supabase.co
---        app.layer5_internal_secret = [generate with openssl rand -hex 32]
+--        app.layerinfinite_internal_secret = [generate with openssl rand -hex 32]
 -- ══════════════════════════════════════════════════════════════
 
 -- Enable pg_cron extension
@@ -26,7 +26,7 @@ SELECT cron.schedule(
            '/functions/v1/scoring-engine',
     headers := jsonb_build_object(
       'Authorization',
-      'Bearer ' || current_setting('app.layer5_internal_secret', true),
+      'Bearer ' || current_setting('app.layerinfinite_internal_secret', true),
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
@@ -45,7 +45,7 @@ SELECT cron.schedule(
            '/functions/v1/trust-updater',
     headers := jsonb_build_object(
       'Authorization',
-      'Bearer ' || current_setting('app.layer5_internal_secret', true),
+      'Bearer ' || current_setting('app.layerinfinite_internal_secret', true),
       'Content-Type', 'application/json'
     ),
     body := '{"mode":"batch"}'::jsonb
@@ -64,7 +64,7 @@ SELECT cron.schedule(
            '/functions/v1/trend-detector',
     headers := jsonb_build_object(
       'Authorization',
-      'Bearer ' || current_setting('app.layer5_internal_secret', true),
+      'Bearer ' || current_setting('app.layerinfinite_internal_secret', true),
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
@@ -84,7 +84,7 @@ SELECT cron.schedule(
            '/functions/v1/pruning-scheduler',
     headers := jsonb_build_object(
       'Authorization',
-      'Bearer ' || current_setting('app.layer5_internal_secret', true),
+      'Bearer ' || current_setting('app.layerinfinite_internal_secret', true),
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb

@@ -1,5 +1,5 @@
 /**
- * Layer5 — routes/simulate.ts
+ * Layerinfinite — routes/simulate.ts
  * POST /v1/simulate
  * ══════════════════════════════════════════════════════════════
  * Public API for the 3-tier simulation engine.

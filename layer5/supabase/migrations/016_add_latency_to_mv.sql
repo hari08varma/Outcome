@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 016: Add Latency Stats to mv_action_scores
+-- LAYERINFINITE — Migration 016: Add Latency Stats to mv_action_scores
 -- ============================================================
 -- Adds p50, p95 latency, baseline p95 (14-30 days ago),
 -- and spike ratio (current p95 / baseline p95).

@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Temporal Memory & Trend Detection (Phase 4)
+ * Layerinfinite — Unit Tests: Temporal Memory & Trend Detection (Phase 4)
  * Tests trend delta calculation, trend labels, degradation alerting
  * logic, and score flip (contradiction) detection.
  *

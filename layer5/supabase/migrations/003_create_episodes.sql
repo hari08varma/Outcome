@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 003: Episodes, Archive & Institutional Knowledge
+-- LAYERINFINITE — Migration 003: Episodes, Archive & Institutional Knowledge
 -- ============================================================
 -- Creates the hierarchical memory tables:
 --   fact_episodes             — Level 2 episodic memory
@@ -53,7 +53,7 @@ CREATE TABLE fact_outcomes_archive (
 -- ────────────────────────────────────────────
 -- DIMENSION TABLE 5: Institutional Knowledge
 -- Cross-customer anonymized patterns.
--- Retained forever — Layer5's network effect moat.
+-- Retained forever — Layerinfinite's network effect moat.
 -- ────────────────────────────────────────────
 CREATE TABLE dim_institutional_knowledge (
   pattern_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),

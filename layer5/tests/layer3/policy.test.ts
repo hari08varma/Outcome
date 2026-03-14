@@ -1,5 +1,5 @@
 /**
- * Layer5 — Unit Tests: Policy Engine
+ * Layerinfinite — Unit Tests: Policy Engine
  * Tests the explore/exploit/escalate decision tree.
  * Run: npx vitest run tests/layer3/policy.test.ts
  */

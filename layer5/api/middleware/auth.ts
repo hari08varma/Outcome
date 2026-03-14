@@ -1,5 +1,5 @@
 /**
- * Layer5 — middleware/auth.ts
+ * Layerinfinite — middleware/auth.ts
  * ══════════════════════════════════════════════════════════════
  * API key authentication middleware for Hono.
  *
@@ -7,8 +7,8 @@
  * Sets: agent_id, customer_id, agent_name, customer_tier
  *
  * DEV BYPASS: Only active when BOTH conditions are met:
- *   NODE_ENV === 'development' AND LAYER5_DEV_BYPASS === 'true'
- * If LAYER5_DEV_BYPASS=true in production → hard crash (refuse to start).
+ *   NODE_ENV === 'development' AND LAYERINFINITE_DEV_BYPASS === 'true'
+ * If LAYERINFINITE_DEV_BYPASS=true in production → hard crash (refuse to start).
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -80,7 +80,7 @@ export function invalidateAuthCacheByAgentId(agentId: string) {
 export async function authMiddleware(c: Context, next: Next): Promise<Response | void> {
     // ── DEV BYPASS — NEVER active in production ────────────────
     if (process.env.NODE_ENV === 'development' &&
-        process.env.LAYER5_DEV_BYPASS === 'true') {
+        process.env.LAYERINFINITE_DEV_BYPASS === 'true') {
         console.warn('⚠️  DEV BYPASS ACTIVE — NEVER deploy with this enabled');
         c.set('agent_id', process.env.DEV_AGENT_ID ?? 'd0000000-0000-0000-0000-000000000001');
         c.set('customer_id', process.env.DEV_CUSTOMER_ID ?? 'a0000000-0000-0000-0000-000000000001');
@@ -167,7 +167,7 @@ export async function devAuthMiddleware(c: Context, next: Next): Promise<Respons
 
     const apiKey = c.req.header('X-API-Key') ?? c.req.header('Authorization')?.replace('Bearer ', '');
 
-    if (apiKey && apiKey === process.env.LAYER5_DEV_API_KEY) {
+    if (apiKey && apiKey === process.env.LAYERINFINITE_DEV_API_KEY) {
         // Inject demo agent — ONLY in development
         c.set('agent_id', 'd0000000-0000-0000-0000-000000000001');
         c.set('customer_id', 'a0000000-0000-0000-0000-000000000001');

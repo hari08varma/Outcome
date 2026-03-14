@@ -24,7 +24,7 @@ const FONT_MONO = "'JetBrains Mono', 'Fira Code', monospace";
 
 // ─── Terminal animation data ─────────────────────────
 const TERMINAL_STEPS = [
-    { type: 'cmd', text: "> layer5.getScores({ agent_id: 'bot-1' })" },
+    { type: 'cmd', text: "> layerinfinite.getScores({ agent_id: 'bot-1' })" },
     {
         type: 'response', lines: [
             { icon: '✓', text: 'update_app', score: '0.85', note: '← recommended', color: C.accent },
@@ -32,7 +32,7 @@ const TERMINAL_STEPS = [
             { icon: '✗', text: 'restart', score: '0.07', note: '← avoid', color: C.error },
         ]
     },
-    { type: 'cmd', text: '> layer5.logOutcome({ success: true })' },
+    { type: 'cmd', text: '> layerinfinite.logOutcome({ success: true })' },
     { type: 'result', text: '✓ Score updated. Model learning...' },
 ];
 
@@ -375,7 +375,7 @@ export default function Auth() {
                                 {mode === 'signup' ? 'Start building smarter agents.' : 'Welcome back.'}
                             </h1>
                             <p style={{ fontFamily: FONT_SANS, fontSize: 14, color: C.muted, marginTop: 8, marginBottom: 32 }}>
-                                {mode === 'signup' ? 'Free during beta. No credit card required.' : 'Sign in to your Layer5 dashboard.'}
+                                {mode === 'signup' ? 'Free during beta. No credit card required.' : 'Sign in to your Layerinfinite dashboard.'}
                             </p>
 
                             {/* Google OAuth */}
@@ -549,7 +549,7 @@ function TerminalWindow() {
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#FEBC2E' }} />
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#28C840' }} />
                 <span style={{ flex: 1 }} />
-                <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: C.muted }}>layer5-cli</span>
+                <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: C.muted }}>layerinfinite-cli</span>
             </div>
             {/* Content */}
             <div style={{ padding: '16px 18px', minHeight: 140 }}>

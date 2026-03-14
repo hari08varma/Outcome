@@ -1,24 +1,24 @@
 apiVersion: run.googleapis.com/v1
 kind: Job
 metadata:
-  name: layer5-world-model-trainer
+  name: layerinfinite-world-model-trainer
   annotations:
     run.googleapis.com/launch-stage: GA
 spec:
   template:
     spec:
       containers:
-        - image: gcr.io/[PROJECT_ID]/layer5-training:latest
+        - image: gcr.io/[PROJECT_ID]/layerinfinite-training:latest
           env:
             - name: SUPABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: layer5-secrets
+                  name: layerinfinite-secrets
                   key: SUPABASE_URL
             - name: SUPABASE_SERVICE_ROLE_KEY
               valueFrom:
                 secretKeyRef:
-                  name: layer5-secrets
+                  name: layerinfinite-secrets
                   key: SUPABASE_SERVICE_ROLE_KEY
           resources:
             limits:

@@ -1,5 +1,5 @@
 -- ============================================================
--- LAYER5 — Migration 018: Coordinated Failure Detection Function
+-- LAYERINFINITE — Migration 018: Coordinated Failure Detection Function
 -- ============================================================
 -- SQL function called by trend-detector Edge Function.
 -- Detects 3+ agents failing the SAME action within a time window.

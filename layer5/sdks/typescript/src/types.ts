@@ -1,4 +1,4 @@
-// Layer5 SDK — types.ts
+// Layerinfinite SDK — types.ts
 // Shared TypeScript interfaces for request/response payloads.
 
 export interface ScoredAction {
@@ -45,7 +45,7 @@ export interface LogOutcomeResponse {
     policy: string;
 }
 
-export interface Layer5Config {
+export interface LayerinfiniteConfig {
     apiKey: string;
     /** Default: https://your-app.railway.app */
     baseUrl?: string;

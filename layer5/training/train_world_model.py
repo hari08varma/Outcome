@@ -1,5 +1,5 @@
 """
-Layer5 — training/train_world_model.py
+Layerinfinite — training/train_world_model.py
 ══════════════════════════════════════════════════════════════
 Main training script. Run weekly via cron.
 Reads from Supabase, trains LightGBM, validates,
