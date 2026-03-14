@@ -1,10 +1,47 @@
 {
     "name": "@layer5/sdk",
     "version": "0.1.0",
-    "description": "Layer5 decision intelligence SDK",
-    "main": "dist/index.cjs",
-    "module": "dist/index.js",
+    "description": "Decision intelligence layer for AI agents",
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
     "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsup src/index.ts --format cjs,esm --dts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "npm run build && npm run typecheck"
+    },
+    "keywords": [
+        "ai",
+        "agents",
+        "llm",
+        "decision-intelligence",
+        "mlops"
+    ],
+    "author": "Layer5",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/hari08varma/Outcome"
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "dependencies": {},
+    "devDependencies": {
+        "tsup": "^8.0.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.4.0",
+        "@vitest/coverage-v8": "^1.4.0"
+    },
     "publishConfig": {
         "access": "public"
     }
