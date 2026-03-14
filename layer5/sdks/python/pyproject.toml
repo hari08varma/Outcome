@@ -1,6 +1,6 @@
 [project]
 name = "layerinfinite-sdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Decision intelligence layer for AI agents — Layerinfinite"
 readme = "README.md"
 license = { text = "MIT" }
