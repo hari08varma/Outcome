@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Privacy Policy | Layer5</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"
+        rel="stylesheet" />
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            green: '#00FF85',
+                            dark: '#000000',
+                            gray: '#111111',
+                            border: '#1A1A1A',
+                            textMuted: '#888888',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-black text-white font-sans selection:bg-brand-green selection:text-black">
+    <!-- BEGIN: Navigation -->
+    <nav class="fixed top-0 w-full z-50 border-b border-brand-border bg-black/80 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <a href="/"><span class="text-2xl font-bold tracking-tighter">Layer<span
+                            class="text-brand-green">5</span></span></a>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="/auth?mode=login"
+                    class="text-sm font-medium text-brand-textMuted hover:text-white transition-colors">Sign In</a>
+                <a href="/auth?mode=signup"
+                    class="bg-brand-green text-black px-6 py-2.5 text-sm font-bold tracking-tight hover:bg-white transition-all">Get
+                    Started Free</a>
+            </div>
+        </div>
+    </nav>
+    <!-- END: Navigation -->
+
+    <main class="max-w-4xl mx-auto px-6 pt-32 pb-20">
+        <h1 class="text-4xl md:text-5xl font-bold tracking-tight mb-4">Privacy Policy</h1>
+        <div class="text-brand-textMuted text-sm font-mono mb-12">
+            <p>Effective date: March 13, 2026</p>
+            <p>Last updated: March 13, 2026</p>
+        </div>
+
+        <div class="space-y-12 text-gray-300">
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">1. DATA WE COLLECT</h2>
+                <div class="space-y-6">
+                    <div>
+                        <h3 class="font-bold text-brand-green mb-1">Account data:</h3>
+                        <p class="mb-1">Email address and name (when you sign up with Google OAuth or email/password).
+                        </p>
+                        <ul class="list-disc pl-5 text-sm text-brand-textMuted">
+                            <li>Used to: identify your account.</li>
+                            <li>Stored in: Supabase Auth.</li>
+                            <li>Retained until: account deletion.</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-brand-green mb-1">Agent outcome data:</h3>
+                        <p class="mb-1">Action names, success/failure outcomes, response times, and context metadata
+                            that your AI agents log to Layer5.</p>
+                        <ul class="list-disc pl-5 text-sm text-brand-textMuted">
+                            <li>Used to: compute scores and recommendations.</li>
+                            <li>Stored in: our Supabase PostgreSQL database.</li>
+                            <li>Retained: 90 days hot storage, 365 days archive.</li>
+                            <li>Deleted: on account deletion request.</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-brand-green mb-1">API keys:</h3>
+                        <p class="mb-1">Hashed API keys (we store the hash, not the key).</p>
+                        <ul class="list-disc pl-5 text-sm text-brand-textMuted">
+                            <li>Used to: authenticate API requests.</li>
+                            <li>Retained until: key revocation or account deletion.</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-brand-green mb-1">Usage data:</h3>
+                        <p class="mb-1">Request logs (IP address, endpoint, timestamp).</p>
+                        <ul class="list-disc pl-5 text-sm text-brand-textMuted">
+                            <li>Used to: rate limiting and abuse prevention.</li>
+                            <li>Retained: 30 days.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">2. HOW WE USE YOUR DATA
+                </h2>
+                <p class="mb-2">We use collected data exclusively to:</p>
+                <ul class="list-disc pl-5 text-sm mb-4 space-y-1">
+                    <li>Provide the Layer5 service</li>
+                    <li>Compute action scores and recommendations</li>
+                    <li>Detect anomalies in your agent performance</li>
+                    <li>Authenticate API requests</li>
+                </ul>
+                <p class="mb-2 text-red-400">We do NOT:</p>
+                <ul class="list-disc pl-5 text-sm space-y-1">
+                    <li>Sell your data to third parties</li>
+                    <li>Use your agent outcome data to train models for other customers</li>
+                    <li>Share identifiable data with advertisers</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">3. DATA STORAGE AND
+                    SECURITY</h2>
+                <p class="mb-4">Data is stored in Supabase (PostgreSQL) hosted in the ap-south-1 region.</p>
+                <p class="mb-2">Access controls:</p>
+                <ul class="list-disc pl-5 text-sm space-y-1">
+                    <li>Row Level Security (RLS) ensures each customer sees only their own data</li>
+                    <li>API keys are stored as hashes (SHA-256)</li>
+                    <li>Service role credentials are never exposed in client-facing responses</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">4. YOUR RIGHTS</h2>
+                <p class="mb-2">You have the right to:</p>
+                <ul class="list-disc pl-5 text-sm space-y-1 mb-4">
+                    <li>Access your data: GET /v1/audit</li>
+                    <li>Export your data: GET /v1/audit?format=csv</li>
+                    <li>Delete your data: email privacy@layer5.ai (We will delete all your data within 30 days)</li>
+                    <li>Correct inaccurate data: contact us</li>
+                </ul>
+                <p class="text-sm">Under DPDPA 2023 (India), you additionally have the right to nominate a
+                    representative to exercise rights on your behalf.</p>
+                <p class="text-sm mt-2">To exercise any right: email privacy@layer5.ai</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">5. COOKIES</h2>
+                <p class="text-sm">Layer5 does not use tracking cookies. We use localStorage only for session tokens
+                    (required for authentication).</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">6. THIRD-PARTY SERVICES
+                </h2>
+                <ul class="list-none space-y-2 text-sm">
+                    <li><strong class="text-white">Supabase:</strong> Database and authentication.<br /><a
+                            href="https://supabase.com/privacy"
+                            class="text-brand-green hover:underline">https://supabase.com/privacy</a></li>
+                    <li><strong class="text-white">Google OAuth:</strong> Sign-in authentication.<br /><a
+                            href="https://policies.google.com/privacy"
+                            class="text-brand-green hover:underline">https://policies.google.com/privacy</a></li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">7. CHANGES TO THIS
+                    POLICY</h2>
+                <p class="text-sm">We will notify users of material changes via email. The effective date above reflects
+                    the last update.</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">8. CONTACT</h2>
+                <p class="text-sm">For privacy inquiries or data deletion requests:</p>
+                <p class="text-sm font-mono mt-1">Email: privacy@layer5.ai</p>
+                <p class="text-sm">Response time: within 30 business days.</p>
+            </section>
+        </div>
+    </main>
+
+    <footer class="py-12 border-t border-brand-border bg-black">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col md:row items-center justify-between gap-8">
+            <div class="flex items-center gap-2">
+                <span class="text-xl font-bold tracking-tighter">Layer<span class="text-brand-green">5</span></span>
+                <span class="text-brand-textMuted text-[10px] ml-4 font-mono">Build v1.0.4 - March 2026</span>
+            </div>
+            <div class="flex gap-8 text-[10px] font-bold uppercase tracking-widest text-brand-textMuted">
+                <a class="hover:text-brand-green transition-colors" href="/privacy">Privacy</a>
+                <a class="hover:text-brand-green transition-colors" href="/terms">Terms</a>
+                <a class="hover:text-brand-green transition-colors" href="#">Security</a>
+                <a class="hover:text-brand-green transition-colors" href="#">Twitter</a>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>

@@ -197,6 +197,13 @@ async function detectSilentFailure(
 // ── Request schema ────────────────────────────────────────────
 const LogOutcomeBody = z.object({
     session_id: z.string().uuid(),
+    // idempotency_key: Optional. Include a unique string
+    // (UUID recommended) to make this call idempotent.
+    // If you retry with the same key within 24 hours,
+    // Layer5 returns the original result without creating
+    // a duplicate outcome record.
+    // Example: idempotency_key: crypto.randomUUID()
+    idempotency_key: z.string().max(255).optional(),
     action_name: z.string().min(1).max(255),
     action_params: z.record(z.string(), z.unknown()).optional(),
     issue_type: z.string().min(1).max(255),
@@ -249,6 +256,37 @@ logOutcomeRouter.post('/', async (c) => {
             { error: 'Invalid request body', details: err.errors ?? err.message, code: 'VALIDATION_ERROR' },
             400
         );
+    }
+
+    // ── Idempotency Check (FIX 2) ───────────────────────────
+    if (body.idempotency_key) {
+        const { data: existing } = await supabase
+            .from('fact_outcome_idempotency')
+            .select('outcome_id')
+            .eq('idempotency_key', body.idempotency_key)
+            .maybeSingle();
+
+        if (existing) {
+            // Return original outcome data
+            const { data: originalOutcome } = await supabase
+                .from('fact_outcomes')
+                .select('outcome_id, action_id, context_id, timestamp, success')
+                .eq('outcome_id', existing.outcome_id)
+                .single();
+
+            if (originalOutcome) {
+                c.header('Idempotent-Replayed', 'true');
+                return c.json({
+                    success: originalOutcome.success,
+                    outcome_id: originalOutcome.outcome_id,
+                    action_id: originalOutcome.action_id,
+                    context_id: originalOutcome.context_id,
+                    timestamp: originalOutcome.timestamp,
+                    message: `Outcome previously logged (idempotent replay). Action "${body.action_name}" — ${originalOutcome.success ? 'SUCCESS' : 'FAILURE'}`,
+                    idempotency_replayed: true,
+                }, 200);
+            }
+        }
     }
 
     // ── Payload size check ───────────────────────────────────
@@ -342,6 +380,30 @@ logOutcomeRouter.post('/', async (c) => {
         );
     }
 
+    // ── Save Idempotency Key ─────────────────────────────────
+    if (body.idempotency_key) {
+        const { error: idempErr } = await supabase
+            .from('fact_outcome_idempotency')
+            .insert({
+                idempotency_key: body.idempotency_key,
+                outcome_id: outcome.outcome_id,
+            });
+
+        if (idempErr) {
+            // 23505 = duplicate constraint violation
+            if (idempErr.code === '23505') {
+                return c.json(
+                    {
+                        error: 'Duplicate idempotency_key — this outcome was already logged. Pass the same key to retrieve the original outcome_id.',
+                        code: 'CONFLICT'
+                    },
+                    409
+                );
+            }
+            console.warn('[log-outcome] Failed to save idempotency key:', idempErr.message);
+        }
+    }
+
     // ── Invalidate score cache ───────────────────────────────
     invalidateCache(customerId, contextId);
 
@@ -373,9 +435,9 @@ logOutcomeRouter.post('/', async (c) => {
                     .from('fact_decisions')
                     .update({
                         chosen_action_name: body.action_name,
-                        chosen_action_id:   actionId,
-                        outcome_id:         outcome.outcome_id,
-                        resolved_at:        new Date().toISOString(),
+                        chosen_action_id: actionId,
+                        outcome_id: outcome.outcome_id,
+                        resolved_at: new Date().toISOString(),
                     })
                     .eq('id', body.decision_id);
                 decisionResolved = true;
@@ -391,13 +453,13 @@ logOutcomeRouter.post('/', async (c) => {
         counterfactualsComputed = true;
         const outcomeScore = body.outcome_score ?? (body.success ? 1.0 : 0.0);
         writeCounterfactuals({
-            decisionId:       body.decision_id!,
-            realOutcomeId:    outcome.outcome_id,
+            decisionId: body.decision_id!,
+            realOutcomeId: outcome.outcome_id,
             realOutcomeScore: outcomeScore,
             chosenActionName: body.action_name,
-            rankedActions:    decisionRecord.ranked_actions,
-            contextHash:      decisionRecord.context_hash ?? '',
-            episodePosition:  decisionRecord.episode_position ?? 0,
+            rankedActions: decisionRecord.ranked_actions,
+            contextHash: decisionRecord.context_hash ?? '',
+            episodePosition: decisionRecord.episode_position ?? 0,
         }).catch(err =>
             console.error('[LogOutcome] IPS write failed:', err)
         );
@@ -407,11 +469,11 @@ logOutcomeRouter.post('/', async (c) => {
     let sequencePosition: number | null = null;
     if (body.episode_id) {
         upsertSequence({
-            episodeId:   body.episode_id,
-            agentId:     agentId,
+            episodeId: body.episode_id,
+            agentId: agentId,
             contextHash: decisionRecord?.context_hash ?? `${contextId}:${body.issue_type}`,
-            actionName:  body.action_name,
-            responseMs:  body.response_time_ms,
+            actionName: body.action_name,
+            responseMs: body.response_time_ms,
         }).then(result => {
             sequencePosition = result.isNew ? 0 : null;
         }).catch(err =>
@@ -422,7 +484,7 @@ logOutcomeRouter.post('/', async (c) => {
         if (body.business_outcome === 'resolved' || body.business_outcome === 'failed') {
             const finalScore = body.outcome_score ?? (body.success ? 1.0 : 0.0);
             closeSequence({
-                episodeId:    body.episode_id,
+                episodeId: body.episode_id,
                 finalOutcome: finalScore,
             }).catch(err =>
                 console.error('[LogOutcome] Sequence close failed:', err)
@@ -490,5 +552,6 @@ logOutcomeRouter.post('/', async (c) => {
         // ── New fields (backward compatible) ──────────────────
         counterfactuals_computed: counterfactualsComputed,
         sequence_position: sequencePosition,
+        idempotency_replayed: false,
     }, 201);
 });

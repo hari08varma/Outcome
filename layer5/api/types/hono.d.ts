@@ -4,6 +4,8 @@
  * set by the auth middleware.
  */
 
+import 'hono';
+
 declare module 'hono' {
     interface ContextVariableMap {
         agent_id: string;

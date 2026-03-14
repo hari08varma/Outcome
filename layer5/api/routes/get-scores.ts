@@ -195,10 +195,10 @@ getScoresRouter.get('/', async (c) => {
         // Build ranked actions with propensities
         const rankedWithPropensity: RankedActionEntry[] = ranked.map((a, idx) => ({
             action_name: a.action_name,
-            action_id:   a.action_id,
-            score:       a.composite_score,
-            rank:        idx + 1,
-            propensity:  propensityMap.get(a.action_name) ?? 0,
+            action_id: a.action_id,
+            score: a.composite_score,
+            rank: idx + 1,
+            propensity: propensityMap.get(a.action_name) ?? 0,
         }));
 
         // ── Create fact_decisions record (CHANGE 2) ──────────
@@ -209,11 +209,11 @@ getScoresRouter.get('/', async (c) => {
             const { data: decisionRow, error: decisionErr } = await supabase
                 .from('fact_decisions')
                 .insert({
-                    agent_id:         agentId ?? null,
-                    context_id:       resolvedContextId,
-                    context_hash:     contextHash,
-                    ranked_actions:   rankedWithPropensity,
-                    episode_id:       episodeId,
+                    agent_id: agentId ?? null,
+                    context_id: resolvedContextId,
+                    context_hash: contextHash,
+                    ranked_actions: rankedWithPropensity,
+                    episode_id: episodeId,
                     episode_position: episodePosition,
                 })
                 .select('id')
@@ -260,12 +260,12 @@ getScoresRouter.get('/', async (c) => {
                             (b.mean_outcome ?? 0) > (a.mean_outcome ?? 0) ? b : a
                         );
                         recommendedSequence = {
-                            actions:             best.action_sequence,
-                            predicted_outcome:   best.mean_outcome ?? 0,
-                            confidence:          best.wilson_ci_lower ?? 0,
+                            actions: best.action_sequence,
+                            predicted_outcome: best.mean_outcome ?? 0,
+                            confidence: best.wilson_ci_lower ?? 0,
                             prediction_interval: [best.wilson_ci_lower ?? 0, best.wilson_ci_upper ?? 1],
-                            simulation_tier:     1,
-                            tier_explanation:    'Tier 1: Empirical sequence scores from observed data',
+                            simulation_tier: 1,
+                            tier_explanation: 'Tier 1: Empirical sequence scores from observed data',
                         };
                     }
                 }
@@ -277,7 +277,7 @@ getScoresRouter.get('/', async (c) => {
         // ── Sequence context ─────────────────────────────────
         const sequenceContext = episodeHistory ? {
             episode_position: episodeHistory.length,
-            actions_tried:    episodeHistory,
+            actions_tried: episodeHistory,
             already_resolved: false,  // caller can check via episode state
         } : null;
 
@@ -305,6 +305,8 @@ getScoresRouter.get('/', async (c) => {
                 confidence_cap: 0.3,
             } : null,
             view_refreshed_at: result.view_refreshed_at,
+            scores_as_of: result.view_refreshed_at,
+            scores_max_age_seconds: 300,
             served_from_cache: result.served_from_cache,
             policy: policy.policy,
             policy_reason: policy.reason,

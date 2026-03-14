@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Terms of Service | Layer5</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"
+        rel="stylesheet" />
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            green: '#00FF85',
+                            dark: '#000000',
+                            gray: '#111111',
+                            border: '#1A1A1A',
+                            textMuted: '#888888',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-black text-white font-sans selection:bg-brand-green selection:text-black">
+    <!-- BEGIN: Navigation -->
+    <nav class="fixed top-0 w-full z-50 border-b border-brand-border bg-black/80 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <a href="/"><span class="text-2xl font-bold tracking-tighter">Layer<span
+                            class="text-brand-green">5</span></span></a>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="/auth?mode=login"
+                    class="text-sm font-medium text-brand-textMuted hover:text-white transition-colors">Sign In</a>
+                <a href="/auth?mode=signup"
+                    class="bg-brand-green text-black px-6 py-2.5 text-sm font-bold tracking-tight hover:bg-white transition-all">Get
+                    Started Free</a>
+            </div>
+        </div>
+    </nav>
+    <!-- END: Navigation -->
+
+    <main class="max-w-4xl mx-auto px-6 pt-32 pb-20">
+        <h1 class="text-4xl md:text-5xl font-bold tracking-tight mb-4">Terms of Service</h1>
+        <div class="text-brand-textMuted text-sm font-mono mb-12">
+            <p>Effective date: March 13, 2026</p>
+            <p>Last updated: March 13, 2026</p>
+        </div>
+
+        <div class="space-y-12 text-gray-300">
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">1. ACCEPTANCE OF TERMS
+                </h2>
+                <p class="text-sm">By accessing or using the Layer5 API and dashboard ("Service"), you agree to be bound
+                    by these Terms of Service. If you disagree with any part of the terms, you do not have permission to
+                    access the Service.</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">2. SERVICE DESCRIPTION
+                </h2>
+                <p class="text-sm">Layer5 provides an outcome-ranked decision intelligence API for AI agents. The
+                    service captures agent outcomes, scores them, and provides recommendations for subsequent actions.
+                    The service is provided "as is" and "as available".</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">3. ACCEPTABLE USE</h2>
+                <p class="mb-2 text-sm">When using Layer5, you agree not to:</p>
+                <ul class="list-disc pl-5 text-sm space-y-1">
+                    <li>Violate any laws, third party rights, or our policies.</li>
+                    <li>Use the Service to transmit malicious code, malware, or illegal content.</li>
+                    <li>Attempt to bypass or break any security or rate-limiting mechanism on the Service.</li>
+                    <li>Reverse-engineer the Service's scoring mechanisms to gain unauthorized insights.</li>
+                    <li>Resell the API access to third parties without explicit authorization.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">4. ACCOUNT TERMINATION
+                </h2>
+                <p class="text-sm mb-2">We may terminate or suspend your account immediately, without prior notice or
+                    liability, for any reason whatsoever, including without limitation if you breach the Terms.</p>
+                <p class="text-sm">Upon termination, your right to use the Service will immediately cease.</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">5. LIMITATION OF
+                    LIABILITY</h2>
+                <p class="text-sm">In no event shall Layer5, nor its directors, employees, partners, agents, suppliers,
+                    or affiliates, be liable for any indirect, incidental, special, consequential or punitive damages,
+                    including without limitation, loss of profits, data, use, goodwill, or other intangible losses,
+                    resulting from (i) your access to or use of or inability to access or use the Service; (ii) any
+                    conduct or content of any third party on the Service; (iii) any outcomes or decisions made by your
+                    AI agents integrated with the Service.</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">6. GOVERNING LAW</h2>
+                <p class="text-sm">These Terms shall be governed and construed in accordance with the laws of Karnataka,
+                    India, without regard to its conflict of law provisions.</p>
+                <p class="text-sm mt-2">Our failure to enforce any right or provision of these Terms will not be
+                    considered a waiver of those rights.</p>
+            </section>
+
+            <section>
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-brand-border pb-2">7. CONTACT US</h2>
+                <p class="text-sm">If you have any questions about these Terms, please contact us:</p>
+                <p class="text-sm font-mono mt-1">Email: legal@layer5.ai</p>
+            </section>
+        </div>
+    </main>
+
+    <footer class="py-12 border-t border-brand-border bg-black">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col md:row items-center justify-between gap-8">
+            <div class="flex items-center gap-2">
+                <span class="text-xl font-bold tracking-tighter">Layer<span class="text-brand-green">5</span></span>
+                <span class="text-brand-textMuted text-[10px] ml-4 font-mono">Build v1.0.4 - March 2026</span>
+            </div>
+            <div class="flex gap-8 text-[10px] font-bold uppercase tracking-widest text-brand-textMuted">
+                <a class="hover:text-brand-green transition-colors" href="/privacy">Privacy</a>
+                <a class="hover:text-brand-green transition-colors" href="/terms">Terms</a>
+                <a class="hover:text-brand-green transition-colors" href="#">Security</a>
+                <a class="hover:text-brand-green transition-colors" href="#">Twitter</a>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>

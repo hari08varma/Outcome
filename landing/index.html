@@ -165,53 +165,21 @@
 </div>
 </section><section class="py-20 bg-black border-b border-brand-border" id="proof-metrics">
 <div class="max-w-7xl mx-auto px-6">
-<div class="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12">
+<div class="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12">
 <div class="text-center md:text-left">
-<div class="font-mono mb-2">
-<span class="text-brand-textMuted text-2xl md:text-3xl font-bold line-through opacity-40">14%</span>
-<span class="text-brand-green text-4xl md:text-5xl font-bold"> → <span class="count-up" data-target="85">0</span>%</span>
-</div>
-<div class="text-brand-textMuted text-[10px] uppercase tracking-widest font-bold">Agent Success Rate</div>
-<div class="text-brand-textMuted text-[10px] font-mono mt-1 opacity-50">after Layer5 activation</div>
+<div class="text-brand-green text-3xl md:text-4xl font-bold mb-2 font-sans tracking-tight">Sub-5ms decision latency</div>
+<div class="text-brand-textMuted text-sm font-medium">Benchmarked on PostgreSQL materialized views — scores return in under 5ms at scale</div>
 </div>
 <div class="text-center md:text-left">
-<div class="text-brand-green text-4xl md:text-5xl font-bold mb-2 font-mono">&lt;<span class="count-up" data-target="5">0</span>ms</div>
-<div class="text-brand-textMuted text-[10px] uppercase tracking-widest font-bold">Query Latency</div>
+<div class="text-brand-green text-3xl md:text-4xl font-bold mb-2 font-sans tracking-tight">Append-only audit trail</div>
+<div class="text-brand-textMuted text-sm font-medium">Every decision is immutably recorded. No data loss. GDPR-compliant soft deletes.</div>
 </div>
 <div class="text-center md:text-left">
-<div class="text-brand-green text-4xl md:text-5xl font-bold mb-2 font-mono"><span class="count-up" data-target="100">0</span>%</div>
-<div class="text-brand-textMuted text-[10px] uppercase tracking-widest font-bold">Hallucinations Blocked</div>
-</div>
-<div class="text-center md:text-left">
-<div class="text-brand-green text-4xl md:text-5xl font-bold mb-2 font-mono"><span class="count-up" data-target="10">0</span>y</div>
-<div class="text-brand-textMuted text-[10px] uppercase tracking-widest font-bold">Audit Retention</div>
+<div class="text-brand-green text-3xl md:text-4xl font-bold mb-2 font-sans tracking-tight">Early access</div>
+<div class="text-brand-textMuted text-sm font-medium">Now open to founding teams. Shape the product from day one.</div>
 </div>
 </div>
 </div>
-<script>
-    const counters = document.querySelectorAll('.count-up');
-    const speed = 200;
-    counters.forEach(counter => {
-      const updateCount = () => {
-        const target = +counter.getAttribute('data-target');
-        const count = +counter.innerText;
-        const inc = target / speed;
-        if (count < target) {
-          counter.innerText = Math.ceil(count + inc);
-          setTimeout(updateCount, 1);
-        } else {
-          counter.innerText = target;
-        }
-      };
-      const observer = new IntersectionObserver((entries) => {
-        if(entries[0].isIntersecting) {
-          updateCount();
-          observer.unobserve(counter);
-        }
-      }, { threshold: 1 });
-      observer.observe(counter);
-    });
-  </script>
 </section>
 <!-- END: ProblemSection -->
 <!-- BEGIN: CapabilitiesSection -->
@@ -380,11 +348,7 @@
       Get Started Free — No Credit Card
     </a><div class="mt-4 flex flex-col items-center gap-6">
 <div class="flex flex-wrap justify-center gap-4 text-[10px] font-bold uppercase tracking-widest text-brand-textMuted opacity-60">
-<span>Used by engineers at:</span>
-<span class="px-2 py-0.5 border border-brand-border">Fintech</span>
-<span class="px-2 py-0.5 border border-brand-border">SaaS</span>
-<span class="px-2 py-0.5 border border-brand-border">Logistics</span>
-<span class="px-2 py-0.5 border border-brand-border">Cybersecurity</span>
+<span>Built on PostgreSQL · Runs on your Supabase</span>
 </div>
 <div class="bg-brand-gray/50 border border-brand-border px-4 py-2 rounded-full flex items-center gap-3">
 <span class="text-[11px] font-mono text-brand-green">Beta access open · Limited to 50 teams</span>
@@ -408,9 +372,9 @@
 <span class="text-brand-textMuted text-[10px] ml-4 font-mono">Build v1.0.4 - March 2026</span>
 </div>
 <div class="flex gap-8 text-[10px] font-bold uppercase tracking-widest text-brand-textMuted">
-<a class="hover:text-brand-green transition-colors" href="#">Privacy</a>
+<a class="hover:text-brand-green transition-colors" href="/privacy">Privacy</a>
+<a class="hover:text-brand-green transition-colors" href="/terms">Terms</a>
 <a class="hover:text-brand-green transition-colors" href="#">Security</a>
-<a class="hover:text-brand-green transition-colors" href="#">Status</a>
 <a class="hover:text-brand-green transition-colors" href="#">Twitter</a>
 </div>
 </div>

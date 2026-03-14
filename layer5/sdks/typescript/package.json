@@ -1,0 +1,11 @@
+{
+    "name": "@layer5/sdk",
+    "version": "0.1.0",
+    "description": "Layer5 decision intelligence SDK",
+    "main": "dist/index.cjs",
+    "module": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "publishConfig": {
+        "access": "public"
+    }
+}

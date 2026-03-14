@@ -150,5 +150,14 @@ apiKeysRouter.delete('/:key_id', async (c) => {
         return c.json({ error: 'Failed to deactivate key', details: updateError.message }, 500);
     }
 
+    // After successful deletion from Supabase:
+    const { invalidateAuthCacheByAgentId } = await import('../../middleware/auth.js');
+    invalidateAuthCacheByAgentId(keyId);
+    // This gives instant revocation for the 
+    // current API server instance.
+    // Note: Does not invalidate cache on OTHER 
+    // server instances (if horizontally scaled).
+    // 60s TTL is the safety net for that case.
+
     return c.json({ success: true, key_id: keyId, message: 'API key deactivated' });
 });

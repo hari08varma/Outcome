@@ -16,6 +16,7 @@
     "type": "module",
     "dependencies": {
         "@hono/node-server": "^1.19.11",
+        "@sentry/node": "^8.55.0",
         "@supabase/supabase-js": "^2.98.0",
         "dotenv": "^17.3.1",
         "hono": "^4.12.5",

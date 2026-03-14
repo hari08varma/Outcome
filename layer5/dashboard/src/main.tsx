@@ -1,5 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
+import * as Sentry from '@sentry/react';
+
+if (import.meta.env.VITE_SENTRY_DSN) {
+    Sentry.init({
+        dsn: import.meta.env.VITE_SENTRY_DSN,
+        environment: import.meta.env.MODE,
+        tracesSampleRate: 0.1,
+        replaysOnErrorSampleRate: 1.0,
+    });
+}
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
 import ScoreLeaderboard from './pages/index';
 import OutcomeHistory from './pages/outcomes';
@@ -8,6 +18,8 @@ import TrustStatus from './pages/trust';
 import LoginPage from './pages/auth/login';
 import SignupPage from './pages/auth/signup';
 import LogoutPage from './pages/auth/logout';
+import PrivacyPolicy from './pages/privacy';
+import TermsOfService from './pages/terms';
 import ApiKeysPage from './pages/settings/api-keys';
 import NotificationSettings from './pages/settings/notifications';
 import AlertsPage from './pages/alerts';
@@ -89,45 +101,84 @@ function App() {
 
     return (
         <ToastContext.Provider value={{ toasts, showToast, dismissToast }}>
-        <BrowserRouter>
-            <Routes>
-                {/* Public routes — no auth required */}
-                <Route path="/auth" element={<AuthPage />} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/signup" element={<SignupPage />} />
-                <Route path="/logout" element={<LogoutPage />} />
+            <BrowserRouter>
+                <Routes>
+                    {/* Public routes — no auth required */}
+                    <Route path="/auth" element={<AuthPage />} />
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/signup" element={<SignupPage />} />
+                    <Route path="/logout" element={<LogoutPage />} />
+                    <Route path="/privacy" element={<PrivacyPolicy />} />
+                    <Route path="/terms" element={<TermsOfService />} />
 
-                {/* Root redirects to auth */}
-                <Route path="/" element={<Navigate to="/auth" replace />} />
+                    {/* Root redirects to auth */}
+                    <Route path="/" element={<Navigate to="/auth" replace />} />
 
-                {/* Protected routes — require Supabase session */}
-                <Route path="/*" element={
-                    <ProtectedRoute>
-                        <Nav />
-                        <main style={{ padding: '2rem', fontFamily: "'Inter', system-ui, sans-serif", maxWidth: '1200px', margin: '0 auto', background: '#000000', minHeight: 'calc(100vh - 60px)', color: '#FFFFFF' }}>
-                            <Routes>
-                                <Route path="/dashboard" element={<ScoreLeaderboard />} />
-                                <Route path="/outcomes" element={<OutcomeHistory />} />
-                                <Route path="/audit" element={<AuditTrail />} />
-                                <Route path="/trust" element={<TrustStatus />} />
-                                <Route path="/alerts" element={<AlertsPage />} />
-                                <Route path="/simulate" element={<SimulatePage />} />
-                                <Route path="/settings/api-keys" element={<ApiKeysPage />} />
-                                <Route path="/settings/notifications" element={<NotificationSettings />} />
-                                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                            </Routes>
-                        </main>
-                    </ProtectedRoute>
-                } />
-            </Routes>
-        </BrowserRouter>
-        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+                    {/* Protected routes — require Supabase session */}
+                    <Route path="/*" element={
+                        <ProtectedRoute>
+                            <Nav />
+                            <main style={{ padding: '2rem', fontFamily: "'Inter', system-ui, sans-serif", maxWidth: '1200px', margin: '0 auto', background: '#000000', minHeight: 'calc(100vh - 60px)', color: '#FFFFFF' }}>
+                                <Routes>
+                                    <Route path="/dashboard" element={<ScoreLeaderboard />} />
+                                    <Route path="/outcomes" element={<OutcomeHistory />} />
+                                    <Route path="/audit" element={<AuditTrail />} />
+                                    <Route path="/trust" element={<TrustStatus />} />
+                                    <Route path="/alerts" element={<AlertsPage />} />
+                                    <Route path="/simulate" element={<SimulatePage />} />
+                                    <Route path="/settings/api-keys" element={<ApiKeysPage />} />
+                                    <Route path="/settings/notifications" element={<NotificationSettings />} />
+                                    <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                                </Routes>
+                            </main>
+                        </ProtectedRoute>
+                    } />
+                </Routes>
+            </BrowserRouter>
+            <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         </ToastContext.Provider>
+    );
+}
+
+function ErrorFallback() {
+    return (
+        <div style={{
+            padding: '2rem',
+            color: '#f0f4ff',
+            background: '#080b12',
+            minHeight: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: '1rem',
+            fontFamily: "'Inter', sans-serif",
+        }}>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Something went wrong</h1>
+            <p style={{ color: '#888888', fontSize: '0.9rem' }}>The error has been reported. Try refreshing the page.</p>
+            <button
+                onClick={() => window.location.reload()}
+                style={{
+                    background: '#00FF85',
+                    color: '#000000',
+                    border: 'none',
+                    padding: '0.6rem 1.5rem',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    marginTop: '1rem'
+                }}
+            >
+                Refresh
+            </button>
+        </div>
     );
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-        <App />
+        <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
+            <App />
+        </Sentry.ErrorBoundary>
     </React.StrictMode>
 );

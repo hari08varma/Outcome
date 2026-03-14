@@ -18,6 +18,36 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import { prettyJSON } from 'hono/pretty-json';
 import { serve } from '@hono/node-server';
+import * as Sentry from '@sentry/node';
+
+// Initialize BEFORE creating the Hono app
+if (process.env.SENTRY_DSN) {
+    Sentry.init({
+        dsn: process.env.SENTRY_DSN,
+        environment: process.env.NODE_ENV || 'production',
+        tracesSampleRate: 0.1,  // 10% of requests traced
+    });
+}
+
+const REQUIRED_ENV_VARS = [
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'SUPABASE_ANON_KEY',
+];
+
+const missing = REQUIRED_ENV_VARS.filter(
+    v => !process.env[v]
+);
+
+if (missing.length > 0) {
+    console.error(
+        '❌ FATAL: Missing required environment variables:\n' +
+        missing.map(v => `  - ${v}`).join('\n') +
+        '\n\nCopy .env.example to .env and fill in values.\n' +
+        'See PRODUCTION_CHECKLIST.md for instructions.'
+    );
+    process.exit(1);
+}
 
 import { authMiddleware, devAuthMiddleware } from './middleware/auth.js';
 import { adminAuthMiddleware } from './middleware/admin-auth.js';
@@ -31,6 +61,7 @@ import { auditRouter } from './routes/audit.js';
 import { actionsRouter } from './routes/admin/actions.js';
 import { reinstateAgentRouter } from './routes/admin/reinstate-agent.js';
 import { testNotificationRouter } from './routes/admin/test-notification.js';
+import { triggerTrainingRoute } from './routes/admin/trigger-training.js';
 import { userAuthMiddleware } from './middleware/user-auth.js';
 import { apiKeysRouter } from './routes/auth/api-keys.js';
 import { outcomeFeedbackRouter } from './routes/outcome-feedback.js';
@@ -151,6 +182,7 @@ const primaryAuth = process.env.NODE_ENV === 'production'
 // ── User auth routes (Supabase JWT — own middleware, no agent auth) ──
 const authRoutes = new Hono();
 authRoutes.use('*', userAuthMiddleware);
+authRoutes.use('*', rateLimitMiddleware());
 authRoutes.route('/api-keys', apiKeysRouter);
 v1.route('/auth', authRoutes);
 
@@ -160,6 +192,7 @@ v1.use('/admin/*', primaryAuth, adminAuthMiddleware);
 v1.route('/admin', actionsRouter);
 v1.route('/admin/reinstate-agent', reinstateAgentRouter);
 v1.route('/admin/test-notification', testNotificationRouter);
+v1.route('/admin/trigger-training', triggerTrainingRoute);
 
 // ── Agent API routes: auth + rate limit ───────────────────────
 v1.use('/log-outcome/*', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
@@ -186,6 +219,15 @@ app.notFound((c) => c.json(
 
 // ── Global error handler ──────────────────────────────────────
 app.onError((err, c) => {
+    if (process.env.SENTRY_DSN) {
+        Sentry.captureException(err, {
+            extra: {
+                path: c.req.path,
+                method: c.req.method,
+            },
+        });
+    }
+
     console.error('[layer5] Unhandled error:', err.message);
     return c.json(
         { error: 'Internal server error', code: 'INTERNAL_ERROR', message: err.message },

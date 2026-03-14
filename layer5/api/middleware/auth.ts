@@ -15,8 +15,13 @@
 import { Context, Next } from 'hono';
 import { supabase } from '../lib/supabase.js';
 
-// In-memory agent auth cache (15 min TTL)
-const AUTH_CACHE_TTL_MS = 15 * 60 * 1000;
+// TTL reduced to 60s for security:
+// Revoked keys must be rejected within 1 minute.
+// Performance impact is minimal — auth is 
+// called per-request but Supabase can handle 
+// this read load. The 15-min cache was premature 
+// optimization at the expense of security.
+const AUTH_CACHE_TTL_MS = 60 * 1000;
 
 interface AgentAuth {
     agent_id: string;
@@ -32,6 +37,14 @@ const authCache = new Map<string, AgentAuth>();
 
 function hashKey(apiKey: string): string {
     return apiKey;
+}
+
+export function invalidateAuthCacheByAgentId(agentId: string) {
+    for (const [key, val] of authCache.entries()) {
+        if (val.agent_id === agentId) {
+            authCache.delete(key);
+        }
+    }
 }
 
 export async function authMiddleware(c: Context, next: Next): Promise<Response | void> {

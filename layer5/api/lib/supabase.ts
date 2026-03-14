@@ -3,6 +3,12 @@
  * Singleton Supabase client for server-side operations.
  * Always uses service_role key to bypass RLS.
  * Customer isolation is enforced in query logic, not RLS.
+ *
+ * SECURITY: SUPABASE_SERVICE_ROLE_KEY bypasses 
+ * all Row Level Security. This file must NEVER 
+ * log or expose this key. All console.log calls 
+ * in this file must be reviewed before commit.
+ * Audit date: 2026-03-13
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -21,6 +27,13 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 // Singleton — instantiated once at startup
+// NOTE: This client uses the Supabase REST API
+// (not direct PostgreSQL). Connection pooling is
+// handled by Supabase infrastructure automatically.
+// If you add direct pg connections via 'pg' or
+// 'postgres' packages, use the Pooler URL from
+// Supabase dashboard → Settings → Database → 
+// Connection pooling → Transaction mode (port 6543)
 export const supabase: SupabaseClient = createClient(
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY,

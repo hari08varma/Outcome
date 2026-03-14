@@ -28,11 +28,13 @@ auditRouter.get('/', async (c) => {
     const success = c.req.query('success');     // 'true' | 'false' | undefined
     const from = c.req.query('from');         // ISO date string
     const to = c.req.query('to');           // ISO date string
-    const pageStr = c.req.query('page') ?? '1';
-    const sizeStr = c.req.query('page_size') ?? String(DEFAULT_PAGE_SIZE);
-    const page = Math.max(1, parseInt(pageStr, 10) || 1);
+    const cursor = c.req.query('cursor');
+    const pageStr = c.req.query('page');
+    const offsetStr = c.req.query('offset');
+    const sizeStr = c.req.query('page_size') ?? c.req.query('limit') ?? String(DEFAULT_PAGE_SIZE);
+
+    const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(sizeStr, 10) || DEFAULT_PAGE_SIZE));
-    const offset = (page - 1) * pageSize;
 
     // ── Build query ───────────────────────────────────────────
     let query = supabase
@@ -54,7 +56,17 @@ auditRouter.get('/', async (c) => {
         .eq('customer_id', customerId)
         .eq('is_deleted', false)           // GDPR: exclude soft-deleted
         .order('timestamp', { ascending: false })
-        .range(offset, offset + pageSize - 1);
+        .limit(pageSize);
+
+    if (cursor) {
+        query = query.lt('timestamp', cursor);
+    } else if (pageStr || offsetStr) {
+        // Fallback for legacy offset pagination
+        const offset = offsetStr ? parseInt(offsetStr, 10) : (page - 1) * pageSize;
+        if (!isNaN(offset)) {
+            query = query.range(offset, offset + pageSize - 1);
+        }
+    }
 
     // ── Apply filters ─────────────────────────────────────────
     if (sessionId) query = query.eq('session_id', sessionId);
@@ -79,6 +91,8 @@ auditRouter.get('/', async (c) => {
     }
 
     const totalPages = Math.ceil((count ?? 0) / pageSize);
+    const hasMore = (data && data.length === pageSize);
+    const nextCursor = hasMore ? data[data.length - 1].timestamp : null;
 
     return c.json({
         outcomes: (data ?? []).map((row: any) => ({
@@ -114,7 +128,11 @@ auditRouter.get('/', async (c) => {
             total_pages: totalPages,
             has_next: page < totalPages,
             has_prev: page > 1,
+            // Keyset fields
+            next_cursor: nextCursor,
+            has_more: hasMore,
         },
+        pagination_warning: (pageStr || offsetStr) ? 'page/offset parameters deprecated. Use cursor.' : undefined,
         filters: {
             session_id: sessionId ?? null,
             action_name: actionName ?? null,

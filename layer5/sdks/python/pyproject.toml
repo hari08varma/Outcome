@@ -1,0 +1,5 @@
+[project]
+name = "layer5-sdk"
+version = "0.1.0"
+description = "Layer5 decision intelligence SDK"
+requires-python = ">=3.9"
