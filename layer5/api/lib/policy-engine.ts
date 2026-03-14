@@ -17,7 +17,7 @@ import { ScoredAction } from './scoring.js';
 
 export interface AgentTrustScore {
     trust_score: number;       // 0.0–1.0
-    trust_status: 'trusted' | 'probation' | 'suspended';
+    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended';
     consecutive_failures: number;
 }
 
@@ -29,10 +29,12 @@ export interface CustomerPolicyConfig {
 }
 
 export interface PolicyDecision {
-    policy: 'exploit' | 'explore' | 'escalate';
+    policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX';
     reason: string;
     selectedAction: string | null;
     explorationTarget: string | null;
+    human_review_required?: boolean;
+    sandbox_message?: string;
 }
 
 // ── Default config (used when customer config is missing) ────
@@ -70,6 +72,24 @@ export function getPolicyDecision(
             reason: 'agent_suspended',
             selectedAction: null,
             explorationTarget: null,
+            human_review_required: true,
+        };
+    }
+
+    const topAction = rankedActions[0];
+
+    // ── Rule 1.5: Sandbox agent → flag for review but execute top action
+    if (agentTrust.trust_status === 'sandbox') {
+        return {
+            policy: 'SANDBOX',
+            reason: 'agent_in_sandbox_probation',
+            selectedAction: topAction?.action_id ?? null,
+            explorationTarget: null,
+            human_review_required: true,
+            sandbox_message: 'Agent is in sandbox mode. ' +
+                'All actions will execute but require human review. ' +
+                `Trust score: ${agentTrust.trust_score.toFixed(3)}. ` +
+                `Threshold to exit sandbox: 0.3`,
         };
     }
 
@@ -91,13 +111,13 @@ export function getPolicyDecision(
         };
     }
 
-    const topAction = rankedActions[0];
     if (!topAction) {
         return {
             policy: 'escalate',
             reason: 'no_actions_available',
             selectedAction: null,
             explorationTarget: null,
+            human_review_required: true,
         };
     }
 

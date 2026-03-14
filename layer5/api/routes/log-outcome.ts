@@ -22,6 +22,7 @@ import {
 import { writeCounterfactuals } from '../lib/ips-engine.js';
 import { upsertSequence, closeSequence } from '../lib/sequence-tracker.js';
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
+import { resolveVerifiedSuccess } from '../lib/verifier.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -85,8 +86,14 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
 
     // Determine new status
     let newStatus: string;
-    if (newScore < 0.3 || newFailures >= 5) {
+    let newSuspensionReason = null;
+
+    if (newScore < 0.1 || newFailures >= 10) {
         newStatus = 'suspended';
+        newSuspensionReason = newScore < 0.1 ? 'trust_score_critically_low' : 'consecutive_failures_exceeded';
+    } else if (newScore < 0.3 || newFailures >= 5) {
+        newStatus = 'sandbox';
+        newSuspensionReason = newFailures >= 5 ? 'consecutive_failures_exceeded' : null;
     } else if (newScore < 0.6) {
         newStatus = 'probation';
     } else {
@@ -101,9 +108,7 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
             correct_decisions: newCorrect,
             consecutive_failures: newFailures,
             trust_status: newStatus,
-            suspension_reason: newStatus === 'suspended'
-                ? (newFailures >= 5 ? 'consecutive_failures_exceeded' : 'trust_score_below_threshold')
-                : null,
+            suspension_reason: newSuspensionReason,
             updated_at: new Date().toISOString(),
         })
         .eq('agent_id', agentId);
@@ -118,8 +123,8 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
             new_score: newScore,
             old_status: oldStatus,
             new_status: newStatus,
-            reason: newStatus === 'suspended'
-                ? `Auto-suspended: score=${newScore.toFixed(3)}, consecutive_failures=${newFailures}`
+            reason: newStatus === 'suspended' || newStatus === 'sandbox'
+                ? `Trust recalibrated: ${oldStatus} → ${newStatus}. Score: ${newScore.toFixed(3)}, Failures: ${newFailures}`
                 : `Trust recalibrated: ${oldStatus} → ${newStatus}`,
         });
     }
@@ -232,6 +237,21 @@ const LogOutcomeBody = z.object({
     decision_id: z.string().uuid().optional(),
     episode_id: z.string().uuid().optional(),
     episode_history: z.array(z.string()).optional(),
+    verifier_signal: z.object({
+        source: z.enum([
+            'http_status_code',
+            'database_row_count',
+            'human_review',
+            'downstream_webhook',
+            'none',
+        ]),
+        value: z.union([
+            z.number(),
+            z.boolean(),
+            z.string(),
+        ]).optional(),
+        verified_at: z.string().datetime().optional(),
+    }).optional(),
 });
 
 // ── Salience sampling (per implementation plan) ──────────────
@@ -281,6 +301,28 @@ logOutcomeRouter.post('/', async (c) => {
     }
     if (body.error_code) {
         body.error_code = sanitizeString(body.error_code, 100);
+    }
+
+    // ── Verification Layer ───────────────────────────────────
+    const verification = resolveVerifiedSuccess(
+        body.success,
+        body.outcome_score,
+        body.verifier_signal as any
+    );
+
+    const finalSuccess = verification.verified_success;
+    const finalOutcomeScore = verification.confidence_override ?? body.outcome_score ?? null;
+
+    if (verification.discrepancy_detected) {
+        Promise.resolve(
+            supabase.from('degradation_alert_events').insert({
+                customer_id: customerId,
+                agent_id: agentId,
+                alert_type: 'success_hallucination',
+                severity: 'critical',
+                message: `Agent self-reported success=true but verifier(${body.verifier_signal?.source}) returned failure. Outcome corrected to success=false. Scoring engine protected.`,
+            })
+        ).catch(() => { });
     }
 
     // ── Idempotency Check (FIX 2) ───────────────────────────
@@ -384,16 +426,19 @@ logOutcomeRouter.post('/', async (c) => {
             context_id: contextId,
             customer_id: customerId,
             session_id: body.session_id,
-            success: body.success,
+            success: finalSuccess,
             response_time_ms: body.response_time_ms ?? null,
             error_code: body.error_code ?? null,
             error_message: body.error_message ?? null,
             raw_context: body.raw_context ?? {},
             is_synthetic: false,
-            salience_score: computeSalience(actionId, contextId, customerId, body.success),
-            outcome_score: body.outcome_score ?? null,
+            salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
+            outcome_score: finalOutcomeScore,
             business_outcome: body.business_outcome ?? null,
             feedback_signal: body.feedback_signal ?? 'immediate',
+            verifier_source: body.verifier_signal?.source ?? null,
+            verifier_value: body.verifier_signal?.value?.toString() ?? null,
+            discrepancy_detected: verification.discrepancy_detected,
         })
         .select('outcome_id, timestamp')
         .single();
@@ -476,7 +521,7 @@ logOutcomeRouter.post('/', async (c) => {
     let counterfactualsComputed = false;
     if (decisionResolved && decisionRecord?.ranked_actions) {
         counterfactualsComputed = true;
-        const outcomeScore = body.outcome_score ?? (body.success ? 1.0 : 0.0);
+        const outcomeScore = finalOutcomeScore ?? (finalSuccess ? 1.0 : 0.0);
         writeCounterfactuals({
             decisionId: body.decision_id!,
             realOutcomeId: outcome.outcome_id,
@@ -507,7 +552,7 @@ logOutcomeRouter.post('/', async (c) => {
 
         // Close sequence if episode is definitively over
         if (body.business_outcome === 'resolved' || body.business_outcome === 'failed') {
-            const finalScore = body.outcome_score ?? (body.success ? 1.0 : 0.0);
+            const finalScore = finalOutcomeScore ?? (finalSuccess ? 1.0 : 0.0);
             closeSequence({
                 episodeId: body.episode_id,
                 finalOutcome: finalScore,
@@ -520,7 +565,7 @@ logOutcomeRouter.post('/', async (c) => {
     }
 
     // ── Update agent trust score (async, non-blocking) ───────
-    updateAgentTrust(agentId, customerId, body.success).catch(err => {
+    updateAgentTrust(agentId, customerId, finalSuccess).catch(err => {
         console.warn('[log-outcome] Trust update failed:', err.message);
     });
 
@@ -536,8 +581,8 @@ logOutcomeRouter.post('/', async (c) => {
         agent_id: agentId,
         action_id: actionId,
         action_name: body.action_name,
-        success: body.success,
-        outcome_score: body.outcome_score ?? null,
+        success: finalSuccess,
+        outcome_score: finalOutcomeScore,
     }).catch(err => {
         console.warn('[log-outcome] Silent failure check failed:', err);
     });
@@ -560,13 +605,15 @@ logOutcomeRouter.post('/', async (c) => {
         policyResult = null;
     }
 
+    const finalValidatedAction = c.get('validated_action') as any;
+
     return c.json({
         success: true,
         outcome_id: outcome.outcome_id,
         action_id: actionId,
         context_id: contextId,
         timestamp: outcome.timestamp,
-        message: `Outcome logged. Action "${body.action_name}" — ${body.success ? 'SUCCESS' : 'FAILURE'}`,
+        message: `Outcome logged. Action "${body.action_name}" — ${finalSuccess ? 'SUCCESS' : 'FAILURE'}`,
         recommendation: policyResult?.policy ?? null,
         next_actions: policyResult ? {
             policy: policyResult.policy,
@@ -578,5 +625,6 @@ logOutcomeRouter.post('/', async (c) => {
         counterfactuals_computed: counterfactualsComputed,
         sequence_position: sequencePosition,
         idempotency_replayed: false,
+        validation_warnings: finalValidatedAction?.validation_warnings ?? [],
     }, 201);
 });

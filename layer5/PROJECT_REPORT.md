@@ -1322,7 +1322,7 @@ AND tablename IN (
 
 ## Production-Readiness Fixes Applied
 
-The following 6 production-readiness issues have been resolved:
+The following 9 production-readiness issues have been resolved:
 
 | Fix | Issue | Resolution |
 |-----|-------|------------|
@@ -1332,6 +1332,9 @@ The following 6 production-readiness issues have been resolved:
 | ✅ FIX 6 | Embedding on fallback only | `context-embed.ts` updated to use Supabase AI inference endpoint (gte-small, free) |
 | ✅ FIX 7 | pgvector index missing | Migration 012 creates IVFFlat index on `dim_contexts.context_vector` |
 | ✅ FIX 8 | No health monitoring | `/health` enhanced with DB + materialized view checks; UptimeRobot guide created |
+| ✅ FIX 10 | Immutable outcome verifier lacking | `log-outcome.ts` updated accepting rigid `verifier_signal` replacing purely subjective agent logs |
+| ✅ FIX 11 | Binary suspension loop | Granular 4-Tier Graduated Trust recovery `sandbox` logic provisioned preserving outcome data loops |
+| ✅ FIX 12 | Harsh validative rejection | `validation_mode` DB toggle replaces immediate 400 exceptions with `advisory` array warnings |
 
 ## What Needs To Be Done (Remaining Work)
 

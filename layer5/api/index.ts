@@ -75,6 +75,7 @@ import { getPatternsRouter } from './routes/get-patterns.js';
 import { auditRouter } from './routes/audit.js';
 import { actionsRouter } from './routes/admin/actions.js';
 import { reinstateAgentRouter } from './routes/admin/reinstate-agent.js';
+import { reinstateSandboxRouter } from './routes/admin/reinstate-sandbox.js';
 import { testNotificationRouter } from './routes/admin/test-notification.js';
 import { triggerTrainingRoute } from './routes/admin/trigger-training.js';
 import { userAuthMiddleware } from './middleware/user-auth.js';
@@ -240,11 +241,10 @@ authRoutes.use('*', rateLimitMiddleware());
 authRoutes.route('/api-keys', apiKeysRouter);
 v1.route('/auth', authRoutes);
 
-// ── Admin routes: auth + admin role check ─────────────────────
-// Applied first so they get their own middleware chain
 v1.use('/admin/*', primaryAuth, adminAuthMiddleware);
 v1.route('/admin', actionsRouter);
 v1.route('/admin/reinstate-agent', reinstateAgentRouter);
+v1.route('/admin', reinstateSandboxRouter);
 v1.route('/admin/test-notification', testNotificationRouter);
 v1.route('/admin/trigger-training', triggerTrainingRoute);
 

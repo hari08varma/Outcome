@@ -21,8 +21,8 @@ interface ActionCacheEntry {
     action_id: string;
     action_name: string;
     action_category: string;
-    action_description: string | null;
     required_params: Record<string, unknown>;
+    validation_mode: string;
     is_active: boolean;
     expires_at: number;
 }
@@ -56,8 +56,23 @@ export interface ActionValidationResult {
     action_name?: string;
     action_category?: string;
     required_params?: Record<string, unknown>;
+    validation_mode?: string;
     error?: string;
     error_code?: string;
+    warnings?: string[];
+}
+
+// Extend Hono Context to recognize validated_action
+declare module 'hono' {
+    interface ContextVariableMap {
+        validated_action: {
+            action_id: string;
+            action_name: string;
+            action_category: string;
+            validation_warnings?: string[];
+        };
+        parsed_body: unknown;
+    }
 }
 
 // ── Middleware form ───────────────────────────────────────────
@@ -95,6 +110,7 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         action_id: result.action_id!,
         action_name: result.action_name!,
         action_category: result.action_category!,
+        validation_warnings: result.warnings ?? [],
     });
     // Store parsed body so handlers don't need to re-parse
     c.set('parsed_body', body);
@@ -119,7 +135,7 @@ export async function validateAction(
     // Cache miss — lookup in dim_actions
     const { data, error } = await supabase
         .from('dim_actions')
-        .select('action_id, action_name, action_category, action_description, required_params, is_active')
+        .select('action_id, action_name, action_category, action_description, required_params, is_active, validation_mode')
         .eq('action_name', actionName)
         .maybeSingle();
 
@@ -150,30 +166,45 @@ export async function validateAction(
 }
 
 function validateParams(
-    action: { action_id: string; action_name: string; action_category: string; required_params: Record<string, unknown> },
+    action: { action_id: string; action_name: string; action_category: string; required_params: Record<string, unknown>, validation_mode?: string },
     params?: Record<string, unknown>
 ): ActionValidationResult {
+    const mode = action.validation_mode ?? 'advisory';
     const required = action.required_params ?? {};
     const requiredKeys = Object.keys(required);
 
-    if (requiredKeys.length > 0) {
-        if (!params) {
-            return {
-                valid: false,
-                error: `action '${action.action_name}' requires: ${requiredKeys.join(', ')}`,
-                error_code: 'MISSING_PARAMS',
-            };
-        }
-        const missing = requiredKeys.filter(k => !(k in params));
-        if (missing.length > 0) {
-            return {
-                valid: false,
-                error: `action '${action.action_name}' requires: ${missing.join(', ')}`,
-                error_code: 'MISSING_PARAMS',
-            };
-        }
+    const missing = requiredKeys.filter(k => !(k in (params ?? {})));
+
+    if (missing.length === 0) {
+        return {
+            valid: true,
+            action_id: action.action_id,
+            action_name: action.action_name,
+            action_category: action.action_category,
+            required_params: action.required_params,
+        };
     }
 
+    if (mode === 'strict') {
+        return {
+            valid: false,
+            error: `action '${action.action_name}' requires: ${missing.join(', ')}`,
+            error_code: 'MISSING_PARAMS',
+        };
+    }
+
+    if (mode === 'advisory') {
+        return {
+            valid: true,
+            action_id: action.action_id,
+            action_name: action.action_name,
+            action_category: action.action_category,
+            required_params: action.required_params,
+            warnings: missing.map(k => `param '${k}' is recommended but not provided`),
+        };
+    }
+
+    // disabled logic
     return {
         valid: true,
         action_id: action.action_id,
