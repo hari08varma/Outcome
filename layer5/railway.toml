@@ -2,9 +2,6 @@
 builder = "nixpacks"
 buildCommand = "cd layer5/api && npm install && npm run build"
 
-[build.nixpacksPlan.phases.setup]
-nixPkgs = ["nodejs_20"]
-
 [deploy]
 startCommand = "cd layer5/api && node dist/index.js"
 restartPolicyType = "on_failure"
