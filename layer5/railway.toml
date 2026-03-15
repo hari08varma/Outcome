@@ -9,7 +9,8 @@ nixPkgs = ["nodejs_20"]
 startCommand = "cd layer5/api && node dist/index.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+healthcheckPath = "/"
+healthcheckTimeout = 60
 
 [environments.production]
 NODE_ENV = "production"
-PORT = "${{PORT}}"
