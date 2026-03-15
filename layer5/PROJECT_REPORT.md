@@ -84,7 +84,7 @@ Layerinfinite is a 10-layer, append-only, outcome-ranked decision intelligence m
 ├───────────────────────────────┴─────────────────────────────────┤
 │  Layer 1: Structured Experience Memory (PostgreSQL Star Schema) │
 │  - 22 tables, append-only fact_outcomes, RLS, 71+ indexes       │
-│  - user_profiles, fact_outcome_feedback, agent_api_keys         │
+│  - user_profiles, fact_outcome_feedback, dim_agents.api_key_hash│
 │  - detect_coordinated_failures() SQL function                   │
 │  - fact_decisions, action_sequences, counterfactuals             │
 │  - world_model_artifacts, mv_sequence_scores                    │
@@ -317,7 +317,7 @@ $$\text{composite\_score} = (w_{success} \times f_{success} + w_{conf} \times f_
 
 | Deliverable | Status | Details |
 |-------------|--------|---------|
-| `013_create_auth_system.sql` | ✅ Deployed | `user_profiles` bridge table, `agent_api_keys` table, auto-provisioning trigger |
+| `013_create_auth_system.sql` | ✅ Deployed | `user_profiles` bridge table + hardened auto-provisioning trigger |
 | `api/routes/auth/api-keys.ts` | ✅ Built | POST/GET/DELETE for API key CRUD with SHA-256 hashing |
 | `dashboard/src/pages/settings/api-keys.tsx` | ✅ Built | API key management UI — create, list, revoke |
 | `tests/auth/api-keys.test.ts` | ✅ Passing | 6 tests covering key generation, listing, revocation |
@@ -326,8 +326,8 @@ $$\text{composite\_score} = (w_{success} \times f_{success} + w_{conf} \times f_
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `user_profiles` | Bridge `auth.users` → `dim_customers` | `user_id`, `customer_id`, `role`, `display_name` |
-| `agent_api_keys` | Hashed API keys for programmatic access | `key_hash` (SHA-256), `agent_id`, `last_used_at`, `is_active` |
+| `user_profiles` | Bridge `auth.users` → `dim_customers` | `id` (auth user UUID), `customer_id`, `role`, `full_name`/`display_name` (schema-aware handling) |
+| `dim_agents` | Programmatic API credential store | `agent_id`, `api_key_hash` (SHA-256), `agent_type`, `is_active` |
 
 **Auto-Provisioning Trigger:** On Supabase Auth signup, a PostgreSQL trigger automatically:
 1. Creates a new `dim_customers` record
@@ -336,7 +336,7 @@ $$\text{composite\_score} = (w_{success} \times f_{success} + w_{conf} \times f_
 
 **API Key Security:**
 - Keys generated with `crypto.randomUUID()` — shown once on creation, never stored
-- Only SHA-256 hash stored in `agent_api_keys.key_hash`
+- Only SHA-256 hash stored in `dim_agents.api_key_hash`
 - Keys verified by hashing incoming key and comparing against stored hash
 - Revocation sets `is_active = false` (soft delete, audit-friendly)
 
@@ -1366,42 +1366,31 @@ The following 12 critical architecture and security auditing capabilities have b
 | ✅ FIX 11 | Graduated Reinstatement | Converted raw agent shutdown binaries into a 4-Tier Graduated System allocating `sandbox` recovery isolation environments |
 | ✅ FIX 12 | Soft Validation Toggles | Migrated structural API exceptions toward database-driven `validation_mode` toggles capturing advisory JSON array omissions gracefully |
 
-## What Needs To Be Done (Remaining Work)
+## Operational Next Steps (Current)
 
-### Production Deployment (Pending)
-
-| Task | Priority | Description |
-|------|----------|-------------|
-| **Deploy API to hosting** | HIGH | Deploy Hono API to Railway / Fly.io / any Node.js host (see DEPLOY.md) |
-| **Deploy dashboard** | HIGH | Deploy React dashboard to Vercel / Netlify / Cloudflare Pages (see DEPLOY.md) |
-| **Run migrations 011–012** | HIGH | Apply cron schedules + vector index to live Supabase |
-| **Run migrations 019–026** | HIGH | Apply counterfactual learning foundation (decision tracking, sequences, IPS, world models, MV, indexes, RLS, cron) |
-| **Set Supabase app config** | HIGH | Set `app.supabase_url` and `app.service_role_key` in Supabase DB settings |
-| **Enable Supabase PITR** | HIGH | Enable before first pruning run at 03:00 UTC |
-| **Configure Google OAuth** | HIGH | Add `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` in Supabase Auth dashboard |
-| **Set up UptimeRobot** | MEDIUM | Monitor `/health` endpoint every 5 minutes (see `scripts/setup-monitoring.md`) |
-| **Schedule training pipeline** | MEDIUM | Run `training/train_world_model.py` weekly once 200+ outcomes collected |
-| **Publish Python SDK** | MEDIUM | `pip install layerinfinite-sdk` — publish to PyPI |
-| **Publish TypeScript SDK** | MEDIUM | `npm install @layerinfinite/sdk` — publish to npm |
-| **Seasonal anomaly detection** | LOW | Requires 90+ days of production data for meaningful baselines |
-
-See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) and [DEPLOY.md](DEPLOY.md) for step-by-step instructions.
-
-### Future Enhancements
+### Production Operations
 
 | Task | Priority | Description |
 |------|----------|-------------|
-| **Submit n8n node to community** | HIGH | Submit `n8n-nodes-layerinfinite` to n8n community node registry |
-| **Submit Zapier app for review** | HIGH | `zapier push` + submit for Zapier marketplace approval |
-| **Submit Make.com app** | MEDIUM | Upload `layerinfinite-make-spec.json` via Make.com developer portal |
-| **Seasonal anomaly detection (Gap 4)** | MEDIUM | Build after 90 days of production data — day_of_week + hour_of_day baselines |
-| **API key rotation mechanism** | LOW | Implement key rotation without downtime for `agent_api_keys` |
-| **Log aggregation** | MEDIUM | Route API logs to centralized logging (Datadog / Sentry / Supabase logs) |
-| **Real-time dashboard updates** | LOW | Add Supabase Realtime subscriptions for live score/trust updates |
-| **Gap detection dashboard** | MEDIUM | UI for viewing latency spikes, context drift, coordinated failure alerts |
-| **Simulation dashboard** | MEDIUM | UI for running simulations and comparing sequence predictions |
-| **End-to-end integration tests** | MEDIUM | Add tests that hit live Supabase with test data (currently mocked) |
-| **Load testing** | MEDIUM | Verify rate limiter + scoring engine under production load |
+| **Keep env vars synchronized** | HIGH | Verify Railway + Vercel variables stay aligned (`ALLOWED_ORIGINS`, `VITE_LAYERINFINITE_API_URL`, Supabase keys). |
+| **PITR + backup discipline** | HIGH | Keep PITR enabled and validate backup cadence with restore drills. |
+| **Monitoring + alerting hardening** | HIGH | Ensure `/health` monitors and alert channels are active and tested regularly. |
+| **Auth provisioning observability** | HIGH | Keep `layer5_account_setup_error` notify channel monitored; investigate any warnings immediately. |
+| **Rate-limit store hygiene** | MEDIUM | Periodically verify `rate_limit_buckets` growth and cleanup behavior. |
+
+See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md), [DEPLOY.md](DEPLOY.md), and [scripts/setup-monitoring.md](scripts/setup-monitoring.md) for detailed runbooks.
+
+### Product + Ecosystem Roadmap
+
+| Task | Priority | Description |
+|------|----------|-------------|
+| **Publish Python SDK** | MEDIUM | Release and maintain `layerinfinite-sdk` on PyPI. |
+| **Publish TypeScript SDK** | MEDIUM | Release and maintain `@layerinfinite/sdk` on npm. |
+| **Submit no-code connectors** | MEDIUM | n8n community registry + Zapier/Make marketplace submissions. |
+| **Seasonal anomaly detection (Gap 4)** | MEDIUM | Implement once 90+ days of production data exist. |
+| **API key rotation workflow** | LOW | Add seamless rotation flow over `dim_agents.api_key_hash` without downtime. |
+| **Real-time dashboard updates** | LOW | Add Supabase Realtime for live score/trust updates. |
+| **Load + E2E test expansion** | MEDIUM | Add live Supabase E2E and sustained-load validation suite. |
 
 ---
 
