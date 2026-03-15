@@ -6,7 +6,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../supabaseClient';
 
-const API_BASE = import.meta.env.VITE_LAYERINFINITE_API_URL ?? import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+const ENV_API_BASE = import.meta.env.VITE_LAYERINFINITE_API_URL ?? import.meta.env.VITE_API_URL;
+const API_BASE = ENV_API_BASE ?? (window.location.hostname === 'localhost' ? 'http://localhost:3000' : '');
 
 interface ApiKey {
     key_id: string;
@@ -50,6 +51,11 @@ export default function ApiKeysPage() {
         setLoading(true);
         setError('');
         setProfileMissing(false);
+        if (!API_BASE) {
+            setError('API endpoint is not configured. Set VITE_LAYERINFINITE_API_URL in dashboard environment variables.');
+            setLoading(false);
+            return;
+        }
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API_BASE}/v1/auth/api-keys`, { headers });
@@ -82,7 +88,11 @@ export default function ApiKeysPage() {
         } catch (err: any) {
             // Don't show "Session expired" as an error — user is already being redirected
             if (err.message !== 'Session expired') {
-                setError(err.message);
+                if (err.message === 'Failed to fetch') {
+                    setError('Unable to reach API service. Verify VITE_LAYERINFINITE_API_URL and API availability.');
+                } else {
+                    setError(err.message);
+                }
             }
         } finally {
             setLoading(false);
@@ -98,6 +108,11 @@ export default function ApiKeysPage() {
         e.preventDefault();
         setCreating(true);
         setError('');
+        if (!API_BASE) {
+            setError('API endpoint is not configured. Set VITE_LAYERINFINITE_API_URL in dashboard environment variables.');
+            setCreating(false);
+            return;
+        }
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API_BASE}/v1/auth/api-keys`, {
@@ -125,6 +140,10 @@ export default function ApiKeysPage() {
     async function handleDelete(keyId: string) {
         if (!confirm('Deactivate this API key? Agents using it will lose access.')) return;
         setError('');
+        if (!API_BASE) {
+            setError('API endpoint is not configured. Set VITE_LAYERINFINITE_API_URL in dashboard environment variables.');
+            return;
+        }
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API_BASE}/v1/auth/api-keys/${keyId}`, {
