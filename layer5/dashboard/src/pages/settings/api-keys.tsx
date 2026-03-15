@@ -20,6 +20,7 @@ export default function ApiKeysPage() {
     const [keys, setKeys] = useState<ApiKey[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [profileMissing, setProfileMissing] = useState(false);
 
     // Create modal state
     const [showCreate, setShowCreate] = useState(false);
@@ -43,11 +44,20 @@ export default function ApiKeysPage() {
     async function fetchKeys() {
         setLoading(true);
         setError('');
+        setProfileMissing(false);
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API_BASE}/v1/auth/api-keys`, { headers });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error ?? 'Failed to fetch keys');
+            if (!res.ok) {
+                // Detect account-setup-incomplete separately — show a friendly banner
+                if (data.code === 'PROFILE_MISSING') {
+                    setProfileMissing(true);
+                } else {
+                    throw new Error(data.error ?? 'Failed to fetch keys');
+                }
+                return;
+            }
             setKeys(data.keys);
         } catch (err: any) {
             setError(err.message);
@@ -112,6 +122,18 @@ export default function ApiKeysPage() {
                 <button onClick={() => setShowCreate(true)} style={primaryBtn}>Create New Key</button>
             </div>
 
+            {profileMissing && (
+                <div style={setupBanner}>
+                    <span style={{ fontWeight: 600 }}>⚠️ Your account is still being set up.</span>{' '}
+                    Please sign out and sign back in to complete account provisioning.
+                    <button
+                        onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
+                        style={signOutBtn}
+                    >
+                        Sign Out
+                    </button>
+                </div>
+            )}
             {error && <div style={errorBox}>{error}</div>}
 
             {/* ── Revealed key modal ── */}
@@ -245,6 +267,16 @@ const errorBox: React.CSSProperties = {
     background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', color: '#f87171',
     borderRadius: '0.375rem', padding: '0.5rem 0.75rem', fontSize: '0.875rem',
     marginBottom: '1rem',
+};
+const setupBanner: React.CSSProperties = {
+    background: '#fefce8', border: '1px solid #fde68a', color: '#92400e',
+    borderRadius: '0.375rem', padding: '0.75rem 1rem', fontSize: '0.875rem',
+    marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
+};
+const signOutBtn: React.CSSProperties = {
+    padding: '0.25rem 0.75rem', borderRadius: '0.375rem', background: '#fef3c7',
+    color: '#92400e', border: '1px solid #fcd34d', cursor: 'pointer',
+    fontSize: '0.8rem', fontWeight: 600, marginLeft: 'auto',
 };
 const table: React.CSSProperties = {
     width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem',

@@ -54,7 +54,11 @@ export async function userAuthMiddleware(c: Context, next: Next): Promise<Respon
 
     if (profileError || !profile) {
         return c.json(
-            { error: 'User profile not found', code: 'PROFILE_MISSING' },
+            {
+                error: 'Account setup incomplete',
+                code: 'PROFILE_MISSING',
+                action: 'Please sign out and sign in again to trigger account setup',
+            },
             403
         );
     }
