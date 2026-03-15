@@ -1,7 +1,7 @@
 # Layerinfinite — Project Report
 
 ### Outcome-Ranked Decision Intelligence Middleware
-**Version:** 3.0.0 | **Report Date:** March 11, 2026 | **Status:** Production-Ready
+**Version:** 3.1.0 | **Report Date:** March 16, 2026 | **Status:** Production-Ready (Live Hotfixes Applied)
 
 ---
 
@@ -14,11 +14,11 @@ Layerinfinite is a 10-layer, append-only, outcome-ranked decision intelligence m
 | Metric | Value |
 |--------|-------|
 | Total Tests | **230 passing** (16 backend test suites) + **86 Python SDK** + **13 TS SDK simulate** |
-| SQL Migrations | **32 total** (18 deployed + 14 ready) |
-| Edge Functions | **5 / 5 deployed** to Supabase Edge |
+| SQL Migrations | **38 total files** (36 in `supabase/migrations` + 2 in `db/migrations`) |
+| Edge Functions | **6 / 6 deployed** to Supabase Edge |
 | API Endpoints | **15 routes** fully implemented (incl. POST /v1/simulate) |
 | Dashboard Pages | **8 pages** fully built |
-| Database Tables | **22 tables** + 4 materialized views + 6 SQL functions |
+| Database Tables | **22 tables** + 3 materialized views + 12 SQL functions (live) |
 | Auth System | Supabase Auth with Google OAuth + Email/Password |
 | Gap Detection | 4 active gap detectors + 1 planned (seasonal) |
 | Simulation Engine | **3-tier**: Tier 1 (Wilson CI) → Tier 2 (LightGBM) → Tier 3 (MCTS) |
@@ -1217,23 +1217,35 @@ AND tablename IN (
 | 008_create_events.sql | ✅ | Event tables for alerting |
 | 009_add_matview_unique_indexes.sql | ✅ | UNIQUE indexes for CONCURRENTLY |
 | 010_create_helper_functions.sql | ✅ | 2 RPC helper functions |
-| 011_create_cron_schedules.sql | ⏳ Ready | pg_cron jobs for 4 Edge Functions |
-| 012_create_vector_index.sql | ⏳ Ready | IVFFlat index on `context_vector` |
-| 013_create_auth_system.sql | ✅ | `user_profiles`, `agent_api_keys`, auto-provisioning trigger |
+| 011_create_cron_schedules.sql | ✅ | pg_cron jobs for scoring/trust/trend/pruning |
+| 012_create_vector_index.sql | ✅ | IVFFlat index on `context_vector` |
+| 013_create_auth_system.sql | ✅ | `user_profiles` + auto-provisioning trigger (hardened fallback + notify) |
 | 014_add_outcome_scoring.sql | ✅ | `outcome_score`, `business_outcome`, `feedback_signal` on `fact_outcomes`; `fact_outcome_feedback` |
 | 015_update_mv_outcome_score.sql | ✅ | Rebuilds `mv_action_scores` with `COALESCE(outcome_score, success::FLOAT)` |
 | 016_add_latency_to_mv.sql | ✅ | Rebuilds `mv_action_scores` with latency stats (p50, p95, baseline, spike ratio) |
 | 017_update_alert_events.sql | ✅ | Widens `degradation_alert_events` — new alert types, severity, message columns |
 | 018_coordinated_failure_fn.sql | ✅ | `detect_coordinated_failures()` SQL function |
 | Seed data | ✅ | cold_start_priors.sql applied |
-| 019_create_fact_decisions.sql | ⏳ Ready | `fact_decisions` table + immutability trigger |
-| 020_create_action_sequences.sql | ⏳ Ready | `action_sequences` table + `update_updated_at_column()` + append-only trigger |
-| 021_create_counterfactuals.sql | ⏳ Ready | `fact_outcome_counterfactuals` table + immutable/no-delete triggers |
-| 022_create_world_model_artifacts.sql | ⏳ Ready | `world_model_artifacts` table + `activate_world_model()` function |
-| 023_create_mv_sequence_scores.sql | ⏳ Ready | `mv_sequence_scores` materialized view (Wilson CI + t-CI) |
-| 024_create_foundation_indexes.sql | ⏳ Ready | 14 indexes across all new tables |
-| 025_create_foundation_rls.sql | ⏳ Ready | RLS policies on all 4 new tables |
-| 026_create_mv_refresh_schedule.sql | ⏳ Ready | `refresh_mv_sequence_scores()` RPC + pg_cron job |
+| 019_create_fact_decisions.sql | ✅ | `fact_decisions` table + immutability trigger |
+| 020_create_action_sequences.sql | ✅ | `action_sequences` table + `update_updated_at_column()` + append-only trigger |
+| 021_create_counterfactuals.sql | ✅ | `fact_outcome_counterfactuals` table + immutable/no-delete triggers |
+| 022_create_world_model_artifacts.sql | ✅ | `world_model_artifacts` table + `activate_world_model()` function |
+| 023_create_mv_sequence_scores.sql | ✅ | `mv_sequence_scores` materialized view (Wilson CI + t-CI) |
+| 024_create_foundation_indexes.sql | ✅ | 14 indexes across all new tables |
+| 025_create_foundation_rls.sql | ✅ | RLS policies on all 4 new tables |
+| 026_create_mv_refresh_schedule.sql | ✅ | `refresh_mv_sequence_scores()` RPC + pg_cron job |
+| 027_create_notification_channels.sql | ✅ | Alert notification channel tables |
+| 027-backfill-missing-profiles.sql | ✅ | Idempotent user profile backfill |
+| 028_create_notification_cron.sql | ✅ | Cron for notification-dispatcher |
+| 029_add_idempotency.sql | ✅ | Idempotency table and cleanup scheduling |
+| 031_verifier_signal.sql | ✅ | Verifier signal columns and discrepancy support |
+| 032_action_validation_mode.sql | ✅ | Validation mode controls on actions |
+| 033_sandbox_status.sql | ✅ | Sandbox trust status support |
+| 034_add_backprop_columns.sql | ✅ | Reward-backprop linkage columns |
+| 035_add_backprop_columns.sql | ✅ | Backprop compatibility update |
+| 036_backfill_missing_profiles.sql | ✅ | Dynamic-name-column profile backfill with summary notices |
+| db/029_rehash_api_keys.sql | ⚠️ Not in primary deploy path | Legacy rehash script (`updated_at` dependency) |
+| db/030_rate_limit_store.sql | ✅ | Persistent `rate_limit_buckets` + RLS policy + index |
 
 ### Edge Functions (Supabase)
 
@@ -1242,6 +1254,7 @@ AND tablename IN (
 | `scoring-engine` | ✅ | Cron (5-min + nightly) | HTTP 401 (auth required) |
 | `trend-detector` | ✅ | Cron (nightly 02:00 UTC) | HTTP 401 (auth required) |
 | `cold-start-bootstrap` | ✅ | On-demand (POST) | HTTP 401 (auth required) |
+| `notification-dispatcher` | ✅ | Cron (every 2 min) | HTTP 401 (auth required) |
 | `trust-updater` | ✅ | On-demand + Cron (5-min batch) | HTTP 401 (auth required) |
 | `pruning-scheduler` | ✅ | Cron (nightly 03:00 UTC) | HTTP 401 (auth required) |
 
@@ -1266,7 +1279,20 @@ AND tablename IN (
 | Route protection | ✅ ProtectedRoute.tsx redirects unauthenticated users |
 | Vite dev server | ✅ (`npm run dev` → localhost:5178) |
 | npm dependencies installed | ✅ (84 packages) |
-| Environment config | ✅ `dashboard/.env` with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` |
+| Environment config | ✅ `dashboard/.env` with Supabase vars + API URL checks (`VITE_LAYERINFINITE_API_URL`) |
+
+### Recent Hotfix Timeline (Mar 15–16, 2026)
+
+| Commit | Area | Summary |
+|--------|------|---------|
+| `8e0606a` | API env loading | `api/lib/supabase.ts` now loads `.env` only outside production (Railway-safe). |
+| `5eafdf9` | Rate limiting | Added/deployed persistent `rate_limit_buckets` migration and reduced false timeout noise. |
+| `a58e3bf` | Auth resiliency | `user-auth.ts` self-heals missing profiles; API keys flow no longer stuck on `PROFILE_MISSING`. |
+| `a6bc128` | Diagnostics | Fixed SQL bugs in `run_debug.py` queries (syntax + ambiguous `oid`). |
+| `edf572b` | Trigger hardening | Preserved original trigger error context and fallback warning behavior. |
+| `5010147` | API keys UX | 3 production bug fixes for API keys behavior and auth handling. |
+| `cbd7798` | Provisioning flow | Repaired account provisioning path and PROFILE_MISSING handling. |
+| `ef6f1c9` | Auth migrations + UX | Trigger repair + backfill migration + friendly dashboard error UX. |
 
 ---
 
@@ -1276,12 +1302,13 @@ AND tablename IN (
 
 | Directory | Files | Total Lines (approx.) | Description |
 |-----------|-------|-----------------------|-------------|
-| `supabase/migrations/` | 26 | ~2,800 | SQL schema, indexes, policies, views, functions, cron, vector index, auth, scoring, latency, gap detection, decision tracking, counterfactuals, world models |
+| `supabase/migrations/` | 36 | ~3,900 | SQL schema, indexes, policies, views, functions, cron, vector index, auth, scoring, latency, notification, backprop, verifier, and backfills |
+| `db/migrations/` | 2 | ~70 | Runtime DB patches (`rehash_api_keys`, `rate_limit_store`) |
 | `supabase/seed/` | 1 | ~76 | Cold-start prior data |
 | `supabase/functions/` | 5 | ~1,700 | Deno Edge Functions (scoring, trend, cold-start, trust, pruning) |
 | `api/lib/` | 6 | ~1,000 | Core scoring, policy, context, Supabase client, IPS engine, sequence tracker |
 | `api/lib/simulation/` | 6 | ~1,200 | 3-tier simulation engine — types, world-model, tier1, tier2, tier3-mcts, tier-selector |
-| `api/middleware/` | 4 | ~590 | Auth, admin-auth, rate-limit, validate-action |
+| `api/middleware/` | 5 | ~770 | Auth, user-auth (self-heal), admin-auth, rate-limit, validate-action |
 | `api/routes/` | 9 | ~1,600 | REST endpoint handlers (incl. simulate, outcome-feedback, auth/api-keys) |
 | `api/` (root) | 3 | ~120 | Entry point, package.json, tsconfig |
 | `dashboard/src/pages/` | 10 | ~1,800 | Landing, Auth, Onboarding, Scores, Outcomes, Audit, Trust, API Keys, login/signup/logout |
@@ -1470,9 +1497,9 @@ npx supabase functions deploy pruning-scheduler --project-ref <project-ref>
 
 ## Conclusion
 
-Layerinfinite is **100% feature-complete** against the full implementation plan — all 6 core phases, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
+Layerinfinite is **100% feature-complete** against the full implementation plan — all core layers, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
 
-The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. All **32 SQL migrations** are created (18 deployed to live Supabase, 14 ready). **5 Edge Functions** are deployed. The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
+The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. Migration inventory is now **38 SQL files** across `supabase/migrations` + `db/migrations`, with live deployment verified through the full auth/provisioning and sequence foundation stack. **6 Edge Functions** are deployed (including `notification-dispatcher`). The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
 
 **Key capabilities built:**
 - **6-layer decision intelligence** — structured memory → aggregation → scoring → temporal trends → adaptive policy → trust management
@@ -1487,6 +1514,8 @@ The project passes all **230 automated tests** across **16 test suites** coverin
 - **Append-only audit trail** — immutable `fact_outcomes`, RLS customer isolation, CSV export
 - **Counterfactual learning foundation** — decision tracking (full ranked lists + propensities), action sequence tracking (append-only multi-step paths), IPS counterfactual estimates (unchosen action learning), world model artifact storage, mv_sequence_scores (Wilson CI + t-CI)
 
-**Production-readiness fixes applied:** CORS now env-driven, pg_cron migration created, embedding provider activated (Supabase AI gte-small), pgvector IVFFlat index ready, `/health` endpoint enhanced with real DB/view checks, backup verification script created, and monitoring setup documented.
+**Production-readiness fixes applied:** CORS now env-driven, pg_cron + vector migrations deployed, auth provisioning trigger hardened with fallback and `pg_notify`, dual backfills added for missing profiles, API keys page now handles expired session and API misconfiguration cleanly, user-auth self-heals missing profiles for skipped-trigger users, persistent `rate_limit_buckets` deployed, and `api/lib/supabase.ts` now avoids `.env` override in production Railway runtime.
 
-**Remaining work:** Deploy API + dashboard to hosting platforms, apply migrations 011–012 + 019–026, enable Supabase PITR, configure Google OAuth in Supabase dashboard, and set up UptimeRobot monitoring. Publish Python SDK to PyPI and TypeScript SDK to npm. Submit n8n community node + Zapier app for marketplace review. Build API endpoints for decision tracking and counterfactual computation (Prompt 2). Seasonal anomaly detection (Gap 4) deferred until 90+ days of production data is available. See [DEPLOY.md](DEPLOY.md) and [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) for step-by-step instructions.
+**Current operational status:** Live database currently reports `auth_users = 6`, `user_profiles = 6`, `missing_profiles = 0`, and API key flows (GET/POST/DELETE) are verified healthy after auth fixes. 
+
+**Remaining work (current):** Keep Railway/Vercel environment variables synchronized (`ALLOWED_ORIGINS`, `VITE_LAYERINFINITE_API_URL`, Supabase keys), enable/verify PITR and backup cadence, publish SDK artifacts to PyPI/npm, and submit n8n/Zapier connectors for marketplace review. Seasonal anomaly detection (Gap 4) remains intentionally deferred until 90+ days of production data are available. See [DEPLOY.md](DEPLOY.md) and [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) for step-by-step instructions.
