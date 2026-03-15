@@ -83,7 +83,8 @@ import { apiKeysRouter } from './routes/auth/api-keys.js';
 import { outcomeFeedbackRouter } from './routes/outcome-feedback.js';
 import { simulateRouter } from './routes/simulate.js';
 
-const PORT = parseInt(process.env.API_PORT ?? '3000', 10);
+// ── PORT: Railway injects PORT, fallback to API_PORT, then 3000 ──
+const PORT = parseInt(process.env.PORT ?? process.env.API_PORT ?? '3000', 10);
 
 // ── FATAL: Dev bypass CANNOT be active in production ──────────
 if (process.env.NODE_ENV === 'production' &&
@@ -115,9 +116,6 @@ app.use('*', prettyJSON());
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS ?? '10000', 10);
 
 app.use('*', async (c, next) => {
-    // Explicit health endpoint exemption — health checks must always respond 
-    // to load balancers, even if the database triggers 'degraded' states 
-    // due to slow connections.
     if (c.req.path === '/health' || c.req.path === '/') {
         return next();
     }
@@ -171,7 +169,6 @@ app.get('/health', async (c) => {
     const checks: Record<string, string> = { api: 'ok' };
     let overallStatus = 'ok';
 
-    // Database connectivity check
     try {
         const { supabase } = await import('./lib/supabase.js');
         const { error } = await supabase.from('dim_customers').select('customer_id').limit(1);
@@ -180,7 +177,6 @@ app.get('/health', async (c) => {
         checks.database = 'error';
     }
 
-    // Materialized view freshness check
     try {
         const { supabase } = await import('./lib/supabase.js');
         const { data, error } = await supabase
@@ -199,7 +195,6 @@ app.get('/health', async (c) => {
         checks.materialized_view = 'error';
     }
 
-    // Determine overall status
     if (Object.values(checks).some(v => v === 'error')) {
         overallStatus = 'degraded';
     } else if (Object.values(checks).some(v => v === 'stale')) {
@@ -229,12 +224,10 @@ app.post('/internal/refresh-score-cache', async (c) => {
 // ── v1 API ────────────────────────────────────────────────────
 const v1 = new Hono();
 
-// Determine which auth middleware to use
 const primaryAuth = process.env.NODE_ENV === 'production'
     ? authMiddleware
     : devAuthMiddleware;
 
-// ── User auth routes (Supabase JWT — own middleware, no agent auth) ──
 const authRoutes = new Hono();
 authRoutes.use('*', userAuthMiddleware);
 authRoutes.use('*', rateLimitMiddleware());
@@ -248,7 +241,6 @@ v1.route('/admin', reinstateSandboxRouter);
 v1.route('/admin/test-notification', testNotificationRouter);
 v1.route('/admin/trigger-training', triggerTrainingRoute);
 
-// ── Agent API routes: auth + rate limit ───────────────────────
 v1.use('/log-outcome/*', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
 v1.use('/outcome-feedback/*', primaryAuth, rateLimitMiddleware());
 v1.use('/get-scores/*', primaryAuth, rateLimitMiddleware());
@@ -294,7 +286,7 @@ serve({
     fetch: app.fetch,
     port: PORT,
 }, (info) => {
-    console.log(`\n🚀 Layerinfinite API running on http://localhost:${info.port}`);
+    console.log(`\n🚀 Layerinfinite API running on port ${info.port}`);
     console.log(`   Mode:       ${process.env.NODE_ENV ?? 'development'}`);
     console.log(`   Dev bypass: ${process.env.LAYERINFINITE_DEV_BYPASS === 'true' ? '⚠️  ACTIVE' : 'disabled'}`);
     console.log(`   Endpoints:  POST /v1/log-outcome | GET /v1/get-scores | GET /v1/get-patterns | GET /v1/audit`);
