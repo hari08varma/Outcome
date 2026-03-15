@@ -34,10 +34,11 @@ const TIER_LIMITS: Record<string, TierLimits> = {
 };
 
 const DEFAULT_LIMITS: TierLimits = { maxPerMin: 200, burstLimit: 20 };
+const RATE_LIMIT_DB_TIMEOUT_MS = parseInt(process.env.RATE_LIMIT_DB_TIMEOUT_MS ?? '250', 10);
 
 /**
  * Fail-open design:
- * If the persistent rate limit store (Supabase) is down or times out (>50ms),
+ * If the persistent rate limit store (Supabase) is down or times out,
  * we log a warning and explicitly ALLOW the request. 
  * Enterprise APIs should never block critical traffic because quota telemetry is slow.
  */
@@ -60,7 +61,7 @@ export function rateLimitMiddleware() {
         let tokens = maxTokens;
 
         try {
-            // Read rate limit state with strict 50ms latency budget
+            // Read rate limit state with bounded latency budget
             const fetchPromise = supabase
                 .from('rate_limit_buckets')
                 .select('tokens, last_refill_at')
@@ -68,7 +69,7 @@ export function rateLimitMiddleware() {
                 .maybeSingle();
 
             const timeoutPromise = new Promise<{ error: { message: string } }>((_, reject) =>
-                setTimeout(() => reject(new Error('Rate limit read timeout (>50ms)')), 50)
+                setTimeout(() => reject(new Error(`Rate limit read timeout (>${RATE_LIMIT_DB_TIMEOUT_MS}ms)`)), RATE_LIMIT_DB_TIMEOUT_MS)
             );
 
             // Fetch racing the latency budget
@@ -85,7 +86,11 @@ export function rateLimitMiddleware() {
                 tokens = Math.min(maxTokens, data.tokens + (deltaMs * refillRate));
             }
         } catch (err: any) {
-            console.warn(`[rate-limit] DB Exception: ${err.message} — FAILING OPEN`);
+            if (typeof err?.message === 'string' && err.message.includes('Rate limit read timeout')) {
+                console.info(`[rate-limit] Read timeout (${RATE_LIMIT_DB_TIMEOUT_MS}ms) — FAILING OPEN`);
+            } else {
+                console.warn(`[rate-limit] DB Exception: ${err.message} — FAILING OPEN`);
+            }
             // Tokens remains at maxTokens: request is allowed through
         }
 
