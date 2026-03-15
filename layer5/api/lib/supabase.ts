@@ -16,8 +16,11 @@ import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-config({ path: resolve(__dirname, '..', '.env') });
+// Only load .env file in development — Railway injects env vars directly in production
+if (process.env.NODE_ENV !== 'production') {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    config({ path: resolve(__dirname, '..', '.env') });
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
