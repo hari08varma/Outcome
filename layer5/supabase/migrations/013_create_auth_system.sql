@@ -33,6 +33,8 @@ DECLARE
   user_display_name   TEXT;
   profile_name_column TEXT;
   customer_has_is_active BOOLEAN;
+  original_error_text TEXT;
+  original_sqlstate   TEXT;
 BEGIN
   -- ── Cache ALL schema checks upfront before any INSERT ──────
   user_display_name := COALESCE(
@@ -106,6 +108,9 @@ BEGIN
   RETURN NEW;
 
 EXCEPTION WHEN OTHERS THEN
+  original_error_text := SQLERRM;
+  original_sqlstate := SQLSTATE;
+
   -- ── Primary attempt failed — try fallback with minimal columns ──
   BEGIN
     -- Fallback: insert dim_customers with only guaranteed columns
@@ -134,6 +139,8 @@ EXCEPTION WHEN OTHERS THEN
       ON CONFLICT DO NOTHING;
 
       RAISE NOTICE 'handle_new_user: fallback succeeded for user %', NEW.id;
+    ELSE
+      RAISE WARNING 'handle_new_user: fallback dim_customers INSERT returned NULL for user %', NEW.id;
     END IF;
 
   EXCEPTION WHEN OTHERS THEN
@@ -148,14 +155,14 @@ EXCEPTION WHEN OTHERS THEN
     json_build_object(
       'user_id', NEW.id,
       'email', NEW.email,
-      'error', SQLERRM,
-      'sqlstate', SQLSTATE,
+      'error', original_error_text,
+      'sqlstate', original_sqlstate,
       'occurred_at', NOW()
     )::text
   );
 
   RAISE WARNING 'handle_new_user failed for user % (email: %): % [%]',
-    NEW.id, NEW.email, SQLERRM, SQLSTATE;
+    NEW.id, NEW.email, original_error_text, original_sqlstate;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
