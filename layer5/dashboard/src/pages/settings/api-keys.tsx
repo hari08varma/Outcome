@@ -37,7 +37,12 @@ export default function ApiKeysPage() {
 
     async function getAuthHeaders(): Promise<Record<string, string>> {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return {};
+        if (!session || !session.access_token) {
+            // Session expired or missing — clear stale state and redirect to login
+            await supabase.auth.signOut();
+            window.location.href = '/auth?mode=login';
+            throw new Error('Session expired');
+        }
         return { Authorization: `Bearer ${session.access_token}` };
     }
 
@@ -48,6 +53,14 @@ export default function ApiKeysPage() {
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API_BASE}/v1/auth/api-keys`, { headers });
+
+            // Handle 401 — session expired on the server side
+            if (res.status === 401) {
+                await supabase.auth.signOut();
+                window.location.href = '/auth?mode=login';
+                return;
+            }
+
             let data: any = {};
             try {
                 data = await res.json();
@@ -67,7 +80,10 @@ export default function ApiKeysPage() {
             }
             setKeys(data.keys);
         } catch (err: any) {
-            setError(err.message);
+            // Don't show "Session expired" as an error — user is already being redirected
+            if (err.message !== 'Session expired') {
+                setError(err.message);
+            }
         } finally {
             setLoading(false);
         }
@@ -99,7 +115,9 @@ export default function ApiKeysPage() {
             setNewKeyName('');
             await fetchKeys();
         } catch (err: any) {
-            setError(err.message);
+            if (err.message !== 'Session expired') {
+                setError(err.message);
+            }
         }
         setCreating(false);
     }
@@ -117,7 +135,9 @@ export default function ApiKeysPage() {
             if (!res.ok) throw new Error(data.error ?? 'Failed to deactivate key');
             await fetchKeys();
         } catch (err: any) {
-            setError(err.message);
+            if (err.message !== 'Session expired') {
+                setError(err.message);
+            }
         }
     }
 
