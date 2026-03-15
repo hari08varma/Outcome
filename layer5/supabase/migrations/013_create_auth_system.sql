@@ -24,63 +24,107 @@ CREATE INDEX IF NOT EXISTS idx_user_profiles_customer ON user_profiles(customer_
 -- Trigger function: auto-create customer + profile + default agent on signup
 -- SECURITY DEFINER: bypasses RLS so it can write to all tables.
 -- EXCEPTION block: never lets a trigger failure block signup.
+-- NOTE: Supports either user_profiles.display_name or user_profiles.full_name
+-- to remain resilient across schema drift.
 -- ────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 DECLARE
   new_customer_id UUID;
-  display_name    TEXT;
+  user_display_name TEXT;
+  profile_name_column TEXT;
+  customer_has_is_active BOOLEAN;
 BEGIN
-  -- Derive a human-readable display name from metadata or email prefix
-  display_name := COALESCE(
+  user_display_name := COALESCE(
     NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), ''),
     split_part(NEW.email, '@', 1)
   );
 
-  -- 1. Create a new customer record for this user
-  INSERT INTO dim_customers (
-    company_name,
-    tier,
-    is_active,
-    api_key_hash,
-    created_at
-  ) VALUES (
-    COALESCE(
-      NULLIF(TRIM(NEW.raw_user_meta_data->>'company_name'), ''),
-      NEW.email   -- fallback: use full email as company_name for solo signups
-    ),
-    'starter',
-    true,
-    encode(gen_random_bytes(32), 'hex'),  -- placeholder; real keys are managed via the API
-    NOW()
-  )
-  ON CONFLICT DO NOTHING
-  RETURNING customer_id INTO new_customer_id;
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'dim_customers'
+      AND column_name = 'is_active'
+  ) INTO customer_has_is_active;
 
-  -- Guard: if ON CONFLICT fired and RETURNING returned nothing, look up the existing row.
-  -- (Extremely unlikely — customer_id is a UUID — but defensive.)
-  IF new_customer_id IS NULL THEN
-    RAISE WARNING 'handle_new_user: dim_customers insert returned NULL for user %; skipping profile creation.', NEW.id;
-    RETURN NEW;
+  -- 1. Create customer record for this user.
+  IF customer_has_is_active THEN
+    INSERT INTO dim_customers (
+      company_name,
+      tier,
+      is_active,
+      api_key_hash,
+      created_at
+    ) VALUES (
+      COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'company_name'), ''), NEW.email),
+      'starter',
+      true,
+      encode(gen_random_bytes(32), 'hex'),
+      NOW()
+    )
+    RETURNING customer_id INTO new_customer_id;
+  ELSE
+    INSERT INTO dim_customers (
+      company_name,
+      tier,
+      api_key_hash,
+      created_at
+    ) VALUES (
+      COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'company_name'), ''), NEW.email),
+      'starter',
+      encode(gen_random_bytes(32), 'hex'),
+      NOW()
+    )
+    RETURNING customer_id INTO new_customer_id;
   END IF;
 
-  -- 2. Create the user profile linking auth.users → dim_customers
-  INSERT INTO user_profiles (
-    id,
-    customer_id,
-    full_name,
-    role,
-    created_at
-  ) VALUES (
-    NEW.id,
-    new_customer_id,
-    display_name,
-    'admin',   -- first user of an account is always admin
-    NOW()
-  )
-  ON CONFLICT (id) DO NOTHING;
+  -- 2. Create profile row linking auth.users -> dim_customers.
+  SELECT CASE
+           WHEN EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'user_profiles'
+               AND column_name = 'display_name'
+           ) THEN 'display_name'
+           ELSE 'full_name'
+         END
+  INTO profile_name_column;
 
-  -- 3. Create a default agent for this customer so the API Keys page is never empty
+  IF profile_name_column = 'display_name' THEN
+    INSERT INTO user_profiles (
+      id,
+      customer_id,
+      display_name,
+      role,
+      created_at
+    ) VALUES (
+      NEW.id,
+      new_customer_id,
+      user_display_name,
+      'admin',
+      NOW()
+    )
+    ON CONFLICT (id) DO NOTHING;
+  ELSE
+    INSERT INTO user_profiles (
+      id,
+      customer_id,
+      full_name,
+      role,
+      created_at
+    ) VALUES (
+      NEW.id,
+      new_customer_id,
+      user_display_name,
+      'admin',
+      NOW()
+    )
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- 3. Create default agent so API key workflows are never empty.
   INSERT INTO dim_agents (
     agent_name,
     agent_type,
@@ -99,12 +143,22 @@ BEGIN
   RETURN NEW;
 
 EXCEPTION WHEN OTHERS THEN
-  -- Log the full error but NEVER let signup fail because of provisioning.
-  RAISE WARNING 'handle_new_user failed for user % (email: %): % — %',
+  PERFORM pg_notify(
+    'layer5_account_setup_error',
+    json_build_object(
+      'user_id', NEW.id,
+      'email', NEW.email,
+      'error', SQLERRM,
+      'sqlstate', SQLSTATE,
+      'occurred_at', NOW()
+    )::text
+  );
+
+  RAISE WARNING 'handle_new_user failed for user % (email: %): % [%]',
     NEW.id, NEW.email, SQLERRM, SQLSTATE;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 
 -- ────────────────────────────────────────────
 -- Wire the trigger to auth.users INSERT

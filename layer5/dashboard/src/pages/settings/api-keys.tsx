@@ -48,11 +48,18 @@ export default function ApiKeysPage() {
         try {
             const headers = await getAuthHeaders();
             const res = await fetch(`${API_BASE}/v1/auth/api-keys`, { headers });
-            const data = await res.json();
+            let data: any = {};
+            try {
+                data = await res.json();
+            } catch {
+                data = {};
+            }
+
             if (!res.ok) {
                 // Detect account-setup-incomplete separately — show a friendly banner
-                if (data.code === 'PROFILE_MISSING') {
+                if (res.status === 403 && data.code === 'PROFILE_MISSING') {
                     setProfileMissing(true);
+                    setKeys([]);
                 } else {
                     throw new Error(data.error ?? 'Failed to fetch keys');
                 }
@@ -61,8 +68,14 @@ export default function ApiKeysPage() {
             setKeys(data.keys);
         } catch (err: any) {
             setError(err.message);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
+    }
+
+    async function handleSignOut() {
+        await supabase.auth.signOut();
+        window.location.href = '/';
     }
 
     async function handleCreate(e: React.FormEvent) {
@@ -127,7 +140,7 @@ export default function ApiKeysPage() {
                     <span style={{ fontWeight: 600 }}>⚠️ Your account is still being set up.</span>{' '}
                     Please sign out and sign back in to complete account provisioning.
                     <button
-                        onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
+                        onClick={handleSignOut}
                         style={signOutBtn}
                     >
                         Sign Out

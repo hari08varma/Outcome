@@ -52,7 +52,17 @@ export async function userAuthMiddleware(c: Context, next: Next): Promise<Respon
         .eq('id', user.id)
         .maybeSingle();
 
-    if (profileError || !profile) {
+    if (profileError) {
+        return c.json(
+            {
+                error: 'Failed to resolve account profile',
+                code: 'PROFILE_LOOKUP_FAILED',
+            },
+            500
+        );
+    }
+
+    if (!profile) {
         return c.json(
             {
                 error: 'Account setup incomplete',
