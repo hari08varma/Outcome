@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../supabaseClient';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+const API_BASE = import.meta.env.VITE_LAYERINFINITE_API_URL ?? import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 interface ApiKey {
     key_id: string;
@@ -108,7 +108,7 @@ export default function ApiKeysPage() {
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2 style={{ margin: 0, color: '#1e293b' }}>API Keys</h2>
+                <h2 style={{ margin: 0, color: '#FFFFFF' }}>API Keys</h2>
                 <button onClick={() => setShowCreate(true)} style={primaryBtn}>Create New Key</button>
             </div>
 
@@ -118,7 +118,7 @@ export default function ApiKeysPage() {
             {revealedKey && (
                 <div style={modalOverlay}>
                     <div style={modalCard}>
-                        <h3 style={{ margin: '0 0 0.5rem', color: '#1e293b' }}>Your New API Key</h3>
+                        <h3 style={{ margin: '0 0 0.5rem', color: '#FFFFFF' }}>Your New API Key</h3>
                         <p style={warningText}>⚠️ Save this key now — it cannot be shown again.</p>
                         <div style={keyDisplay}>{revealedKey}</div>
                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
@@ -135,7 +135,7 @@ export default function ApiKeysPage() {
             {showCreate && (
                 <div style={modalOverlay}>
                     <div style={modalCard}>
-                        <h3 style={{ margin: '0 0 1rem', color: '#1e293b' }}>Create API Key</h3>
+                        <h3 style={{ margin: '0 0 1rem', color: '#FFFFFF' }}>Create API Key</h3>
                         <form onSubmit={handleCreate}>
                             <label style={label}>Key Name</label>
                             <input
@@ -159,9 +159,9 @@ export default function ApiKeysPage() {
 
             {/* ── Keys table ── */}
             {loading ? (
-                <p style={{ color: '#64748b' }}>Loading…</p>
+                <p style={{ color: '#888888' }}>Loading…</p>
             ) : keys.length === 0 ? (
-                <p style={{ color: '#64748b' }}>No API keys yet. Create one to get started.</p>
+                <p style={{ color: '#888888' }}>No API keys yet. Create one to get started.</p>
             ) : (
                 <table style={table}>
                     <thead>
@@ -181,8 +181,8 @@ export default function ApiKeysPage() {
                                 <td style={td}>
                                     <span style={{
                                         padding: '0.125rem 0.5rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600,
-                                        background: k.is_active ? '#dcfce7' : '#fef2f2',
-                                        color: k.is_active ? '#166534' : '#dc2626',
+                                        background: k.is_active ? 'rgba(0,255,133,0.15)' : 'rgba(220,38,38,0.15)',
+                                        color: k.is_active ? '#00FF85' : '#f87171',
                                     }}>
                                         {k.is_active ? 'Active' : 'Deactivated'}
                                     </span>
@@ -204,42 +204,45 @@ export default function ApiKeysPage() {
 
 // ── Styles ────────────────────────────────────────────────────
 const primaryBtn: React.CSSProperties = {
-    padding: '0.5rem 1rem', borderRadius: '0.375rem', background: '#2563eb',
-    color: '#fff', border: 'none', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
+    padding: '0.5rem 1rem', borderRadius: '0.375rem', background: '#00FF85',
+    color: '#000000', border: 'none', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
 };
 const secondaryBtn: React.CSSProperties = {
-    ...primaryBtn, background: '#e2e8f0', color: '#334155',
+    padding: '0.5rem 1rem', borderRadius: '0.375rem', background: '#1A1A1A',
+    color: '#FFFFFF', border: '1px solid #333', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
 };
 const dangerBtn: React.CSSProperties = {
-    padding: '0.25rem 0.75rem', borderRadius: '0.375rem', background: '#fef2f2',
-    color: '#dc2626', border: '1px solid #fecaca', cursor: 'pointer', fontSize: '0.8rem',
+    padding: '0.25rem 0.75rem', borderRadius: '0.375rem', background: 'rgba(220,38,38,0.1)',
+    color: '#f87171', border: '1px solid rgba(220,38,38,0.3)', cursor: 'pointer', fontSize: '0.8rem',
 };
 const modalOverlay: React.CSSProperties = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex',
     justifyContent: 'center', alignItems: 'center', zIndex: 50,
 };
 const modalCard: React.CSSProperties = {
-    background: '#fff', borderRadius: '0.75rem', padding: '1.5rem',
-    width: '100%', maxWidth: '480px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    background: '#111111', borderRadius: '0.75rem', padding: '1.5rem',
+    width: '100%', maxWidth: '480px', boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+    border: '1px solid #1A1A1A',
 };
 const warningText: React.CSSProperties = {
-    color: '#d97706', fontSize: '0.875rem', fontWeight: 500, margin: '0 0 0.75rem',
+    color: '#fbbf24', fontSize: '0.875rem', fontWeight: 500, margin: '0 0 0.75rem',
 };
 const keyDisplay: React.CSSProperties = {
-    background: '#f1f5f9', borderRadius: '0.375rem', padding: '0.75rem',
-    fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all',
-    border: '1px solid #e2e8f0',
+    background: '#0A0A0A', borderRadius: '0.375rem', padding: '0.75rem',
+    fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', wordBreak: 'break-all',
+    border: '1px solid #1A1A1A', color: '#00FF85',
 };
 const label: React.CSSProperties = {
     display: 'block', fontSize: '0.875rem', fontWeight: 500,
-    color: '#334155', marginBottom: '0.25rem',
+    color: '#888888', marginBottom: '0.25rem',
 };
 const input: React.CSSProperties = {
     width: '100%', padding: '0.5rem 0.75rem', borderRadius: '0.375rem',
-    border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box',
+    border: '1px solid #333', fontSize: '0.875rem', boxSizing: 'border-box',
+    background: '#0A0A0A', color: '#FFFFFF',
 };
 const errorBox: React.CSSProperties = {
-    background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626',
+    background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', color: '#f87171',
     borderRadius: '0.375rem', padding: '0.5rem 0.75rem', fontSize: '0.875rem',
     marginBottom: '1rem',
 };
@@ -247,9 +250,9 @@ const table: React.CSSProperties = {
     width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem',
 };
 const th: React.CSSProperties = {
-    textAlign: 'left', padding: '0.5rem 0.75rem', borderBottom: '2px solid #e2e8f0',
-    color: '#64748b', fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase',
+    textAlign: 'left', padding: '0.5rem 0.75rem', borderBottom: '2px solid #1A1A1A',
+    color: '#888888', fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase',
 };
 const td: React.CSSProperties = {
-    padding: '0.5rem 0.75rem', borderBottom: '1px solid #f1f5f9', color: '#334155',
+    padding: '0.5rem 0.75rem', borderBottom: '1px solid #111111', color: '#CCCCCC',
 };
