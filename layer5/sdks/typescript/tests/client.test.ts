@@ -86,7 +86,7 @@ describe('LayerinfiniteClient', () => {
             mockResponse({ error: 'Unauthorized' }, 401),
         );
 
-        const client = new LayerinfiniteClient({ apiKey: 'bad_key', baseUrl: BASE_URL, maxRetries: 0 });
+        const client = new LayerinfiniteClient({ apiKey: 'layerinfinite_bad_key', baseUrl: BASE_URL, maxRetries: 0 });
 
         await expect(
             client.getScores({ agentId: 'agent-1', issueType: 'test' }),

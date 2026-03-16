@@ -77,7 +77,7 @@ def test_get_scores_401_raises_auth_error():
         return_value=httpx.Response(401, json={"error": "Unauthorized"})
     )
 
-    client = LayerinfiniteClient(api_key="bad_key", base_url=BASE_URL)
+    client = LayerinfiniteClient(api_key="layerinfinite_bad_key", base_url=BASE_URL)
     with pytest.raises(LayerinfiniteAuthError) as exc_info:
         client.get_scores(agent_id="agent-1", issue_type="test")
 
