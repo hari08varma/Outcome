@@ -15,7 +15,7 @@ import type {
     LogOutcomeResponse,
 } from './types.js';
 
-const DEFAULT_BASE_URL = 'https://your-app.railway.app';
+const DEFAULT_BASE_URL = 'https://outcome-production.up.railway.app';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 
@@ -31,6 +31,12 @@ export class LayerinfiniteClient {
 
     constructor(config: LayerinfiniteConfig) {
         if (!config.apiKey) throw new LayerinfiniteError('apiKey is required');
+        if (!config.apiKey.startsWith('layerinfinite_')) {
+            throw new LayerinfiniteError(
+                "Invalid API key format. Key must start with 'layerinfinite_'. " +
+                'Get your key from https://outcome-green.vercel.app/settings/api-keys'
+            );
+        }
         this.apiKey = config.apiKey;
         this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
         this.timeout = config.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -85,8 +91,8 @@ export class LayerinfiniteClient {
                     continue;
                 }
 
-                // 5xx — exponential backoff
-                if (response.status >= 500 && attempt < this.maxRetries) {
+                // Retryable status (caller-defined) — exponential backoff
+                if (isRetryableStatus(response.status) && attempt < this.maxRetries) {
                     await sleep(1000 * Math.pow(2, attempt)); // 1s, 2s, 4s
                     continue;
                 }
@@ -180,7 +186,7 @@ export class LayerinfiniteClient {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 5_000);
         try {
-            const response = await fetch(`${this.baseUrl}/v1/health`, {
+            const response = await fetch(`${this.baseUrl}/health`, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
                 signal: controller.signal,

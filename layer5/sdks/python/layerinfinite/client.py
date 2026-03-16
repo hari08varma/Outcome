@@ -37,10 +37,15 @@ class LayerinfiniteClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://your-app.railway.app",
+        base_url: str = "https://outcome-production.up.railway.app",
         timeout: float = 10.0,
         max_retries: int = 3,
     ) -> None:
+        if not api_key.startswith("layerinfinite_"):
+            raise ValueError(
+                "Invalid API key format. Key must start with 'layerinfinite_'. "
+                "Get your key from https://outcome-green.vercel.app/settings/api-keys"
+            )
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -50,7 +55,7 @@ class LayerinfiniteClient:
             timeout=timeout,
             headers={
                 "X-API-Key": api_key,
-                "User-Agent": "layerinfinite-python-sdk/0.1.0",
+                "User-Agent": "layerinfinite-python-sdk/0.1.6",
                 "Accept": "application/json",
             },
         )
@@ -232,7 +237,7 @@ class LayerinfiniteClient:
         Returns:
             dict with keys 'status' and 'version'.
         """
-        logger.debug("GET /v1/health")
-        response = self._session.get("/v1/health", timeout=5.0)
+        logger.debug("GET /health")
+        response = self._session.get("/health", timeout=5.0)
         response.raise_for_status()
         return response.json()
