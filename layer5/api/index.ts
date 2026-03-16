@@ -98,8 +98,21 @@ const app = new Hono();
 
 // ── CORS: env-driven origins ──────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',')
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
     : ['http://localhost:3000', 'http://localhost:5173'];
+
+// Warn loudly in production if no https:// origin is configured
+if (process.env.NODE_ENV === 'production') {
+    const hasHttps = allowedOrigins.some(o => o.startsWith('https://'));
+    if (!hasHttps) {
+        console.warn(
+            '⚠️  CORS WARNING: ALLOWED_ORIGINS contains no https:// URL in production.\n' +
+            '   Current origins: ' + allowedOrigins.join(', ') + '\n' +
+            '   All browser requests from your dashboard will be blocked.\n' +
+            '   Set ALLOWED_ORIGINS=https://your-dashboard.vercel.app on Railway.'
+        );
+    }
+}
 
 // ── Global middleware ─────────────────────────────────────────
 app.use('*', logger());
@@ -116,7 +129,7 @@ app.use('*', prettyJSON());
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS ?? '10000', 10);
 
 app.use('*', async (c, next) => {
-    if (c.req.path === '/health' || c.req.path === '/') {
+    if (c.req.path === '/health' || c.req.path === '/health/deep' || c.req.path === '/') {
         return next();
     }
 
@@ -153,6 +166,10 @@ app.get('/', (c) => c.json({
     version: '1.0.0',
     status: 'healthy',
     timestamp: new Date().toISOString(),
+    cors: {
+        origins_count: allowedOrigins.length,
+        has_production_origin: allowedOrigins.some(o => o.startsWith('https://')),
+    },
     endpoints: {
         'POST /v1/log-outcome': 'Append outcome to fact_outcomes',
         'GET  /v1/get-scores': 'Get ranked action scores',
@@ -162,6 +179,7 @@ app.get('/', (c) => c.json({
         'GET  /v1/admin/actions': 'List actions (admin)',
         'POST /v1/admin/reinstate-agent': 'Reinstate suspended agent (admin)',
         'POST /v1/admin/test-notification': 'Test a notification channel (admin)',
+        'GET  /health/deep': 'Deep health check (table + env var diagnostics)',
     },
 }));
 
@@ -207,6 +225,85 @@ app.get('/health', async (c) => {
         checks,
         version: '1.0.0',
     });
+});
+
+// ── Deep health check ───────────────────────────────────────
+app.get('/health/deep', async (c) => {
+    const checks: Record<string, string> = { api: 'ok' };
+    let overallStatus = 'ok';
+
+    // ── Table reachability checks ──────────────────────────
+    const tables = ['dim_agents', 'dim_customers', 'user_profiles', 'dim_actions', 'dim_contexts'] as const;
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        for (const table of tables) {
+            try {
+                const { error } = await (supabase as any).from(table).select('*').limit(1);
+                checks[`table_${table}`] = error ? `error: ${error.message}` : 'ok';
+            } catch (e: any) {
+                checks[`table_${table}`] = `error: ${e.message}`;
+            }
+        }
+    } catch (e: any) {
+        for (const table of tables) checks[`table_${table}`] = 'error: supabase unavailable';
+    }
+
+    // ── Schema version ─────────────────────────────────────
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        const { data, error } = await supabase
+            .from('schema_migrations')
+            .select('version')
+            .order('version', { ascending: false })
+            .limit(1);
+        checks.schema_version = (!error && data && data.length > 0)
+            ? `v${data[0].version}`
+            : 'unknown';
+    } catch {
+        checks.schema_version = 'unknown';
+    }
+
+    // ── Environment variable checks ────────────────────────
+    checks.env_ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+        ? `set (${allowedOrigins.length} origins)`
+        : 'missing';
+    checks.env_LAYERINFINITE_INTERNAL_SECRET = process.env.LAYERINFINITE_INTERNAL_SECRET
+        ? 'set'
+        : 'missing';
+    checks.env_SUPABASE_URL = process.env.SUPABASE_URL ? 'set' : 'missing';
+    checks.env_SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ? 'set' : 'missing';
+
+    // ── Existing materialized view check ──────────────────
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        const { data, error } = await supabase
+            .from('mv_action_scores')
+            .select('view_refreshed_at')
+            .limit(1);
+        if (error || !data || data.length === 0) {
+            checks.materialized_view = 'stale';
+        } else {
+            const ageMinutes = (Date.now() - new Date(data[0].view_refreshed_at).getTime()) / 60000;
+            checks.materialized_view = ageMinutes > 15 ? 'stale' : 'ok';
+        }
+    } catch {
+        checks.materialized_view = 'error';
+    }
+
+    // ── Overall status calculation ─────────────────────────
+    const vals = Object.values(checks);
+    if (vals.some(v => v.startsWith('error') || v === 'missing')) {
+        overallStatus = 'degraded';
+    } else if (vals.some(v => v === 'stale' || v === 'unknown')) {
+        overallStatus = 'degraded';
+    }
+
+    return c.json({
+        status: overallStatus,
+        timestamp: new Date().toISOString(),
+        checks,
+        version: '1.0.0',
+    }, overallStatus === 'ok' ? 200 : 200); // always 200, let callers read 'status'
 });
 
 // ── Internal: scoring cache refresh ───────────────────────────

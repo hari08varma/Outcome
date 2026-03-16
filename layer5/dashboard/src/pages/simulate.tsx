@@ -5,6 +5,7 @@
  */
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
+import { API_BASE } from '../lib/config';
 
 // ─── Design Tokens ──────────────────────────────────────────
 
@@ -27,7 +28,6 @@ const COLORS = {
 const FONT_MONO = "'IBM Plex Mono', 'JetBrains Mono', monospace";
 const FONT_SANS = "'IBM Plex Sans', 'Inter', system-ui, sans-serif";
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -689,6 +689,10 @@ export default function SimulatePage() {
 
     // ── Run simulation ──────────────────────────────────────
     async function runSimulation() {
+        if (!API_BASE) {
+            setError('CONFIGURATION ERROR: VITE_LAYERINFINITE_API_URL is not set. Contact your administrator.');
+            return;
+        }
         const errs = validate();
         if (errs.length > 0) {
             setValidationErrors(errs);

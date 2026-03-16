@@ -6,8 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../supabaseClient';
 
-const ENV_API_BASE = import.meta.env.VITE_LAYERINFINITE_API_URL ?? import.meta.env.VITE_API_URL;
-const API_BASE = ENV_API_BASE ?? (window.location.hostname === 'localhost' ? 'http://localhost:3000' : '');
+import { API_BASE } from '../../lib/config';
 
 interface ApiKey {
     key_id: string;
@@ -33,6 +32,7 @@ export default function ApiKeysPage() {
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
+        if (!API_BASE) return; // skip if config error — shown below
         fetchKeys();
     }, []);
 
@@ -173,6 +173,16 @@ export default function ApiKeysPage() {
                 <h2 style={{ margin: 0, color: '#FFFFFF' }}>API Keys</h2>
                 <button onClick={() => setShowCreate(true)} style={primaryBtn}>Create New Key</button>
             </div>
+
+            {/* ── Config error: missing env var ── */}
+            {!API_BASE && (
+                <div style={configErrorBox}>
+                    <strong>CONFIGURATION ERROR</strong><br />
+                    VITE_LAYERINFINITE_API_URL is not set.<br />
+                    Add it to your Vercel environment variables and redeploy.
+                    Contact your administrator.
+                </div>
+            )}
 
             {profileMissing && (
                 <div style={setupBanner}>
@@ -329,6 +339,11 @@ const signOutBtn: React.CSSProperties = {
     padding: '0.25rem 0.75rem', borderRadius: '0.375rem', background: '#fef3c7',
     color: '#92400e', border: '1px solid #fcd34d', cursor: 'pointer',
     fontSize: '0.8rem', fontWeight: 600, marginLeft: 'auto',
+};
+const configErrorBox: React.CSSProperties = {
+    background: 'rgba(239,68,68,0.15)', border: '2px solid rgba(239,68,68,0.6)', color: '#fca5a5',
+    borderRadius: '0.5rem', padding: '1rem 1.25rem', fontSize: '0.9rem', fontWeight: 500,
+    marginBottom: '1.5rem', lineHeight: 1.6,
 };
 const table: React.CSSProperties = {
     width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem',
