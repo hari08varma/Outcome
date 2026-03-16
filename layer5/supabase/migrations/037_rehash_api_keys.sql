@@ -12,8 +12,7 @@ BEGIN
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
     UPDATE dim_agents
-    SET api_key_hash = encode(digest(api_key_hash, 'sha256'), 'hex'),
-        updated_at = NOW()
-    WHERE length(api_key_hash) != 64; 
+    SET api_key_hash = encode(digest(api_key_hash, 'sha256'), 'hex')
+    WHERE length(api_key_hash) != 64;
     -- Assuming a valid SHA-256 hex digest is exactly 64 characters long.
 END $$;
