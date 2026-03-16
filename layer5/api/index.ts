@@ -118,7 +118,7 @@ if (process.env.NODE_ENV === 'production') {
 app.use('*', logger());
 app.use('*', secureHeaders());
 app.use('*', cors({
-    origin: (origin) => allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
+    origin: (origin) => allowedOrigins.includes(origin) ? origin : null,
     allowHeaders: ['X-API-Key', 'X-Admin-Key', 'Authorization', 'Content-Type'],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],

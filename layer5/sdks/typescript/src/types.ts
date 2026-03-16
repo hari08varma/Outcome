@@ -47,7 +47,7 @@ export interface LogOutcomeResponse {
 
 export interface LayerinfiniteConfig {
     apiKey: string;
-    /** Default: https://your-app.railway.app */
+    /** Default: https://outcome-production.up.railway.app */
     baseUrl?: string;
     /** Request timeout in ms. Default: 10000 */
     timeout?: number;

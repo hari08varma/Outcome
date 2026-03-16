@@ -2,6 +2,15 @@
 
 All notable changes to the Python SDK are documented here.
 
+## CI/CD Setup
+Add these secrets to GitHub → Settings → Secrets → Actions:
+- PYPI_API_TOKEN — from pypi.org → Account → API tokens
+- NPM_TOKEN      — from npmjs.com → Access Tokens (Automation)
+- SMOKE_TEST_API_KEY — a real layerinfinite_ API key from 
+  https://outcome-green.vercel.app/settings/api-keys
+
+Without SMOKE_TEST_API_KEY, smoke tests are skipped (not failed).
+
 ## [0.1.6] - 2026-03-17
 
 ### Fixed
