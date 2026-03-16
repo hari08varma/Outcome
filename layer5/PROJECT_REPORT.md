@@ -1442,4 +1442,16 @@ The project passes all **230 automated tests** across **16 test suites** coverin
 
 **Production-readiness fixes applied (v3.1.0):** Missing `updated_at` columns added, `API_BASE` configuration centralized in dashboard, deep health check endpoints deployed, test suites hardened. SDK default URLs corrected, unused properties fixed, and HTTP exceptions correctly managed.
 
+**Post-v3.1.0 DevOps & SDK Hardening (10 Critical Fixes Applied):**
+1. **Deleted Duplicate Workflow**: Removed conflicting `publish-sdks.yml` to prevent CI collisions.
+2. **Autonomous Smoke Test**: Added `sdks/smoke-test.js` (zero-dependency Node `fetch`) that dynamically verifies `GET /health` and `GET /v1/get-scores` against production, natively gracefully skipping on forks without API keys.
+3. **Python CI Hardened**: Added `setup-node@v4` step to PyPI publish workflow to enable native smoke testing.
+4. **npm CI Hardened**: Removed stalled `environment: npm` gate from TypeScript publish workflow, enabling fully unattended continuous deployment.
+5. **TS SDK Documented**: Fixed stale JSDoc comment for `baseUrl` to correctly point to `https://outcome-production.up.railway.app`.
+6. **API CORS Hardened**: `api/index.ts` CORS origin callback correctly returns `null` for blocked origins instead of inadvertently echoing a valid fallback origin.
+7. **Python SDK Test Module**: Created `tests/__init__.py` to guarantee isolated `pytest` discovery across environments.
+8. **Dependency Pinning Guard**: Pinned `httpx<0.29.0` and `pytest-httpx<0.32` in Python `pyproject.toml` to guard against upstream breaking changes rendering CI unstable.
+9. **Python CI/CD Docs**: Added explicit `## CI/CD Setup` parameter instructions to `sdks/python/CHANGELOG.md`.
+10. **TypeScript CI/CD Docs**: Added explicit `## CI/CD Setup` parameter instructions to `sdks/typescript/CHANGELOG.md`.
+
 **Current operational status:** Live database reports expected tables. Both Python (`layerinfinite-sdk`) and TypeScript (`@layerinfinite/sdk`) SDKs are successfully published and distributed via automated CI/CD pipelines natively hooked to GitHub. Connectors are ready for platform submission. Layerinfinite is a polished, fully-realized outcome-ranked intelligence system ready for enterprise application.
