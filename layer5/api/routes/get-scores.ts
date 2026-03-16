@@ -10,6 +10,7 @@
  */
 
 import { Hono } from 'hono';
+import crypto from 'node:crypto';
 import { getScores, ScoredAction } from '../lib/scoring.js';
 import { supabase } from '../lib/supabase.js';
 import { generateEmbedding, findClosestContext, buildContextText } from '../lib/context-embed.js';
@@ -205,27 +206,24 @@ getScoresRouter.get('/', async (c) => {
         let decisionId: string | null = null;
         const contextHash = `${resolvedContextId}:${issueType ?? ''}`;
         const episodePosition = episodeHistory ? episodeHistory.length : 0;
-        try {
-            const { data: decisionRow, error: decisionErr } = await supabase
-                .from('fact_decisions')
-                .insert({
-                    agent_id: agentId ?? null,
-                    context_id: resolvedContextId,
-                    context_hash: contextHash,
-                    ranked_actions: rankedWithPropensity,
-                    episode_id: episodeId,
-                    episode_position: episodePosition,
-                })
-                .select('id')
-                .single();
-
-            if (decisionErr) {
-                console.error('[get-scores] fact_decisions insert failed:', decisionErr.message);
-            } else {
-                decisionId = decisionRow.id;
-            }
-        } catch (err: any) {
-            console.error('[get-scores] fact_decisions insert error:', err.message);
+        
+        if (episodeId) {
+            decisionId = crypto.randomUUID();
+            Promise.resolve(supabase.from('fact_decisions').insert({
+                id: decisionId,
+                agent_id: agentId ?? null,
+                context_id: resolvedContextId,
+                context_hash: contextHash,
+                ranked_actions: rankedWithPropensity,
+                episode_id: episodeId,
+                episode_position: episodePosition,
+            })).then(({ error }) => {
+                if (error) console.error('[get-scores] fact_decisions insert failed:', error.message);
+            }).catch((err: any) => {
+                console.error('[get-scores] fact_decisions insert error:', err.message);
+            });
+        } else {
+            console.warn('[get-scores] Skipped fact_decisions insert: missing episode_id');
         }
 
         // ── Sequence recommendation (CHANGE 3) ───────────────

@@ -167,6 +167,13 @@ export async function devAuthMiddleware(c: Context, next: Next): Promise<Respons
 
     const apiKey = c.req.header('X-API-Key') ?? c.req.header('Authorization')?.replace('Bearer ', '');
 
+    if (!apiKey && process.env.NODE_ENV !== 'production') {
+        return c.json(
+            { error: 'Missing API key. Set X-API-Key header. For dev: set LAYERINFINITE_DEV_API_KEY env var.', code: 'MISSING_API_KEY' },
+            401
+        );
+    }
+
     if (apiKey && apiKey === process.env.LAYERINFINITE_DEV_API_KEY) {
         // Inject demo agent — ONLY in development
         c.set('agent_id', 'd0000000-0000-0000-0000-000000000001');

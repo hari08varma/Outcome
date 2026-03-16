@@ -42,7 +42,8 @@ export async function tier1Predict(
     .select('*')
     .eq('context_hash', request.contextHash)
     .gte('observations', MIN_CONFIDENCE_OBSERVATIONS)
-    .order('mean_outcome', { ascending: false });
+    .order('mean_outcome', { ascending: false })
+    .limit(500);
 
   // Find sequences that start with our full path
   // (Supabase doesn't support complex array prefix matching,
@@ -135,7 +136,7 @@ export async function tier1FindAlternatives(
     .gte('observations', MIN_CONFIDENCE_OBSERVATIONS)
     .gte('mean_outcome', proposedOutcome)
     .order('resolution_rate_lower', { ascending: false })
-    .limit(limit + 5); // over-fetch to filter already-tried
+    .limit(200);
 
   return (sequences ?? [])
     .filter((seq: any) => {

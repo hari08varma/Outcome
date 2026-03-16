@@ -183,7 +183,30 @@ function extractBestSequence(root: MCTSNode): {
  * @param contextFreq     Context frequency (0–1 normalized)
  * @returns Best sequence found and its predicted outcome
  */
+const MCTS_TIMEOUT_MS = 8000;
+
 export async function tier3MCTS(
+  request: SimulationRequest,
+  allActionNames: string[],
+  contextFreq: number,
+): Promise<SequencePrediction | null> {
+  const timeoutPromise = new Promise<'TIMEOUT'>((resolve) =>
+    setTimeout(() => resolve('TIMEOUT'), MCTS_TIMEOUT_MS)
+  );
+
+  const mctsPromise = runTier3MCTS(request, allActionNames, contextFreq);
+
+  const result = await Promise.race([mctsPromise, timeoutPromise]);
+
+  if (result === 'TIMEOUT') {
+    console.warn(`[MCTS] Timeout after ${MCTS_TIMEOUT_MS}ms — falling back to Tier 1`);
+    return null;
+  }
+
+  return result as SequencePrediction | null;
+}
+
+async function runTier3MCTS(
   request: SimulationRequest,
   allActionNames: string[],
   contextFreq: number,
@@ -214,20 +237,29 @@ export async function tier3MCTS(
     depth: 0,
   };
 
-  // Run MCTS simulations
-  for (let i = 0; i < NUM_SIMS; i++) {
-    const selected = select(root);
-    const expanded =
-      selected.untriedActions.length > 0
-        ? expand(selected, validActions)
-        : selected;
-    const value = await rollout(
-      expanded,
-      request.episodeHistory,
-      request.contextHash,
-      contextFreq,
-    );
-    backpropagate(expanded, value);
+  // Run MCTS simulations in batches of 10
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < NUM_SIMS; i += BATCH_SIZE) {
+    const promises = [];
+    for (let j = 0; j < BATCH_SIZE && i + j < NUM_SIMS; j++) {
+      const selected = select(root);
+      const expanded =
+        selected.untriedActions.length > 0
+          ? expand(selected, validActions)
+          : selected;
+      promises.push(
+        rollout(
+          expanded,
+          request.episodeHistory,
+          request.contextHash,
+          contextFreq,
+        ).then(value => ({ expanded, value }))
+      );
+    }
+    const results = await Promise.all(promises);
+    for (const { expanded, value } of results) {
+      backpropagate(expanded, value);
+    }
   }
 
   // Extract best sequence
