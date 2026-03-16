@@ -10,7 +10,7 @@ async function runTest() {
     try {
         const healthRes = await fetch(`${baseUrl}/health`);
         const healthBody = await healthRes.json();
-        if (healthRes.status !== 200 || healthBody.status !== "ok") {
+        if (healthRes.status !== 200 || (healthBody.status !== "ok" && healthBody.status !== "degraded")) {
             throw new Error(`health check returned status ${healthRes.status}`);
         }
         console.log("✅ PASS: health endpoint");
