@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { API_BASE } from '../lib/config';
 
+export const ACCOUNT_SETUP_INCOMPLETE_MESSAGE = 'Account setup incomplete. Please sign out and sign in again to complete setup.';
+
 export interface CustomerContextData {
   userId: string;
   email: string;
@@ -59,7 +61,7 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
     .from('user_profiles')
     .select('customer_id')
     .eq('id', user.id)
-    .maybeSingle();
+    .single();
 
   if (!profile?.customer_id) {
     await tryBootstrapProfile();
@@ -68,14 +70,14 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
       .from('user_profiles')
       .select('customer_id')
       .eq('id', user.id)
-      .maybeSingle();
+      .single();
 
     profile = retry.data;
     profileError = retry.error;
   }
 
   if (profileError || !profile?.customer_id) {
-    throw new Error(profileError?.message ?? 'Unable to resolve customer profile. Please sign out and sign in again.');
+    throw new Error(ACCOUNT_SETUP_INCOMPLETE_MESSAGE);
   }
 
   const { data: agent, error: agentError } = await supabase

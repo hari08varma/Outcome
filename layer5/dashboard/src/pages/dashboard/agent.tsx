@@ -4,6 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAgentTrust } from '../../hooks/useAgentTrust';
 import { supabase } from '../../supabaseClient';
 import { API_BASE } from '../../lib/config';
+import { useToastContext } from '../../components/Toast';
+
+const API_KEY_STORAGE_KEY = 'layerinfinite_api_key';
 
 function statusBadge(status: 'trusted' | 'probation' | 'suspended'): string {
   if (status === 'trusted') {
@@ -28,7 +31,15 @@ function trustColor(status: 'trusted' | 'probation' | 'suspended'): string {
 export default function Agent(): React.ReactElement {
   const navigate = useNavigate();
   const agent = useAgentTrust();
+  const { showToast } = useToastContext();
   const [reinstating, setReinstating] = useState(false);
+
+  const getStoredApiKey = (): string | null => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    return localStorage.getItem(API_KEY_STORAGE_KEY);
+  };
 
   const createdText = useMemo(() => {
     if (!agent.createdAt) {
@@ -42,21 +53,21 @@ export default function Agent(): React.ReactElement {
       return;
     }
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
+    const apiKey = getStoredApiKey();
+    if (!apiKey) {
+      showToast('No API key found - create one in API Keys settings first.', 'warning', 4500);
       return;
     }
 
     const response = await fetch(`${API_BASE}/v1/audit?format=csv`, {
       headers: {
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
     });
 
     if (!response.ok) {
+      showToast('Failed to export CSV logs.', 'critical', 4500);
       return;
     }
 
@@ -67,6 +78,7 @@ export default function Agent(): React.ReactElement {
     a.download = `layerinfinite-audit-${format(new Date(), 'yyyy-MM-dd')}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
+    showToast('Audit CSV exported.', 'success', 2500);
   };
 
   const reinstateAgent = async (): Promise<void> => {
@@ -74,27 +86,33 @@ export default function Agent(): React.ReactElement {
       return;
     }
 
+    const apiKey = getStoredApiKey();
+    if (!apiKey) {
+      showToast('No API key found - create one in API Keys settings first.', 'warning', 4500);
+      return;
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
-    if (!session?.access_token) {
-      return;
-    }
-
     setReinstating(true);
     try {
+      const reinstatedBy = session?.user?.email ?? 'dashboard_admin';
       const response = await fetch(`${API_BASE}/v1/admin/reinstate-agent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ agent_id: agent.agentId }),
+        body: JSON.stringify({ agent_id: agent.agentId, reinstated_by: reinstatedBy }),
       });
 
       if (response.ok) {
+        showToast('Agent reinstated. Status set to probation.', 'success', 4500);
         agent.refetch();
+      } else {
+        showToast('Failed to reinstate agent.', 'critical', 4500);
       }
     } finally {
       setReinstating(false);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { useCustomerContext } from './useCustomerContext';
+import { ACCOUNT_SETUP_INCOMPLETE_MESSAGE, useCustomerContext } from './useCustomerContext';
 
 export interface TrustHistoryItem {
   id: string;
@@ -89,20 +89,45 @@ export function useAgentTrust(): AgentTrustData {
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
-  const load = useCallback(async () => {
-    if (!ctx) {
-      setLoading(false);
-      return;
+  const ensureCustomerId = useCallback(async (): Promise<string> => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error(userError?.message ?? 'Unable to resolve authenticated user');
     }
 
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('customer_id')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile?.customer_id) {
+      throw new Error(ACCOUNT_SETUP_INCOMPLETE_MESSAGE);
+    }
+
+    return profile.customer_id as string;
+  }, []);
+
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
+      const customerId = await ensureCustomerId();
+
+      if (!ctx) {
+        setLoading(false);
+        return;
+      }
+
       const { data: agentRows, error: agentError } = await supabase
         .from('dim_agents')
         .select('agent_id, agent_name, agent_type, created_at')
-        .eq('customer_id', ctx.customerId)
+        .eq('customer_id', customerId)
         .order('created_at', { ascending: true })
         .limit(1);
 
@@ -158,7 +183,7 @@ export function useAgentTrust(): AgentTrustData {
     } finally {
       setLoading(false);
     }
-  }, [ctx]);
+  }, [ctx, ensureCustomerId]);
 
   useEffect(() => {
     if (!ctx) {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { useCustomerContext } from './useCustomerContext';
+import { ACCOUNT_SETUP_INCOMPLETE_MESSAGE, useCustomerContext } from './useCustomerContext';
 
 export interface OverviewMetrics {
   agentHealthScore: number;
@@ -49,16 +49,41 @@ export function useOverviewMetrics(): OverviewMetrics {
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const loadMetrics = useCallback(async () => {
-    if (!ctx) {
-      setLoading(false);
-      return;
+  const ensureCustomerId = useCallback(async (): Promise<string> => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error(userError?.message ?? 'Unable to resolve authenticated user');
     }
 
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('customer_id')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile?.customer_id) {
+      throw new Error(ACCOUNT_SETUP_INCOMPLETE_MESSAGE);
+    }
+
+    return profile.customer_id as string;
+  }, []);
+
+  const loadMetrics = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
+      const customerId = await ensureCustomerId();
+
+      if (!ctx) {
+        setLoading(false);
+        return;
+      }
+
       let trustRow: Record<string, unknown> | undefined;
       if (isUuid(ctx.agentId)) {
         const { data: trustRows, error: trustError } = await supabase
@@ -82,7 +107,7 @@ export function useOverviewMetrics(): OverviewMetrics {
       const { count: todayCount, error: todayError } = await supabase
         .from('fact_outcomes')
         .select('outcome_id', { count: 'exact', head: true })
-        .eq('customer_id', ctx.customerId)
+        .eq('customer_id', customerId)
         .gte('timestamp', todayBounds.from)
         .lt('timestamp', todayBounds.to);
 
@@ -93,7 +118,7 @@ export function useOverviewMetrics(): OverviewMetrics {
       const { count: previousCount, error: previousError } = await supabase
         .from('fact_outcomes')
         .select('outcome_id', { count: 'exact', head: true })
-        .eq('customer_id', ctx.customerId)
+        .eq('customer_id', customerId)
         .gte('timestamp', previousBounds.from)
         .lt('timestamp', previousBounds.to);
 
@@ -104,7 +129,7 @@ export function useOverviewMetrics(): OverviewMetrics {
       const { data: actionRows, error: actionError } = await supabase
         .from('mv_action_scores')
         .select('weighted_success_rate, trend_delta')
-        .eq('customer_id', ctx.customerId);
+        .eq('customer_id', customerId);
 
       if (actionError) {
         throw new Error(actionError.message);
@@ -127,7 +152,7 @@ export function useOverviewMetrics(): OverviewMetrics {
       const { count: unresolvedCount, error: unresolvedError } = await supabase
         .from('degradation_alert_events')
         .select('alert_id', { count: 'exact', head: true })
-        .eq('customer_id', ctx.customerId)
+        .eq('customer_id', customerId)
         .eq('acknowledged', false);
 
       if (unresolvedError) {
@@ -137,7 +162,7 @@ export function useOverviewMetrics(): OverviewMetrics {
       const { data: severityRows, error: severityError } = await supabase
         .from('degradation_alert_events')
         .select('severity')
-        .eq('customer_id', ctx.customerId)
+        .eq('customer_id', customerId)
         .eq('acknowledged', false)
         .limit(200);
 
@@ -170,7 +195,7 @@ export function useOverviewMetrics(): OverviewMetrics {
     } finally {
       setLoading(false);
     }
-  }, [ctx]);
+  }, [ctx, ensureCustomerId]);
 
   useEffect(() => {
     if (!ctx) {

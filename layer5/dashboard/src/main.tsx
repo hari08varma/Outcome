@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import './index.css';
 import AuthPage from './pages/Auth';
 import LoginPage from './pages/auth/login';
@@ -9,13 +9,16 @@ import SignupPage from './pages/auth/signup';
 import LogoutPage from './pages/auth/logout';
 import PrivacyPolicy from './pages/privacy';
 import TermsOfService from './pages/terms';
-import ApiKeysPage from './pages/settings/api-keys';
 import AuditTrail from './pages/audit';
 import Overview from './pages/dashboard/overview';
 import Agent from './pages/dashboard/agent';
 import Actions from './pages/dashboard/actions';
 import Alerts from './pages/dashboard/alerts';
 import Simulate from './pages/dashboard/simulate';
+import SettingsLayout from './pages/dashboard/settings';
+import ApiKeysSettings from './pages/dashboard/settings/api-keys';
+import AgentsSettings from './pages/dashboard/settings/agents';
+import ActionsSettings from './pages/dashboard/settings/actions';
 import ProtectedRoute from './components/ProtectedRoute';
 import NavBar from './components/NavBar';
 import { ToastContainer, ToastContext } from './components/Toast';
@@ -39,6 +42,16 @@ function DashboardLayout({ children }: { children: React.ReactNode }): React.Rea
   );
 }
 
+function DashboardShell(): React.ReactElement {
+  return (
+    <ProtectedRoute>
+      <DashboardLayout>
+        <Outlet />
+      </DashboardLayout>
+    </ProtectedRoute>
+  );
+}
+
 function App(): React.ReactElement {
   const { toasts, showToast, dismissToast } = useToast();
 
@@ -54,76 +67,20 @@ function App(): React.ReactElement {
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/" element={<Navigate to="/auth" replace />} />
 
-          <Route
-            path="/dashboard"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Overview />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/dashboard/agent"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Agent />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/dashboard/actions"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Actions />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/dashboard/alerts"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Alerts />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/dashboard/simulate"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Simulate />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/dashboard/settings/api-keys"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <ApiKeysPage />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/dashboard/settings/audit"
-            element={(
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <AuditTrail />
-                </DashboardLayout>
-              </ProtectedRoute>
-            )}
-          />
+          <Route path="/dashboard" element={<DashboardShell />}>
+            <Route index element={<Overview />} />
+            <Route path="agent" element={<Agent />} />
+            <Route path="actions" element={<Actions />} />
+            <Route path="alerts" element={<Alerts />} />
+            <Route path="simulate" element={<Simulate />} />
+            <Route path="settings" element={<SettingsLayout />}>
+              <Route index element={<Navigate to="/dashboard/settings/api-keys" replace />} />
+              <Route path="api-keys" element={<ApiKeysSettings />} />
+              <Route path="agents" element={<AgentsSettings />} />
+              <Route path="actions" element={<ActionsSettings />} />
+            </Route>
+            <Route path="settings/audit" element={<AuditTrail />} />
+          </Route>
 
           <Route path="/outcomes" element={<Navigate to="/dashboard" replace />} />
           <Route path="/trust" element={<Navigate to="/dashboard/agent" replace />} />

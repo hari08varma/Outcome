@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { eachDayOfInterval, format, subDays } from 'date-fns';
 import { supabase } from '../supabaseClient';
-import { useCustomerContext } from './useCustomerContext';
+import { ACCOUNT_SETUP_INCOMPLETE_MESSAGE, useCustomerContext } from './useCustomerContext';
 
 export interface SuccessRatePoint {
   date: string;
@@ -28,23 +28,48 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
-  const load = useCallback(async () => {
-    if (!ctx) {
-      setLoading(false);
-      return;
+  const ensureCustomerId = useCallback(async (): Promise<string> => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error(userError?.message ?? 'Unable to resolve authenticated user');
     }
 
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('customer_id')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile?.customer_id) {
+      throw new Error(ACCOUNT_SETUP_INCOMPLETE_MESSAGE);
+    }
+
+    return profile.customer_id as string;
+  }, []);
+
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
+      const customerId = await ensureCustomerId();
+
+      if (!ctx) {
+        setLoading(false);
+        return;
+      }
+
       const startDate = subDays(new Date(), 29);
       const endDate = new Date();
 
       let query = supabase
         .from('fact_outcomes')
         .select('timestamp, success, context_id')
-        .eq('customer_id', ctx.customerId)
+        .eq('customer_id', customerId)
         .gte('timestamp', startDate.toISOString())
         .lte('timestamp', endDate.toISOString());
 
@@ -105,7 +130,7 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
     } finally {
       setLoading(false);
     }
-  }, [ctx, contextFilter]);
+  }, [ctx, contextFilter, ensureCustomerId]);
 
   useEffect(() => {
     if (!ctx) {

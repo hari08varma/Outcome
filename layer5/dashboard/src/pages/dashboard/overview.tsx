@@ -14,6 +14,7 @@ import {
 import { format, parseISO } from 'date-fns';
 import { useOverviewMetrics } from '../../hooks/useOverviewMetrics';
 import { useSuccessRateTrend } from '../../hooks/useSuccessRateTrend';
+import { supabase } from '../../supabaseClient';
 
 interface TrendTooltipProps {
   active?: boolean;
@@ -65,6 +66,7 @@ export default function Overview(): React.ReactElement {
 
   const isLoading = metrics.loading || trend.loading;
   const error = metrics.error ?? trend.error;
+  const isAccountSetupIncomplete = error?.includes('Account setup incomplete') ?? false;
 
   const chartData = useMemo(() => trend.data, [trend.data]);
 
@@ -106,7 +108,22 @@ export default function Overview(): React.ReactElement {
         </button>
       </div>
 
-      {error && (
+      {isAccountSetupIncomplete && (
+        <div className="bg-[#ffaa00]/10 border border-[#ffaa00]/30 text-[#ffaa00] p-4 rounded-xl mb-6 flex items-center justify-between gap-3">
+          <span>⚠ Account setup incomplete — sign out and sign in again to load your dashboard data.</span>
+          <button
+            className="border border-[#ffaa00]/40 rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-[#ffaa00]/10"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              navigate('/auth?mode=login');
+            }}
+          >
+            Sign Out
+          </button>
+        </div>
+      )}
+
+      {error && !isAccountSetupIncomplete && (
         <div className="mb-4 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl px-4 py-3 text-sm flex items-center justify-between">
           <span>{error}</span>
           <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={onRefresh}>Retry</button>
