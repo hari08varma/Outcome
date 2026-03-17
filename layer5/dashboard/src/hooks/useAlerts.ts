@@ -34,14 +34,14 @@ export interface AlertsResult {
 interface AlertRow {
   alert_id: string;
   alert_type: string;
-  severity: string;
+  severity: string | null;
   message: string | null;
   action_name: string | null;
   current_value: number | null;
   baseline_value: number | null;
   spike_ratio: number | null;
   affected_agent_count: number | null;
-  detected_at: string;
+  detected_at: string | null;
   acknowledged: boolean | null;
 }
 
@@ -84,7 +84,8 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
       }
 
       const mapped: AlertItem[] = ((rows ?? []) as AlertRow[]).map((row) => {
-        const severity: 'critical' | 'warning' = row.severity.toLowerCase() === 'critical'
+        const normalizedSeverity = (row.severity ?? '').toLowerCase();
+        const severity: 'critical' | 'warning' = normalizedSeverity === 'critical'
           ? 'critical'
           : 'warning';
 
@@ -98,7 +99,7 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
           baselineValue: row.baseline_value,
           spikeRatio: row.spike_ratio,
           affectedAgentCount: row.affected_agent_count,
-          createdAt: row.detected_at,
+          createdAt: row.detected_at ?? new Date().toISOString(),
           resolved: Boolean(row.acknowledged),
         };
       });

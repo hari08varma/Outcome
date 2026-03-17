@@ -14,6 +14,11 @@ function alertTypeLabel(value: string): string {
   return value.replace(/_/g, ' ').toUpperCase();
 }
 
+function parseDateSafe(value: string): Date | null {
+  const parsed = parseISO(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export default function Alerts(): React.ReactElement {
   const [activeFilter, setActiveFilter] = useState<AlertsFilter>('all');
   const [showResolved, setShowResolved] = useState(false);
@@ -91,6 +96,16 @@ export default function Alerts(): React.ReactElement {
       ) : (
         <section className="mt-6 flex flex-col gap-3">
           {alerts.map((alert) => (
+            (() => {
+              const createdDate = parseDateSafe(alert.createdAt);
+              const relativeTime = createdDate
+                ? formatDistanceToNowStrict(createdDate, { addSuffix: true })
+                : 'Unknown time';
+              const absoluteTime = createdDate
+                ? format(createdDate, 'MMM dd, yyyy HH:mm:ss')
+                : 'Timestamp unavailable';
+
+              return (
             <article
               key={alert.id}
               className={`bg-[#111118] border border-[#1a1a24] rounded-xl p-4 flex gap-4 transition-opacity duration-300 ${fadingIds.has(alert.id) ? 'opacity-0' : 'opacity-100'}`}
@@ -117,7 +132,7 @@ export default function Alerts(): React.ReactElement {
 
                 <div className="flex flex-wrap gap-2 mt-2 items-center">
                   <span className="font-mono text-xs bg-[#1a1a24] px-2 py-0.5 rounded text-[#a1a1aa]">{alert.actionName}</span>
-                  <span className="text-[#52525b] text-xs">{formatDistanceToNowStrict(parseISO(alert.createdAt), { addSuffix: true })}</span>
+                  <span className="text-[#52525b] text-xs">{relativeTime}</span>
                   {alert.alertType === 'latency_spike' && alert.currentValue != null && alert.baselineValue != null && (
                     <span className="text-[#ffaa00] text-xs font-mono">{(alert.currentValue / 1000).toFixed(1)}s vs baseline {(alert.baselineValue / 1000).toFixed(1)}s</span>
                   )}
@@ -126,7 +141,7 @@ export default function Alerts(): React.ReactElement {
                   )}
                 </div>
 
-                <div className="text-[#52525b] text-xs mt-2">{format(parseISO(alert.createdAt), 'MMM dd, yyyy HH:mm:ss')}</div>
+                <div className="text-[#52525b] text-xs mt-2">{absoluteTime}</div>
               </div>
 
               {!alert.resolved && (
@@ -153,6 +168,8 @@ export default function Alerts(): React.ReactElement {
                 </div>
               )}
             </article>
+              );
+            })()
           ))}
         </section>
       )}
