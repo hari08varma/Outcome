@@ -1,30 +1,13 @@
-/**
- * Layerinfinite — routes/log-outcome.ts
- * POST /v1/log-outcome
- * ══════════════════════════════════════════════════════════════
- * Appends one outcome to fact_outcomes.
- * Action validation handled by validateActionMiddleware (upstream).
- * Returns outcome + policy recommendation from policy engine.
- * ══════════════════════════════════════════════════════════════
- */
-
 import { Context, Hono } from 'hono';
 import { z } from 'zod';
 import { supabase } from '../lib/supabase.js';
 import { invalidateCache, getCachedScore, getScores } from '../lib/scoring.js';
 import {
-    getPolicyDecision,
-    DEFAULT_TRUST,
-    DEFAULT_POLICY_CONFIG,
-    AgentTrustScore,
-    CustomerPolicyConfig,
+    getPolicyDecision, DEFAULT_TRUST, DEFAULT_POLICY_CONFIG, AgentTrustScore, CustomerPolicyConfig,
 } from '../lib/policy-engine.js';
-import { writeCounterfactuals } from '../lib/ips-engine.js';
-import { upsertSequence, closeSequence } from '../lib/sequence-tracker.js';
-import { backpropagateReward } from '../lib/reward-backprop.js';
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -68,7 +51,7 @@ const LogOutcomeBody = z.object({
     }).optional(),
 });
 
-// ── Helper: fetch real agent trust (falls back to DEFAULT_TRUST) ──
+// ── Helper: fetch real agent trust ──
 async function getAgentTrust(agentId: string): Promise<AgentTrustScore> {
     const { data, error } = await supabase
         .from('agent_trust_scores')
@@ -83,7 +66,7 @@ async function getAgentTrust(agentId: string): Promise<AgentTrustScore> {
     };
 }
 
-// ── Helper: fetch real customer config (falls back to DEFAULT_POLICY_CONFIG) ──
+// ── Helper: fetch real customer config ──
 async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConfig> {
     const { data, error } = await supabase
         .from('dim_customers')
@@ -99,148 +82,6 @@ async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConf
         exploration_rate: typeof cfg.exploration_rate === 'number' ? cfg.exploration_rate : 0.05,
         min_confidence: typeof cfg.min_confidence === 'number' ? cfg.min_confidence : 0.30,
     };
-}
-
-// ── Helper: update agent trust after outcome ──
-async function updateAgentTrust(agentId: string, customerId: string, success: boolean): Promise<void> {
-    const { data: trust } = await supabase
-        .from('agent_trust_scores')
-        .select('trust_id, trust_score, total_decisions, correct_decisions, consecutive_failures, trust_status')
-        .eq('agent_id', agentId)
-        .maybeSingle();
-
-    if (!trust) return;
-
-    const oldScore = trust.trust_score;
-    const oldStatus = trust.trust_status;
-    let newScore: number;
-    let newFailures: number;
-    let newCorrect = trust.correct_decisions;
-
-    if (success) {
-        newFailures = 0;
-        newCorrect += 1;
-        newScore = Math.min(trust.trust_score * 1.03, 1.0);
-    } else {
-        newFailures = trust.consecutive_failures + 1;
-        newScore = trust.trust_score * Math.pow(0.9, newFailures);
-    }
-
-    let newStatus: string;
-    let newSuspensionReason = null;
-
-    if (newScore < 0.1 || newFailures >= 10) {
-        newStatus = 'suspended';
-        newSuspensionReason = newScore < 0.1 ? 'trust_score_critically_low' : 'consecutive_failures_exceeded';
-    } else if (newScore < 0.3 || newFailures >= 5) {
-        newStatus = 'sandbox';
-        newSuspensionReason = newFailures >= 5 ? 'consecutive_failures_exceeded' : null;
-    } else if (newScore < 0.6) {
-        newStatus = 'probation';
-    } else {
-        newStatus = 'trusted';
-    }
-
-    await supabase
-        .from('agent_trust_scores')
-        .update({
-            trust_score: newScore,
-            total_decisions: trust.total_decisions + 1,
-            correct_decisions: newCorrect,
-            consecutive_failures: newFailures,
-            trust_status: newStatus,
-            suspension_reason: newSuspensionReason,
-            updated_at: new Date().toISOString(),
-        })
-        .eq('agent_id', agentId);
-
-    if (oldStatus !== newStatus) {
-        await supabase.from('agent_trust_audit').insert({
-            agent_id: agentId,
-            customer_id: customerId,
-            event_type: newStatus === 'suspended' ? 'suspended' : 'recalibrated',
-            old_score: oldScore,
-            new_score: newScore,
-            old_status: oldStatus,
-            new_status: newStatus,
-            reason: newStatus === 'suspended' || newStatus === 'sandbox'
-                ? `Trust recalibrated: ${oldStatus} → ${newStatus}. Score: ${newScore.toFixed(3)}, Failures: ${newFailures}`
-                : `Trust recalibrated: ${oldStatus} → ${newStatus}`,
-        });
-    }
-}
-
-// ── CONTEXT DRIFT DETECTION (Gap 2) ──────────────────────────
-async function detectContextDrift(
-    sb: SupabaseClient,
-    customerId: string,
-    contextType: string,
-    agentId: string
-): Promise<void> {
-    const { data: existingContext } = await sb
-        .from('dim_contexts')
-        .select('context_id')
-        .eq('issue_type', contextType)
-        .limit(1)
-        .maybeSingle();
-
-    if (existingContext) {
-        const { count } = await sb
-            .from('fact_outcomes')
-            .select('outcome_id', { count: 'exact', head: true })
-            .eq('customer_id', customerId)
-            .eq('context_id', existingContext.context_id);
-
-        if ((count ?? 0) > 0) return;
-    }
-
-    const { data: recentAlert } = await sb
-        .from('degradation_alert_events')
-        .select('alert_id')
-        .eq('customer_id', customerId)
-        .eq('alert_type', 'context_drift')
-        .gte('detected_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-        .limit(1);
-
-    if (recentAlert && recentAlert.length > 0) return;
-
-    await sb.from('degradation_alert_events').insert({
-        customer_id: customerId,
-        alert_type: 'context_drift',
-        severity: 'warning',
-        message: `New context type "${contextType}" encountered by agent ${agentId}. No prior outcomes for this customer. Cold-start protocol activated.`,
-    });
-}
-
-// ── SILENT FAILURE DETECTION (Gap 5) ─────────────────────────
-async function detectSilentFailure(
-    sb: SupabaseClient,
-    outcome: {
-        outcome_id: string;
-        customer_id: string;
-        agent_id: string;
-        action_id: string;
-        action_name: string;
-        success: boolean;
-        outcome_score: number | null;
-    }
-): Promise<void> {
-    const isSilentFailure =
-        outcome.success === true &&
-        outcome.outcome_score !== null &&
-        outcome.outcome_score < 0.3;
-
-    if (!isSilentFailure) return;
-
-    await sb.from('degradation_alert_events').insert({
-        customer_id: outcome.customer_id,
-        action_id: outcome.action_id,
-        alert_type: 'degradation',
-        severity: 'warning',
-        current_value: outcome.outcome_score,
-        baseline_value: 1.0,
-        message: `Silent failure detected on "${outcome.action_name}": success=true but outcome_score=${outcome.outcome_score}. Technical success, business failure. Score will reflect true outcome.`,
-    });
 }
 
 // ── Salience sampling ─────────────────────────────────────────
@@ -261,8 +102,12 @@ function computeSalience(
 
 async function parseAndSanitizeRequest(c: Context) {
     let body: z.infer<typeof LogOutcomeBody>;
-    const raw = c.get('parsed_body') ?? await c.req.json();
-    body = LogOutcomeBody.parse(raw);
+    try {
+        const raw = c.get('parsed_body') ?? await c.req.json();
+        body = LogOutcomeBody.parse(raw);
+    } catch (err: any) {
+        throw new Error(`VALIDATION_ERROR:${err.errors ?? err.message}`);
+    }
 
     if (body.raw_context) body.raw_context = sanitizeContext(body.raw_context);
     if (body.error_message) body.error_message = sanitizeString(body.error_message, 1000);
@@ -278,7 +123,7 @@ async function parseAndSanitizeRequest(c: Context) {
     return body;
 }
 
-async function handleIdempotency(idempotencyKey: string | undefined, actionName: string) {
+async function handleIdempotency(idempotencyKey: string | undefined) {
     if (!idempotencyKey) return null;
     const { data: existing } = await supabase
         .from('fact_outcome_idempotency')
@@ -337,7 +182,7 @@ async function resolveContextId(body: any) {
         .eq('environment', body.environment)
         .maybeSingle();
 
-    if (existingCtx) return existingCtx.context_id;
+    if (existingCtx && existingCtx.context_id) return existingCtx.context_id;
 
     const { data: newCtx, error: ctxErr } = await supabase
         .from('dim_contexts')
@@ -349,7 +194,7 @@ async function resolveContextId(body: any) {
         .select('context_id')
         .single();
 
-    if (ctxErr || !newCtx) throw new Error('CONTEXT_ERROR');
+    if (ctxErr || !newCtx || !newCtx.context_id) throw new Error(`CONTEXT_ERROR:${ctxErr?.message || 'Missing context_id'}`);
     return newCtx.context_id;
 }
 
@@ -383,7 +228,7 @@ async function insertCoreOutcome(
         .select('outcome_id, timestamp')
         .single();
 
-    if (insertErr || !outcome) throw new Error('INSERT_ERROR:' + (insertErr?.message || 'unknown error'));
+    if (insertErr || !outcome) throw new Error(`INSERT_ERROR:${insertErr?.message}`);
     return outcome;
 }
 
@@ -466,7 +311,7 @@ logOutcomeRouter.post('/', async (c) => {
         const body = await parseAndSanitizeRequest(c);
 
         // 2. Idempotency Check
-        const originalOutcome = await handleIdempotency(body.idempotency_key, body.action_name);
+        const originalOutcome = await handleIdempotency(body.idempotency_key);
         if (originalOutcome) {
             c.header('Idempotent-Replayed', 'true');
             return c.json({
@@ -496,62 +341,21 @@ logOutcomeRouter.post('/', async (c) => {
         await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id);
         invalidateCache(customerId, contextId);
         const decisionRecord = await resolveDecisionId(body, agentId, actionId, outcome.outcome_id);
-        const decisionResolved = decisionRecord !== null;
         
-        // 7. Fire-and-forget Asynchronous Pipelines
-        let counterfactualsComputed = false;
-        if (decisionResolved && decisionRecord?.ranked_actions) {
-            counterfactualsComputed = true;
-            const outcomeScore = finalOutcomeScore ?? (finalSuccess ? 1.0 : 0.0);
-            writeCounterfactuals({
-                decisionId: body.decision_id!,
-                realOutcomeId: outcome.outcome_id,
-                realOutcomeScore: outcomeScore,
-                chosenActionName: body.action_name,
-                rankedActions: decisionRecord.ranked_actions,
-                contextHash: decisionRecord.context_hash ?? '',
-                episodePosition: decisionRecord.episode_position ?? 0,
-            }).catch(err => console.error('[LogOutcome] IPS write failed:', err));
-        }
-
-        // SEQUENCE TRACKING (Fix 7)
-        let sequencePosition: number | null = null;
-        if (body.episode_id) {
-            sequencePosition = body.episode_history ? body.episode_history.length : 0;
-            
-            upsertSequence({
-                episodeId: body.episode_id,
-                agentId: agentId,
-                contextHash: decisionRecord?.context_hash ?? `${contextId}:${body.issue_type}`,
-                actionName: body.action_name,
-                responseMs: body.response_time_ms,
-            }).catch(err => console.error('[LogOutcome] Sequence upsert failed:', err));
-
-            if (body.business_outcome === 'resolved' || body.business_outcome === 'failed') {
-                const finalScore = finalOutcomeScore ?? (finalSuccess ? 1.0 : 0.0);
-                closeSequence({
-                    episodeId: body.episode_id,
-                    finalOutcome: finalScore,
-                }).catch(err => console.error('[LogOutcome] Sequence close failed:', err));
-                
-                backpropagateReward({
-                    episode_id: body.episode_id,
-                    final_outcome: finalScore,
-                    gamma: 0.85,
-                }).catch(err => console.error('[BackpropReward] failed:', err));
-            }
-        }
-
-        updateAgentTrust(agentId, customerId, finalSuccess).catch(err => console.warn('[log-outcome] Trust update failed:', err.message));
-        detectContextDrift(supabase, customerId, body.issue_type, agentId).catch(err => console.warn('[log-outcome] Context drift check failed:', err));
-        detectSilentFailure(supabase, {
-            outcome_id: outcome.outcome_id, customer_id: customerId, agent_id: agentId, action_id: actionId,
-            action_name: body.action_name, success: finalSuccess, outcome_score: finalOutcomeScore,
-        }).catch(err => console.warn('[log-outcome] Silent failure check failed:', err));
+        // 7. Fire-and-forget Asynchronous Pipelines via Orchestrator
+        orchestrateOutcome({
+            agentId, customerId, outcomeId: outcome.outcome_id, actionId, actionName: body.action_name,
+            contextId, issueType: body.issue_type, finalSuccess, finalOutcomeScore,
+            responseMs: body.response_time_ms ?? null, episodeId: body.episode_id,
+            businessOutcome: body.business_outcome, decisionId: body.decision_id, decisionRecord,
+        }).catch(err => console.error('[log-outcome] orchestrator failed:', { error: err.message, outcomeId: outcome.outcome_id }));
 
         // 8. Policy Engine Wrap-up
         const policyResult = await computePolicyRecommendation(customerId, contextId, agentId, body.issue_type);
         const finalValidatedAction = c.get('validated_action') as any;
+
+        const counterfactualsComputed = !!(decisionRecord?.ranked_actions);
+        const sequencePosition = body.episode_id ? (body.episode_history ? body.episode_history.length : 0) : null;
 
         return c.json({
             success: true,
@@ -585,11 +389,11 @@ logOutcomeRouter.post('/', async (c) => {
             const parts = err.message.split(':');
             return c.json({ error: parts[1], message: parts[2] }, 400);
         }
-        if (err.name === 'ZodError' || err.code === 'VALIDATION_ERROR') {
-            return c.json({ error: 'Invalid request body', details: err.errors ?? err.message, code: 'VALIDATION_ERROR' }, 400);
+        if (err.message.startsWith('VALIDATION_ERROR:')) {
+            return c.json({ error: 'Invalid request body', details: err.message.substring(17), code: 'VALIDATION_ERROR' }, 400);
         }
-        if (err.message === 'CONTEXT_ERROR') {
-            return c.json({ error: 'Failed to resolve context', details: err.message, code: 'CONTEXT_ERROR' }, 500);
+        if (err.message.startsWith('CONTEXT_ERROR:')) {
+            return c.json({ error: 'Failed to resolve context', details: err.message.substring(14), code: 'CONTEXT_ERROR' }, 500);
         }
         if (err.message.startsWith('INSERT_ERROR:')) {
             return c.json({ error: 'Failed to log outcome', details: err.message.substring(13), code: 'INSERT_ERROR' }, 500);

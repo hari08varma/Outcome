@@ -18,10 +18,14 @@ import { supabase } from '../lib/supabase.js';
 
 // TTL reduced to 60s for security:
 // Revoked keys must be rejected within 1 minute.
-// Performance impact is minimal — auth is 
-// called per-request but Supabase can handle 
-// this read load. The 15-min cache was premature 
-// optimization at the expense of security.
+// PERFORMANCE NOTE: At 1000 req/min (enterprise tier),
+// 60s TTL = ~16.7 DB auth reads/sec worst case
+// (assumes zero cache hits on new keys).
+// Benchmark with k6 before enterprise onboarding.
+// Consider per-tier TTL (free=60s, pro=120s, enterprise=300s)
+// if auth becomes a DB bottleneck under load.
+// The 15-min cache was premature optimization at the
+// expense of security — do not revert without load data.
 const AUTH_CACHE_TTL_MS = 60 * 1000;
 
 interface AgentAuth {

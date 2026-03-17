@@ -13,6 +13,7 @@ import { Hono } from 'hono';
 import crypto from 'node:crypto';
 import { getScores, ScoredAction } from '../lib/scoring.js';
 import { supabase } from '../lib/supabase.js';
+import { bufferDecision } from '../lib/decision-writer.js';
 import { generateEmbedding, findClosestContext, buildContextText } from '../lib/context-embed.js';
 import {
     getPolicyDecision,
@@ -208,22 +209,14 @@ getScoresRouter.get('/', async (c) => {
         const episodePosition = episodeHistory ? episodeHistory.length : 0;
         
         if (episodeId) {
-            decisionId = crypto.randomUUID();
-            Promise.resolve(supabase.from('fact_decisions').insert({
-                id: decisionId,
+            decisionId = bufferDecision({
                 agent_id: agentId ?? null,
-                context_id: resolvedContextId,
+                context_id: resolvedContextId!,
                 context_hash: contextHash,
                 ranked_actions: rankedWithPropensity,
                 episode_id: episodeId,
                 episode_position: episodePosition,
-            })).then(({ error }) => {
-                if (error) console.error('[get-scores] fact_decisions insert failed:', error.message);
-            }).catch((err: any) => {
-                console.error('[get-scores] fact_decisions insert error:', err.message);
             });
-        } else {
-            console.warn('[get-scores] Skipped fact_decisions insert: missing episode_id');
         }
 
         // ── Sequence recommendation (CHANGE 3) ───────────────
