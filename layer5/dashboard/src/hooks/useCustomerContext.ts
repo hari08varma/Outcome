@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { API_BASE } from '../lib/config';
 
 export interface CustomerContextData {
   userId: string;
@@ -19,6 +20,31 @@ interface CustomerContextState {
 let contextCache: CustomerContextData | null = null;
 let contextPromise: Promise<CustomerContextData> | null = null;
 
+async function tryBootstrapProfile(): Promise<void> {
+  if (!API_BASE) {
+    return;
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    return;
+  }
+
+  try {
+    await fetch(`${API_BASE}/v1/auth/api-keys`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+  } catch {
+    // Best effort bootstrap call; context lookup below determines final state.
+  }
+}
+
 async function fetchCustomerContext(): Promise<CustomerContextData> {
   const {
     data: { user },
@@ -29,14 +55,27 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
     throw new Error(userError?.message ?? 'Unable to resolve authenticated user');
   }
 
-  const { data: profile, error: profileError } = await supabase
+  let { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('customer_id')
     .eq('id', user.id)
     .maybeSingle();
 
+  if (!profile?.customer_id) {
+    await tryBootstrapProfile();
+
+    const retry = await supabase
+      .from('user_profiles')
+      .select('customer_id')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    profile = retry.data;
+    profileError = retry.error;
+  }
+
   if (profileError || !profile?.customer_id) {
-    throw new Error(profileError?.message ?? 'Unable to resolve customer profile');
+    throw new Error(profileError?.message ?? 'Unable to resolve customer profile. Please sign out and sign in again.');
   }
 
   const { data: agent, error: agentError } = await supabase
@@ -60,10 +99,13 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
       .maybeSingle();
 
     if (fallbackError || !fallbackAgent?.agent_id) {
-      throw new Error(agentError?.message ?? fallbackError?.message ?? 'Unable to resolve customer agent');
+      resolvedAgent = {
+        agent_id: '',
+        agent_name: 'default-agent',
+      };
+    } else {
+      resolvedAgent = fallbackAgent;
     }
-
-    resolvedAgent = fallbackAgent;
   }
 
   return {
@@ -125,6 +167,21 @@ export function useCustomerContext(): CustomerContextState {
     }
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+        contextCache = null;
+        contextPromise = null;
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const refetch = useCallback(async () => {
     await load(true);

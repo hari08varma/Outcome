@@ -91,6 +91,7 @@ export function useAgentTrust(): AgentTrustData {
 
   const load = useCallback(async () => {
     if (!ctx) {
+      setLoading(false);
       return;
     }
 
@@ -161,10 +162,13 @@ export function useAgentTrust(): AgentTrustData {
 
   useEffect(() => {
     if (!ctx) {
+      if (!ctxLoading) {
+        setLoading(false);
+      }
       return;
     }
     void load();
-  }, [ctx, tick, load]);
+  }, [ctx, ctxLoading, tick, load]);
 
   useEffect(() => {
     if (!ctx?.agentId) {

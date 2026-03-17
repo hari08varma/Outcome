@@ -30,6 +30,7 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
 
   const load = useCallback(async () => {
     if (!ctx) {
+      setLoading(false);
       return;
     }
 
@@ -108,10 +109,13 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
 
   useEffect(() => {
     if (!ctx) {
+      if (!ctxLoading) {
+        setLoading(false);
+      }
       return;
     }
     void load();
-  }, [ctx, tick, load]);
+  }, [ctx, ctxLoading, tick, load]);
 
   const refetch = useCallback(() => {
     setTick((v) => v + 1);

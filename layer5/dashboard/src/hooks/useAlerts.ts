@@ -55,6 +55,7 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
 
   const load = useCallback(async () => {
     if (!ctx) {
+      setLoading(false);
       return;
     }
 
@@ -125,10 +126,13 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
 
   useEffect(() => {
     if (!ctx) {
+      if (!ctxLoading) {
+        setLoading(false);
+      }
       return;
     }
     void load();
-  }, [ctx, tick, load]);
+  }, [ctx, ctxLoading, tick, load]);
 
   useEffect(() => {
     if (!ctx) {

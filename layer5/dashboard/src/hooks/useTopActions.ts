@@ -66,6 +66,7 @@ export function useTopActions(): TopActionsResult {
 
   const load = useCallback(async () => {
     if (!ctx) {
+      setLoading(false);
       return;
     }
 
@@ -120,10 +121,13 @@ export function useTopActions(): TopActionsResult {
 
   useEffect(() => {
     if (!ctx) {
+      if (!ctxLoading) {
+        setLoading(false);
+      }
       return;
     }
     void load();
-  }, [ctx, tick, load]);
+  }, [ctx, ctxLoading, tick, load]);
 
   const refetch = useCallback(() => {
     setTick((v) => v + 1);

@@ -47,6 +47,7 @@ export function useOverviewMetrics(): OverviewMetrics {
 
   const loadMetrics = useCallback(async () => {
     if (!ctx) {
+      setLoading(false);
       return;
     }
 
@@ -165,10 +166,13 @@ export function useOverviewMetrics(): OverviewMetrics {
 
   useEffect(() => {
     if (!ctx) {
+      if (!ctxLoading) {
+        setLoading(false);
+      }
       return;
     }
     void loadMetrics();
-  }, [ctx, refreshTick, loadMetrics]);
+  }, [ctx, ctxLoading, refreshTick, loadMetrics]);
 
   useEffect(() => {
     if (!ctx) {
