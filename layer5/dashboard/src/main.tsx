@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import './index.css';
 import AuthPage from './pages/Auth';
 import LoginPage from './pages/auth/login';
 import SignupPage from './pages/auth/signup';

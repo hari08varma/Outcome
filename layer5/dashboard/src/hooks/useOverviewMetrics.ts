@@ -31,6 +31,10 @@ function getIsoBounds(hoursAgoStart: number, hoursAgoEnd: number): { from: strin
   return { from: start.toISOString(), to: end.toISOString() };
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export function useOverviewMetrics(): OverviewMetrics {
   const { data: ctx, loading: ctxLoading, error: ctxError } = useCustomerContext();
   const [agentHealthScore, setAgentHealthScore] = useState(0);
@@ -55,17 +59,21 @@ export function useOverviewMetrics(): OverviewMetrics {
     setError(null);
 
     try {
-      const { data: trustRows, error: trustError } = await supabase
-        .from('agent_trust_scores')
-        .select('*')
-        .eq('agent_id', ctx.agentId)
-        .limit(1);
+      let trustRow: Record<string, unknown> | undefined;
+      if (isUuid(ctx.agentId)) {
+        const { data: trustRows, error: trustError } = await supabase
+          .from('agent_trust_scores')
+          .select('*')
+          .eq('agent_id', ctx.agentId)
+          .limit(1);
 
-      if (trustError) {
-        throw new Error(trustError.message);
+        if (trustError) {
+          throw new Error(trustError.message);
+        }
+
+        trustRow = trustRows?.[0] as Record<string, unknown> | undefined;
       }
 
-      const trustRow = trustRows?.[0] as Record<string, unknown> | undefined;
       const trustScore = Number((trustRow?.trust_score as number | null) ?? 0);
 
       const todayBounds = getIsoBounds(24, 0);
