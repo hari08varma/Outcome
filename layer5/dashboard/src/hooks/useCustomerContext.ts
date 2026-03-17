@@ -48,16 +48,30 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
     .limit(1)
     .maybeSingle();
 
-  if (agentError || !agent?.agent_id) {
-    throw new Error(agentError?.message ?? 'Unable to resolve customer agent');
+  let resolvedAgent = agent;
+
+  if (!resolvedAgent?.agent_id) {
+    const { data: fallbackAgent, error: fallbackError } = await supabase
+      .from('dim_agents')
+      .select('agent_id, agent_name')
+      .eq('customer_id', profile.customer_id)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (fallbackError || !fallbackAgent?.agent_id) {
+      throw new Error(agentError?.message ?? fallbackError?.message ?? 'Unable to resolve customer agent');
+    }
+
+    resolvedAgent = fallbackAgent;
   }
 
   return {
     userId: user.id,
     email: user.email ?? '',
     customerId: profile.customer_id,
-    agentId: agent.agent_id,
-    agentName: agent.agent_name ?? 'default-agent',
+    agentId: resolvedAgent.agent_id,
+    agentName: resolvedAgent.agent_name ?? 'default-agent',
   };
 }
 

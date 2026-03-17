@@ -60,6 +60,9 @@ function normalizeStatus(value: string | null | undefined): 'trusted' | 'probati
   if (normalized === 'suspended' || normalized === 'probation' || normalized === 'trusted') {
     return normalized;
   }
+  if (normalized === 'sandbox') {
+    return 'probation';
+  }
   return 'trusted';
 }
 
@@ -124,7 +127,7 @@ export function useAgentTrust(): AgentTrustData {
         .from('agent_trust_audit')
         .select('*')
         .eq('agent_id', agent.agent_id)
-        .order('created_at', { ascending: false })
+        .order('performed_at', { ascending: false })
         .limit(10);
 
       if (historyError) {
@@ -137,7 +140,7 @@ export function useAgentTrust(): AgentTrustData {
         trustScoreAfter: Number(row.trust_score_after ?? row.new_score ?? 0),
         actionName: row.action_name ?? 'unknown_action',
         notes: row.notes ?? row.reason ?? '',
-        createdAt: row.created_at ?? row.performed_at ?? new Date().toISOString(),
+        createdAt: row.performed_at ?? row.created_at ?? new Date().toISOString(),
       }));
 
       setAgentId(agent.agent_id);

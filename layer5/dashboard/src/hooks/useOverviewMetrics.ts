@@ -74,8 +74,8 @@ export function useOverviewMetrics(): OverviewMetrics {
         .from('fact_outcomes')
         .select('outcome_id', { count: 'exact', head: true })
         .eq('customer_id', ctx.customerId)
-        .gte('created_at', todayBounds.from)
-        .lt('created_at', todayBounds.to);
+        .gte('timestamp', todayBounds.from)
+        .lt('timestamp', todayBounds.to);
 
       if (todayError) {
         throw new Error(todayError.message);
@@ -85,8 +85,8 @@ export function useOverviewMetrics(): OverviewMetrics {
         .from('fact_outcomes')
         .select('outcome_id', { count: 'exact', head: true })
         .eq('customer_id', ctx.customerId)
-        .gte('created_at', previousBounds.from)
-        .lt('created_at', previousBounds.to);
+        .gte('timestamp', previousBounds.from)
+        .lt('timestamp', previousBounds.to);
 
       if (previousError) {
         throw new Error(previousError.message);
@@ -117,9 +117,9 @@ export function useOverviewMetrics(): OverviewMetrics {
 
       const { count: unresolvedCount, error: unresolvedError } = await supabase
         .from('degradation_alert_events')
-        .select('id', { count: 'exact', head: true })
+        .select('alert_id', { count: 'exact', head: true })
         .eq('customer_id', ctx.customerId)
-        .eq('resolved', false);
+        .eq('acknowledged', false);
 
       if (unresolvedError) {
         throw new Error(unresolvedError.message);
@@ -129,7 +129,7 @@ export function useOverviewMetrics(): OverviewMetrics {
         .from('degradation_alert_events')
         .select('severity')
         .eq('customer_id', ctx.customerId)
-        .eq('resolved', false)
+        .eq('acknowledged', false)
         .limit(200);
 
       if (severityError) {

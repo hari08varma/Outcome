@@ -9,8 +9,9 @@ export interface SuccessRatePoint {
 }
 
 interface FactOutcomeTrendRow {
-  created_at: string;
+  timestamp: string;
   success: boolean;
+  context_id: string;
 }
 
 interface UseSuccessRateTrendResult {
@@ -41,13 +42,32 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
 
       let query = supabase
         .from('fact_outcomes')
-        .select('created_at, success')
+        .select('timestamp, success, context_id')
         .eq('customer_id', ctx.customerId)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString());
+        .gte('timestamp', startDate.toISOString())
+        .lte('timestamp', endDate.toISOString());
 
       if (contextFilter) {
-        query = query.eq('context_type', contextFilter);
+        const { data: contextRows, error: contextError } = await supabase
+          .from('dim_contexts')
+          .select('context_id')
+          .eq('issue_type', contextFilter);
+
+        if (contextError) {
+          throw new Error(contextError.message);
+        }
+
+        const contextIds = (contextRows ?? []).map((row) => row.context_id as string);
+        if (contextIds.length === 0) {
+          setData(eachDayOfInterval({ start: startDate, end: endDate }).map((day) => ({
+            date: format(day, 'yyyy-MM-dd'),
+            rate: null,
+          })));
+          setLoading(false);
+          return;
+        }
+
+        query = query.in('context_id', contextIds);
       }
 
       const { data: rows, error: rowsError } = await query;
@@ -58,7 +78,7 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
       const grouped = new Map<string, { total: number; success: number }>();
 
       ((rows ?? []) as FactOutcomeTrendRow[]).forEach((row) => {
-        const dayKey = format(new Date(row.created_at), 'yyyy-MM-dd');
+        const dayKey = format(new Date(row.timestamp), 'yyyy-MM-dd');
         const existing = grouped.get(dayKey) ?? { total: 0, success: 0 };
         existing.total += 1;
         if (row.success) {

@@ -32,7 +32,7 @@ export interface AlertsResult {
 }
 
 interface AlertRow {
-  id: string;
+  alert_id: string;
   alert_type: string;
   severity: string;
   message: string | null;
@@ -41,8 +41,8 @@ interface AlertRow {
   baseline_value: number | null;
   spike_ratio: number | null;
   affected_agent_count: number | null;
-  created_at: string;
-  resolved: boolean | null;
+  detected_at: string;
+  acknowledged: boolean | null;
 }
 
 export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsResult {
@@ -64,13 +64,13 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
     try {
       let query = supabase
         .from('degradation_alert_events')
-        .select('id, alert_type, severity, message, action_name, current_value, baseline_value, spike_ratio, affected_agent_count, created_at, resolved')
+        .select('alert_id, alert_type, severity, message, action_name, current_value, baseline_value, spike_ratio, affected_agent_count, detected_at, acknowledged')
         .eq('customer_id', ctx.customerId)
-        .order('created_at', { ascending: false })
+        .order('detected_at', { ascending: false })
         .limit(50);
 
       if (!showResolved) {
-        query = query.eq('resolved', false);
+        query = query.eq('acknowledged', false);
       }
 
       if (filter !== 'all') {
@@ -88,7 +88,7 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
           : 'warning';
 
         return {
-          id: row.id,
+          id: row.alert_id,
           alertType: row.alert_type,
           severity,
           message: row.message ?? '',
@@ -97,16 +97,16 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
           baselineValue: row.baseline_value,
           spikeRatio: row.spike_ratio,
           affectedAgentCount: row.affected_agent_count,
-          createdAt: row.created_at,
-          resolved: Boolean(row.resolved),
+          createdAt: row.detected_at,
+          resolved: Boolean(row.acknowledged),
         };
       });
 
       const { count: unresolved, error: unresolvedError } = await supabase
         .from('degradation_alert_events')
-        .select('id', { count: 'exact', head: true })
+        .select('alert_id', { count: 'exact', head: true })
         .eq('customer_id', ctx.customerId)
-        .eq('resolved', false);
+        .eq('acknowledged', false);
 
       if (unresolvedError) {
         throw new Error(unresolvedError.message);
@@ -160,11 +160,11 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
     const { error: updateError } = await supabase
       .from('degradation_alert_events')
       .update({
-        resolved: true,
-        resolved_at: new Date().toISOString(),
+        acknowledged: true,
+        acknowledged_at: new Date().toISOString(),
       })
       .eq('customer_id', ctx.customerId)
-      .eq('id', id);
+      .eq('alert_id', id);
 
     if (updateError) {
       throw new Error(updateError.message);
