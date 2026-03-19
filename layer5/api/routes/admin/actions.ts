@@ -2,9 +2,14 @@
  * Layerinfinite — routes/admin/actions.ts
  * Admin action management endpoints.
  * ══════════════════════════════════════════════════════════════
- * POST /register-action   — register a new action
- * GET  /actions            — list all registered actions
- * PUT  /actions/:id        — enable/disable an action
+ * REST endpoints:
+ * POST /        — register a new action
+ * GET  /        — list all registered actions
+ * GET  /:id     — get a single action
+ * PUT  /:id     — enable/disable an action
+ *
+ * Legacy aliases are kept for compatibility:
+ * POST /register-action, GET /actions, GET /actions/:id, PUT /actions/:id
  *
  * Authentication via admin-auth.ts middleware (customer_admin).
  * ══════════════════════════════════════════════════════════════
@@ -22,11 +27,20 @@ const RegisterActionBody = z.object({
     action_name: z.string().min(1).max(255),
     action_category: z.enum(['recovery', 'escalation', 'automation', 'custom']).default('custom'),
     action_description: z.string().max(1000).optional(),
-    required_params: z.record(z.string(), z.unknown()).optional().default({}),
+    required_params: z.array(z.string()).optional().default([]),
+    validation_mode: z.string().optional().default('none'),
 });
 
-// ── POST /register-action ─────────────────────────────────────
-actionsRouter.post('/register-action', async (c) => {
+function getCustomerId(c: any): string | null {
+    return ((c as any).get('customerId') ?? c.get('customer_id') ?? null) as string | null;
+}
+
+async function registerActionHandler(c: any) {
+    const customerId = getCustomerId(c);
+    if (!customerId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+    }
+
     let body: z.infer<typeof RegisterActionBody>;
     try {
         body = RegisterActionBody.parse(await c.req.json());
@@ -41,9 +55,11 @@ actionsRouter.post('/register-action', async (c) => {
             action_category: body.action_category,
             action_description: body.action_description ?? null,
             required_params: body.required_params,
+            validation_mode: body.validation_mode ?? 'none',
             is_active: true,
+            customer_id: customerId,
         })
-        .select('action_id, action_name, action_category, created_at')
+        .select('action_id, action_name, action_category, is_active, customer_id, created_at')
         .single();
 
     if (error) {
@@ -63,34 +79,55 @@ actionsRouter.post('/register-action', async (c) => {
         action: data,
         message: `Action "${body.action_name}" registered. Agents can now log outcomes with this action.`,
     }, 201);
-});
+}
 
-// ── GET /actions — list all registered actions ────────────────
-actionsRouter.get('/actions', async (c) => {
-    const includeInactive = c.req.query('include_inactive') === 'true';
-
-    let query = supabase
-        .from('dim_actions')
-        .select('action_id, action_name, action_category, action_description, required_params, is_active, created_at')
-        .order('action_name', { ascending: true });
-
-    if (!includeInactive) {
-        query = query.eq('is_active', true);
+async function listActionsHandler(c: any) {
+    const customerId = getCustomerId(c);
+    if (!customerId) {
+        return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const { data, error } = await query;
+    const { data, error } = await supabase
+        .from('dim_actions')
+        .select('*')
+        .eq('customer_id', customerId)
+        .order('created_at', { ascending: false });
 
     if (error) return c.json({ error: error.message }, 500);
 
     return c.json({
         actions: data ?? [],
         total: data?.length ?? 0,
-        note: 'These are the only actions agents can log. Any other action name will be blocked.',
+        note: 'Customer-scoped action registry.',
     });
-});
+}
 
-// ── PUT /actions/:id — toggle is_active ───────────────────────
-actionsRouter.put('/actions/:id', async (c) => {
+async function getActionByIdHandler(c: any) {
+    const customerId = getCustomerId(c);
+    if (!customerId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const actionId = c.req.param('id');
+    const { data, error } = await supabase
+        .from('dim_actions')
+        .select('*')
+        .eq('action_id', actionId)
+        .eq('customer_id', customerId)
+        .maybeSingle();
+
+    if (error) return c.json({ error: error.message }, 500);
+    if (!data) return c.json({ error: 'Action not found' }, 404);
+
+    return c.json({ action: data });
+}
+
+async function toggleActionHandler(c: any) {
+    const customerId = getCustomerId(c);
+    if (!customerId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+    }
+
     const actionId = c.req.param('id');
 
     let body: { is_active?: boolean };
@@ -106,8 +143,12 @@ actionsRouter.put('/actions/:id', async (c) => {
 
     const { data, error } = await supabase
         .from('dim_actions')
-        .update({ is_active: body.is_active })
+        .update({
+            is_active: body.is_active,
+            updated_at: new Date().toISOString(),
+        })
         .eq('action_id', actionId)
+        .eq('customer_id', customerId)
         .select('action_id, action_name, is_active')
         .single();
 
@@ -121,4 +162,16 @@ actionsRouter.put('/actions/:id', async (c) => {
         action: data,
         message: `Action "${data.action_name}" is now ${data.is_active ? 'active' : 'disabled'}.`,
     });
-});
+}
+
+// ── RESTful paths ─────────────────────────────────────────────
+actionsRouter.get('/', listActionsHandler);
+actionsRouter.post('/', registerActionHandler);
+actionsRouter.get('/:id', getActionByIdHandler);
+actionsRouter.put('/:id', toggleActionHandler);
+
+// ── Legacy aliases ────────────────────────────────────────────
+actionsRouter.get('/actions', listActionsHandler);
+actionsRouter.post('/register-action', registerActionHandler);
+actionsRouter.get('/actions/:id', getActionByIdHandler);
+actionsRouter.put('/actions/:id', toggleActionHandler);

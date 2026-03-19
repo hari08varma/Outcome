@@ -7,7 +7,7 @@
  * dim_actions registry. Blocks unregistered actions with 400.
  * Uses 30-min in-memory cache to minimise DB round-trips.
  *
- * On success: sets validated_action on context + calls next()
+ * On success: sets action + validated_action on context + calls next()
  * On failure: returns 400 UNKNOWN_ACTION (not 422 per PRD)
  * ══════════════════════════════════════════════════════════════
  */
@@ -65,6 +65,11 @@ export interface ActionValidationResult {
 // Extend Hono Context to recognize validated_action
 declare module 'hono' {
     interface ContextVariableMap {
+        action: {
+            action_id: string;
+            action_name: string;
+            is_active: boolean;
+        };
         validated_action: {
             action_id: string;
             action_name: string;
@@ -89,30 +94,78 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         return c.json({ error: 'Invalid JSON body', code: 'PARSE_ERROR' }, 400);
     }
 
-    const actionName = body.action_name as string;
+    const actionName = body.action_name ?? body.actionName;
+    const customerId = ((c as any).get('customerId') ?? c.get('customer_id')) as string | undefined;
+
     if (!actionName || typeof actionName !== 'string') {
         return c.json({ error: 'action_name is required', code: 'MISSING_FIELD' }, 400);
     }
 
-    const params = body.action_params as Record<string, unknown> | undefined;
-    const result = await validateAction(actionName, params);
+    if (!customerId) {
+        return c.json({ error: 'customerId is required', code: 'MISSING_CUSTOMER' }, 401);
+    }
 
-    if (!result.valid) {
-        // FIX 6: Return 400 (not 422) per PRD contract
+    // Look up action scoped to this customer
+    const { data: existingAction } = await supabase
+        .from('dim_actions')
+        .select('action_id, action_name, is_active')
+        .eq('action_name', actionName.trim())
+        .eq('customer_id', customerId)
+        .single();
+
+    if (!existingAction) {
+        // AUTO-REGISTER: silently create on first use
+        // This means users never need to manually register actions
+        const { data: newAction, error: insertError } = await supabase
+            .from('dim_actions')
+            .insert({
+                action_name: actionName.trim(),
+                customer_id: customerId,
+                is_active: true,
+                action_category: 'auto-discovered',
+                action_description: 'Auto-registered on first use by SDK',
+                required_params: [],
+                validation_mode: 'none',
+            })
+            .select('action_id, action_name, is_active')
+            .single();
+
+        if (insertError) {
+            // Only fail if DB itself errors
+            console.error('Auto-register failed:', insertError.message);
+            return c.json({ error: 'Failed to register action' }, 500);
+        }
+
+        c.set('action', newAction);
+        c.set('validated_action', {
+            action_id: newAction.action_id,
+            action_name: newAction.action_name,
+            action_category: 'auto-discovered',
+            validation_warnings: [],
+        });
+        c.set('parsed_body', body);
+        await next();
+        return;
+    }
+
+    // Action exists but is disabled — reject
+    if (!existingAction.is_active) {
         return c.json(
-            { error: result.error_code ?? 'UNKNOWN_ACTION', message: result.error },
-            400
+            {
+                error: 'Action is disabled',
+                action_name: actionName,
+            },
+            403
         );
     }
 
-    // Store validated action in context for downstream handlers
+    c.set('action', existingAction);
     c.set('validated_action', {
-        action_id: result.action_id!,
-        action_name: result.action_name!,
-        action_category: result.action_category!,
-        validation_warnings: result.warnings ?? [],
+        action_id: existingAction.action_id,
+        action_name: existingAction.action_name,
+        action_category: 'custom',
+        validation_warnings: [],
     });
-    // Store parsed body so handlers don't need to re-parse
     c.set('parsed_body', body);
 
     await next();
