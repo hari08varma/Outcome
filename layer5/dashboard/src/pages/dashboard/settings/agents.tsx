@@ -109,7 +109,7 @@ export default function AgentsSettings(): React.ReactElement {
                 </span>
 
                 <button
-                  onClick={() => navigate('/dashboard/agent')}
+                  onClick={() => navigate(`/dashboard/agent?id=${agent.agent_id}`)}
                   className="border border-[#1a1a24] text-[#a1a1aa] hover:text-white rounded-lg px-3 py-1.5 text-sm"
                 >
                   View Trust

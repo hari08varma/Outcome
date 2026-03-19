@@ -75,7 +75,7 @@ function normalizeEventType(value: string | null | undefined): 'success' | 'fail
   return 'success';
 }
 
-export function useAgentTrust(): AgentTrustData {
+export function useAgentTrust(selectedAgentId?: string): AgentTrustData {
   const { data: ctx, loading: ctxLoading, error: ctxError } = useCustomerContext();
   const [hasAgent, setHasAgent] = useState(false);
   const [agentId, setAgentId] = useState('');
@@ -126,12 +126,22 @@ export function useAgentTrust(): AgentTrustData {
         return;
       }
 
-      const { data: agentRows, error: agentError } = await supabase
+      let agentQuery = supabase
         .from('dim_agents')
         .select('agent_id, agent_name, agent_type, created_at')
-        .eq('customer_id', customerId)
-        .order('created_at', { ascending: true })
-        .limit(1);
+        .eq('customer_id', customerId);
+
+      if (selectedAgentId) {
+        // Specific agent selected from Settings page
+        agentQuery = agentQuery.eq('agent_id', selectedAgentId);
+      } else {
+        // Default: load most recently created agent
+        agentQuery = agentQuery
+          .order('created_at', { ascending: false })
+          .limit(1);
+      }
+
+      const { data: agentRows, error: agentError } = await agentQuery;
 
       if (agentError) {
         throw new Error(agentError.message);
@@ -200,7 +210,7 @@ export function useAgentTrust(): AgentTrustData {
     } finally {
       setLoading(false);
     }
-  }, [ctx, ensureCustomerId]);
+  }, [ctx, ensureCustomerId, selectedAgentId]);
 
   useEffect(() => {
     if (!ctx) {

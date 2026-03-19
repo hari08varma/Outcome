@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAgentTrust } from '../../hooks/useAgentTrust';
 import { supabase } from '../../supabaseClient';
 import { API_BASE } from '../../lib/config';
@@ -28,7 +28,9 @@ function trustColor(status: 'trusted' | 'probation' | 'suspended'): string {
 
 export default function Agent(): React.ReactElement {
   const navigate = useNavigate();
-  const agent = useAgentTrust();
+  const [searchParams] = useSearchParams();
+  const selectedAgentId = searchParams.get('id') ?? undefined;
+  const agent = useAgentTrust(selectedAgentId);
   const { showToast } = useToastContext();
   const [reinstating, setReinstating] = useState(false);
 
