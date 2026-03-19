@@ -6,8 +6,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { useToastContext } from '../../components/Toast';
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+import { API_BASE } from '../../lib/config';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -295,6 +294,11 @@ export default function NotificationSettings() {
     // ── Test ────────────────────────────────────────────────
 
     async function handleTest(ch: Channel) {
+        if (!API_BASE) {
+            showToast('API endpoint is not configured. Set VITE_LAYERINFINITE_API_URL.', 'critical', 6000);
+            return;
+        }
+
         setTestingId(ch.id);
         try {
             const headers = await getAuthHeaders();
