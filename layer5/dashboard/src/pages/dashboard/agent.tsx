@@ -6,8 +6,6 @@ import { supabase } from '../../supabaseClient';
 import { API_BASE } from '../../lib/config';
 import { useToastContext } from '../../components/Toast';
 
-const API_KEY_STORAGE_KEY = 'layerinfinite_api_key';
-
 function statusBadge(status: 'trusted' | 'probation' | 'suspended'): string {
   if (status === 'trusted') {
     return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
@@ -34,13 +32,6 @@ export default function Agent(): React.ReactElement {
   const { showToast } = useToastContext();
   const [reinstating, setReinstating] = useState(false);
 
-  const getStoredApiKey = (): string | null => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    return localStorage.getItem(API_KEY_STORAGE_KEY);
-  };
-
   const createdText = useMemo(() => {
     if (!agent.createdAt) {
       return '';
@@ -53,32 +44,39 @@ export default function Agent(): React.ReactElement {
       return;
     }
 
-    const apiKey = getStoredApiKey();
-    if (!apiKey) {
-      showToast('No API key found - create one in API Keys settings first.', 'warning', 4500);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session) {
+      showToast('Session expired — please sign in again.', 'warning', 4500);
       return;
     }
 
-    const response = await fetch(`${API_BASE}/v1/audit?format=csv`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    try {
+      const response = await fetch(`${API_BASE}/v1/audit?format=csv`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!response.ok) {
-      showToast('Failed to export CSV logs.', 'critical', 4500);
-      return;
+      if (!response.ok) {
+        showToast('Failed to export CSV logs.', 'critical', 4500);
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `layerinfinite-audit-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      showToast('Audit CSV exported.', 'success', 2500);
+    } catch {
+      showToast('Network error during export.', 'critical', 4500);
     }
-
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `layerinfinite-audit-${format(new Date(), 'yyyy-MM-dd')}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    showToast('Audit CSV exported.', 'success', 2500);
   };
 
   const reinstateAgent = async (): Promise<void> => {
@@ -86,24 +84,24 @@ export default function Agent(): React.ReactElement {
       return;
     }
 
-    const apiKey = getStoredApiKey();
-    if (!apiKey) {
-      showToast('No API key found - create one in API Keys settings first.', 'warning', 4500);
-      return;
-    }
-
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
+    if (!session) {
+      showToast('Session expired — please sign in again.', 'warning', 4500);
+      navigate('/auth?mode=login');
+      return;
+    }
+
     setReinstating(true);
     try {
-      const reinstatedBy = session?.user?.email ?? 'dashboard_admin';
+      const reinstatedBy = session.user.email ?? 'dashboard_admin';
       const response = await fetch(`${API_BASE}/v1/admin/reinstate-agent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ agent_id: agent.agentId, reinstated_by: reinstatedBy }),
       });
@@ -112,8 +110,11 @@ export default function Agent(): React.ReactElement {
         showToast('Agent reinstated. Status set to probation.', 'success', 4500);
         agent.refetch();
       } else {
-        showToast('Failed to reinstate agent.', 'critical', 4500);
+        const body = await response.json().catch(() => ({} as Record<string, string>));
+        showToast(body.error ?? 'Failed to reinstate agent.', 'critical', 4500);
       }
+    } catch {
+      showToast('Network error — could not reinstate agent.', 'critical', 4500);
     } finally {
       setReinstating(false);
     }
@@ -125,9 +126,28 @@ export default function Agent(): React.ReactElement {
 
   if (agent.error) {
     return (
-      <div className="bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm">
-        {agent.error}
+      <div className="bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm flex items-center justify-between gap-3">
+        <span>{agent.error}</span>
+        <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={agent.refetch}>Retry</button>
       </div>
+    );
+  }
+
+  if (!agent.hasAgent) {
+    return (
+      <section className="flex flex-col items-center justify-center py-24 text-center text-white">
+        <div className="text-5xl mb-4 opacity-20">🤖</div>
+        <h3 className="text-white font-semibold text-lg mb-2">No agents connected</h3>
+        <p className="text-[#52525b] text-sm max-w-sm mb-6">
+          Your agents appear here once they start logging outcomes via the SDK.
+        </p>
+        <button
+          className="bg-[#b8ff00] text-black font-semibold px-5 py-2 rounded-lg text-sm hover:bg-[#a0e600]"
+          onClick={() => navigate('/dashboard/settings/api-keys')}
+        >
+          Create API Key
+        </button>
+      </section>
     );
   }
 
@@ -213,7 +233,7 @@ export default function Agent(): React.ReactElement {
                     {event.eventType === 'success' ? '✓' : '✕'}
                   </div>
                   <div className="flex-1">
-                    <div className="text-white text-sm font-mono">{event.actionName}</div>
+                    <div className="text-white text-sm font-mono">{event.actionName || 'Action unavailable'}</div>
                     <div className="text-[#a1a1aa] text-xs mt-1">{event.notes || 'No notes available.'}</div>
                   </div>
                   <div className="text-right">

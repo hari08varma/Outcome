@@ -26,17 +26,10 @@ export default function Alerts(): React.ReactElement {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [fadingIds, setFadingIds] = useState<Set<string>>(new Set());
 
-  const alertsResult = useAlerts(activeFilter, showResolved);
-  const { alerts, resolveAlert, loading, error } = alertsResult;
+  const { alerts, resolveAlert, loading, error, refetch } = useAlerts(activeFilter, showResolved);
 
   const onRetry = (): void => {
-    const maybeRefetch = (alertsResult as { refetch?: () => void }).refetch;
-    if (typeof maybeRefetch === 'function') {
-      maybeRefetch();
-      return;
-    }
-
-    window.location.reload();
+    refetch();
   };
 
   const unresolvedOnlyCount = useMemo(() => alerts.filter((a) => !a.resolved).length, [alerts]);

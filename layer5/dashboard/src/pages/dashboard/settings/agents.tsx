@@ -51,7 +51,7 @@ export default function AgentsSettings(): React.ReactElement {
       <div className="mb-6">
         <h2 className="text-2xl font-bold">Agents</h2>
         <p className="text-sm text-[#a1a1aa] mt-1">
-          Your connected AI agents. Agents are created automatically when you generate an API key in API Keys settings.
+          Your connected AI agents. Agents are created automatically when you generate an API key.
         </p>
       </div>
 
@@ -69,22 +69,22 @@ export default function AgentsSettings(): React.ReactElement {
           <div className="h-24 rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
         </div>
       ) : agents.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="text-5xl mb-4 opacity-20">🤖</div>
-          <h3 className="text-white font-semibold text-lg mb-2">
+        <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-10 text-center">
+          <Bot size={48} className="mx-auto text-[#52525b]" />
+          <p className="text-white text-lg font-medium mt-4">
             No agents yet
-          </h3>
-          <p className="text-[#52525b] text-sm max-w-sm mb-6">
-            Agents are created automatically when you generate
-            an API key. Each API key = one agent identity.
           </p>
-          <a href="/dashboard/settings/api-keys"
-            className="bg-[#b8ff00] text-black font-semibold
-              px-5 py-2 rounded-lg text-sm hover:bg-[#a0e600]
-              transition-colors">
+          <p className="text-[#a1a1aa] text-sm mt-1">
+            Agents are created automatically when you generate
+            an API key. Each key = one agent.
+          </p>
+          <button
+            className="mt-5 bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg"
+            onClick={() => navigate('/dashboard/settings/api-keys')}
+          >
             Create API Key →
-          </a>
-        </div>
+          </button>
+        </section>
       ) : (
         <div className="space-y-4">
           {agents.map((agent) => (
