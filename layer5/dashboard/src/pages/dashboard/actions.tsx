@@ -89,7 +89,7 @@ export default function Actions(): React.ReactElement {
             {degradingActions.map((action, index) => (
               <div key={action.actionId} className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-[#52525b] text-xs font-mono">ID: ACT-{String(index + 1).padStart(3, '0')}</span>
+                  <span className="text-[#52525b] text-xs font-mono">ID: {action.actionId.slice(0, 8)}</span>
                   <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-[#ff4444]/20 text-[#ff4444] border border-[#ff4444]/40">ALERT</span>
                 </div>
                 <p className="text-xl font-bold text-white font-mono">{action.actionName}</p>

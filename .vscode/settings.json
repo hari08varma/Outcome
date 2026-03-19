@@ -1,0 +1,11 @@
+{
+    "chat.mcp.serverSampling": {
+        "Outcome/.vscode/mcp.json: stitch": {
+            "allowedModels": [
+                "copilot/auto",
+                "copilotcli/claude-sonnet-4.6",
+                "copilotcli/gpt-5.3-codex"
+            ]
+        }
+    }
+}

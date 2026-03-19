@@ -22,6 +22,7 @@ interface AuditRow {
 export default function AuditTrail() {
     const [rows, setRows] = useState<AuditRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
 
@@ -29,30 +30,35 @@ export default function AuditTrail() {
 
     async function fetchAudit() {
         setLoading(true);
+        setError(null);
 
-        let query = supabase
-            .from('fact_outcomes')
-            .select(`
-                outcome_id, success, timestamp, response_time_ms, error_code, error_message, session_id,
-                dim_actions!inner(action_name),
-                dim_agents!inner(agent_name),
-                dim_contexts!inner(issue_type)
-            `)
-            .eq('is_deleted', false)
-            .order('timestamp', { ascending: false })
-            .limit(100);
+        try {
+            let query = supabase
+                .from('fact_outcomes')
+                .select(`
+                    outcome_id, success, timestamp, response_time_ms, error_code, error_message, session_id,
+                    dim_actions!inner(action_name),
+                    dim_agents!inner(agent_name),
+                    dim_contexts!inner(issue_type)
+                `)
+                .eq('is_deleted', false)
+                .order('timestamp', { ascending: false })
+                .limit(100);
 
-        if (startDate) query = query.gte('timestamp', startDate);
-        if (endDate) query = query.lte('timestamp', endDate + 'T23:59:59Z');
+            if (startDate) query = query.gte('timestamp', startDate);
+            if (endDate) query = query.lte('timestamp', endDate + 'T23:59:59Z');
 
-        const { data, error } = await query;
+            const { data, error: queryError } = await query;
 
-        if (!error && data) {
+            if (queryError) {
+                throw new Error(queryError.message);
+            }
+
             setRows(data.map((r: any) => ({
                 outcome_id: r.outcome_id,
-                agent_name: r.dim_agents?.agent_name ?? 'unknown',
-                action_name: r.dim_actions?.action_name ?? 'unknown',
-                issue_type: r.dim_contexts?.issue_type ?? 'unknown',
+                agent_name: r.dim_agents?.agent_name ?? '',
+                action_name: r.dim_actions?.action_name ?? '',
+                issue_type: r.dim_contexts?.issue_type ?? '',
                 success: r.success,
                 timestamp: r.timestamp,
                 response_time_ms: r.response_time_ms,
@@ -60,8 +66,12 @@ export default function AuditTrail() {
                 error_message: r.error_message,
                 session_id: r.session_id,
             })));
+        } catch (err) {
+            setRows([]);
+            setError(err instanceof Error ? err.message : 'Failed to load audit trail');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     }
 
     function exportCSV() {
@@ -81,6 +91,7 @@ export default function AuditTrail() {
 
     return (
         <div>
+            <style>{`@keyframes audit-spin { to { transform: rotate(360deg); } }`}</style>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>
                     Audit Trail
@@ -102,9 +113,22 @@ export default function AuditTrail() {
             </div>
 
             {loading ? (
-                <div style={{ color: '#94a3b8', textAlign: 'center', padding: '3rem' }}>Loading audit trail...</div>
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
+                    <div style={{ width: 22, height: 22, borderRadius: '50%', border: '2px solid #334155', borderTopColor: '#94a3b8', animation: 'audit-spin 0.8s linear infinite' }} />
+                </div>
+            ) : error ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', color: '#f87171', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '10px', padding: '0.9rem 1rem' }}>
+                    <span>{error}</span>
+                    <button onClick={fetchAudit} style={{ padding: '0.35rem 0.8rem', borderRadius: '6px', border: '1px solid #334155', background: '#0f172a', color: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}>Retry</button>
+                </div>
             ) : rows.length === 0 ? (
-                <div style={{ color: '#94a3b8', textAlign: 'center', padding: '3rem' }}>No audit records found.</div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '5rem 1rem' }}>
+                    <div style={{ fontSize: '2.5rem', opacity: 0.2, marginBottom: '0.75rem' }}>📋</div>
+                    <h3 style={{ color: '#0f172a', margin: 0, fontSize: '1.1rem' }}>No outcomes logged yet</h3>
+                    <p style={{ color: '#64748b', marginTop: '0.6rem', maxWidth: 380, lineHeight: 1.5 }}>
+                        Every decision your agent makes is recorded here. Start logging outcomes to build your audit trail.
+                    </p>
+                </div>
             ) : (
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>

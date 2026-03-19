@@ -8,7 +8,6 @@ import { supabase } from '../supabaseClient';
 import OutcomeTable from '../components/OutcomeTable';
 import LiveIndicator from '../components/LiveIndicator';
 import { useRealtimeOutcomes } from '../hooks/useRealtimeOutcomes';
-import type { OutcomeRow as RealtimeOutcomeRow } from '../hooks/useRealtimeOutcomes';
 
 interface OutcomeRow {
     outcome_id: string;
@@ -26,34 +25,14 @@ const PAGE_SIZE = 25;
 export default function OutcomeHistory() {
     const [outcomes, setOutcomes] = useState<OutcomeRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [page, setPage] = useState(0);
     const [hasMore, setHasMore] = useState(true);
     const [filterSuccess, setFilterSuccess] = useState<'all' | 'true' | 'false'>('all');
 
-    useEffect(() => { fetchOutcomes(); }, [page, filterSuccess]);
-
-    // ── Realtime ──────────────────────────────────────
-
-    const handleNewOutcome = useCallback((row: RealtimeOutcomeRow) => {
-        // Only prepend on first page to avoid confusion
-        if (page !== 0) return;
-        const mapped: OutcomeRow = {
-            outcome_id: row.outcome_id,
-            action_name: 'unknown',
-            issue_type: 'unknown',
-            success: row.success,
-            timestamp: row.timestamp,
-            response_time_ms: row.response_time_ms,
-            agent_name: 'unknown',
-            error_code: row.error_code,
-        };
-        setOutcomes((prev) => [mapped, ...prev].slice(0, 100));
-    }, [page]);
-
-    const { isConnected } = useRealtimeOutcomes(handleNewOutcome);
-
-    async function fetchOutcomes() {
+    const fetchOutcomes = useCallback(async () => {
         setLoading(true);
+        setError(null);
 
         let query = supabase
             .from('fact_outcomes')
@@ -72,24 +51,42 @@ export default function OutcomeHistory() {
             query = query.eq('success', filterSuccess === 'true');
         }
 
-        const { data, error } = await query;
+        const { data, error: queryError } = await query;
 
-        if (!error && data) {
-            const mapped: OutcomeRow[] = data.map((r: any) => ({
-                outcome_id: r.outcome_id,
-                action_name: r.dim_actions?.action_name ?? 'unknown',
-                issue_type: r.dim_contexts?.issue_type ?? 'unknown',
-                success: r.success,
-                timestamp: r.timestamp,
-                response_time_ms: r.response_time_ms,
-                agent_name: r.dim_agents?.agent_name ?? 'unknown',
-                error_code: r.error_code,
-            }));
-            setOutcomes(mapped);
-            setHasMore(mapped.length === PAGE_SIZE);
+        if (queryError) {
+            setError(queryError.message);
+            setOutcomes([]);
+            setHasMore(false);
+            setLoading(false);
+            return;
         }
+
+        const mapped: OutcomeRow[] = (data ?? []).map((r: any) => ({
+            outcome_id: r.outcome_id,
+            action_name: r.dim_actions?.action_name ?? '',
+            issue_type: r.dim_contexts?.issue_type ?? '',
+            success: r.success,
+            timestamp: r.timestamp,
+            response_time_ms: r.response_time_ms,
+            agent_name: r.dim_agents?.agent_name ?? '',
+            error_code: r.error_code,
+        }));
+        setOutcomes(mapped);
+        setHasMore(mapped.length === PAGE_SIZE);
         setLoading(false);
-    }
+    }, [page, filterSuccess]);
+
+    useEffect(() => { void fetchOutcomes(); }, [fetchOutcomes]);
+
+    // ── Realtime ──────────────────────────────────────
+
+    const handleNewOutcome = useCallback(() => {
+        // Only prepend on first page to avoid confusion
+        if (page !== 0) return;
+        void fetchOutcomes();
+    }, [page, fetchOutcomes]);
+
+    const { isConnected } = useRealtimeOutcomes(handleNewOutcome);
 
     return (
         <div>
@@ -120,6 +117,23 @@ export default function OutcomeHistory() {
             </div>
 
             <OutcomeTable outcomes={outcomes} loading={loading} />
+
+            {!loading && error && (
+                <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(239,68,68,0.10)', color: '#fca5a5' }}>
+                    <span>{error}</span>
+                    <button onClick={fetchOutcomes} style={{ ...btnStyle, color: '#fff', borderColor: '#334155', background: '#0f172a' }}>Retry</button>
+                </div>
+            )}
+
+            {!loading && !error && outcomes.length === 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '4rem 1rem' }}>
+                    <div style={{ fontSize: '2.5rem', opacity: 0.2, marginBottom: '0.75rem' }}>📋</div>
+                    <h3 style={{ color: '#1e293b', margin: 0, fontSize: '1.1rem' }}>No outcomes logged yet</h3>
+                    <p style={{ color: '#64748b', marginTop: '0.5rem', maxWidth: 420, lineHeight: 1.5 }}>
+                        Every decision your agent makes is recorded here. Start logging outcomes to build your audit trail.
+                    </p>
+                </div>
+            )}
 
             {/* Pagination */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '1.5rem' }}>

@@ -27,6 +27,7 @@ export interface AlertsResult {
   alerts: AlertItem[];
   unresolvedCount: number;
   resolveAlert: (id: string) => Promise<void>;
+  refetch: () => void;
   loading: boolean;
   error: string | null;
 }
@@ -119,7 +120,7 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
           alertType: row.alert_type,
           severity,
           message: row.message ?? '',
-          actionName: row.action_name ?? 'unknown_action',
+          actionName: row.action_name ?? '',
           currentValue: row.current_value,
           baselineValue: row.baseline_value,
           spikeRatio: row.spike_ratio,
@@ -202,11 +203,16 @@ export function useAlerts(filter: AlertsFilter, showResolved: boolean): AlertsRe
     setUnresolvedCount((prev) => Math.max(0, prev - 1));
   }, [ensureCustomerId]);
 
+  const refetch = useCallback(() => {
+    setTick((v) => v + 1);
+  }, []);
+
   return useMemo(() => ({
     alerts,
     unresolvedCount,
     resolveAlert,
+    refetch,
     loading: loading || ctxLoading,
     error: ctxError ?? error,
-  }), [alerts, unresolvedCount, resolveAlert, loading, ctxLoading, ctxError, error]);
+  }), [alerts, unresolvedCount, resolveAlert, refetch, loading, ctxLoading, ctxError, error]);
 }

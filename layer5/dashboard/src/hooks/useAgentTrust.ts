@@ -12,6 +12,7 @@ export interface TrustHistoryItem {
 }
 
 export interface AgentTrustData {
+  hasAgent: boolean;
   agentId: string;
   agentName: string;
   agentType: string;
@@ -76,6 +77,7 @@ function normalizeEventType(value: string | null | undefined): 'success' | 'fail
 
 export function useAgentTrust(): AgentTrustData {
   const { data: ctx, loading: ctxLoading, error: ctxError } = useCustomerContext();
+  const [hasAgent, setHasAgent] = useState(false);
   const [agentId, setAgentId] = useState('');
   const [agentName, setAgentName] = useState('');
   const [agentType, setAgentType] = useState('');
@@ -131,11 +133,26 @@ export function useAgentTrust(): AgentTrustData {
         .order('created_at', { ascending: true })
         .limit(1);
 
-      if (agentError || !agentRows || agentRows.length === 0) {
-        throw new Error(agentError?.message ?? 'No agent found for customer');
+      if (agentError) {
+        throw new Error(agentError.message);
+      }
+
+      if (!agentRows || agentRows.length === 0) {
+        setHasAgent(false);
+        setAgentId('');
+        setAgentName('');
+        setAgentType('');
+        setCreatedAt('');
+        setTrustScore(0);
+        setStatus('trusted');
+        setConsecutiveFailures(0);
+        setTotalOutcomes(0);
+        setTrustHistory([]);
+        return;
       }
 
       const agent = agentRows[0] as AgentRow;
+      setHasAgent(true);
 
       const { data: trustRows, error: trustError } = await supabase
         .from('agent_trust_scores')
@@ -164,15 +181,15 @@ export function useAgentTrust(): AgentTrustData {
         id: String(row.id ?? row.audit_id ?? idx),
         eventType: normalizeEventType(row.event_type),
         trustScoreAfter: Number(row.trust_score_after ?? row.new_score ?? 0),
-        actionName: row.action_name ?? 'unknown_action',
+        actionName: row.action_name ?? '',
         notes: row.notes ?? row.reason ?? '',
         createdAt: row.performed_at ?? row.created_at ?? new Date().toISOString(),
       }));
 
       setAgentId(agent.agent_id);
-      setAgentName(agent.agent_name ?? 'default-agent');
-      setAgentType(agent.agent_type ?? 'api-key');
-      setCreatedAt(agent.created_at ?? new Date().toISOString());
+      setAgentName(agent.agent_name ?? '');
+      setAgentType(agent.agent_type ?? '');
+      setCreatedAt(agent.created_at ?? '');
       setTrustScore(Number(trustRow.trust_score ?? 0));
       setStatus(normalizeStatus(trustRow.status ?? trustRow.trust_status));
       setConsecutiveFailures(Number(trustRow.consecutive_failures ?? 0));
@@ -222,6 +239,7 @@ export function useAgentTrust(): AgentTrustData {
   }, []);
 
   return useMemo(() => ({
+    hasAgent,
     agentId,
     agentName,
     agentType,
@@ -235,6 +253,7 @@ export function useAgentTrust(): AgentTrustData {
     error: ctxError ?? error,
     refetch,
   }), [
+    hasAgent,
     agentId,
     agentName,
     agentType,

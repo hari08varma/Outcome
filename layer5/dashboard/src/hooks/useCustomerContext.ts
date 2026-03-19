@@ -100,12 +100,7 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
       .limit(1)
       .maybeSingle();
 
-    if (fallbackError || !fallbackAgent?.agent_id) {
-      resolvedAgent = {
-        agent_id: '',
-        agent_name: 'default-agent',
-      };
-    } else {
+    if (!fallbackError && fallbackAgent?.agent_id) {
       resolvedAgent = fallbackAgent;
     }
   }
@@ -114,8 +109,8 @@ async function fetchCustomerContext(): Promise<CustomerContextData> {
     userId: user.id,
     email: user.email ?? '',
     customerId: profile.customer_id,
-    agentId: resolvedAgent.agent_id,
-    agentName: resolvedAgent.agent_name ?? 'default-agent',
+    agentId: resolvedAgent?.agent_id ?? '',
+    agentName: resolvedAgent?.agent_name ?? '',
   };
 }
 

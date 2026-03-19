@@ -67,6 +67,7 @@ export default function Overview(): React.ReactElement {
   const isLoading = metrics.loading || trend.loading;
   const error = metrics.error ?? trend.error;
   const isAccountSetupIncomplete = error?.includes('Account setup incomplete') ?? false;
+  const showEmptyState = !isLoading && !error && !metrics.hasScores;
 
   const chartData = useMemo(() => trend.data, [trend.data]);
 
@@ -140,6 +141,20 @@ export default function Overview(): React.ReactElement {
           </div>
           <div className="h-[360px] rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
         </>
+      ) : showEmptyState ? (
+        <section className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="text-5xl mb-4 opacity-20">📊</div>
+          <h3 className="text-white font-semibold text-lg mb-2">No scores yet</h3>
+          <p className="text-[#52525b] text-sm max-w-sm mb-6">
+            Connect your agent with the SDK and log your first outcome. Scores appear here within minutes.
+          </p>
+          <a
+            href="/docs"
+            className="bg-[#b8ff00] text-black font-semibold px-5 py-2 rounded-lg text-sm hover:bg-[#a0e600]"
+          >
+            View SDK Docs
+          </a>
+        </section>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -202,9 +217,6 @@ export default function Overview(): React.ReactElement {
                 onChange={(e) => setSelectedContext(e.target.value)}
               >
                 <option value="">All Contexts</option>
-                <option value="performance">Performance</option>
-                <option value="auth">Auth</option>
-                <option value="ops">Ops</option>
               </select>
             </div>
 

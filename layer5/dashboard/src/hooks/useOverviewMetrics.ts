@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { ACCOUNT_SETUP_INCOMPLETE_MESSAGE, useCustomerContext } from './useCustomerContext';
 
 export interface OverviewMetrics {
+  hasScores: boolean;
   agentHealthScore: number;
   agentHealthDelta: number;
   decisionsToday: number;
@@ -37,6 +38,7 @@ function isUuid(value: string): boolean {
 
 export function useOverviewMetrics(): OverviewMetrics {
   const { data: ctx, loading: ctxLoading, error: ctxError } = useCustomerContext();
+  const [hasScores, setHasScores] = useState(false);
   const [agentHealthScore, setAgentHealthScore] = useState(0);
   const [agentHealthDelta, setAgentHealthDelta] = useState(0);
   const [decisionsToday, setDecisionsToday] = useState(0);
@@ -75,6 +77,7 @@ export function useOverviewMetrics(): OverviewMetrics {
   const loadMetrics = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setHasScores(false);
 
     try {
       const customerId = await ensureCustomerId();
@@ -137,6 +140,7 @@ export function useOverviewMetrics(): OverviewMetrics {
 
       const typedRows = (actionRows ?? []) as ActionScoreRow[];
       const actionCount = typedRows.length;
+      setHasScores(actionCount > 0);
       const currentRate = actionCount > 0
         ? typedRows.reduce((sum, row) => sum + Number(row.weighted_success_rate ?? 0), 0) / actionCount
         : 0;
@@ -248,6 +252,7 @@ export function useOverviewMetrics(): OverviewMetrics {
   }, []);
 
   return useMemo(() => ({
+    hasScores,
     agentHealthScore,
     agentHealthDelta,
     decisionsToday,
@@ -260,6 +265,7 @@ export function useOverviewMetrics(): OverviewMetrics {
     error: ctxError ?? error,
     refetch,
   }), [
+    hasScores,
     agentHealthScore,
     agentHealthDelta,
     decisionsToday,
