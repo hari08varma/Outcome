@@ -620,9 +620,7 @@ export default function SimulatePage() {
     const [availableActions, setAvailableActions] = useState<Action[]>([]);
 
     // ── Form state ──────────────────────────────────────────
-    const [contextPairs, setContextPairs] = useState<{ key: string; value: string }[]>([
-        { key: 'issue_type', value: '' },
-    ]);
+    const [contextPairs, setContextPairs] = useState<{ key: string; value: string }[]>([]);
     const [sequence, setSequence] = useState<string[]>([]);
     const [episodeHistory, setEpisodeHistory] = useState<string[]>([]);
     const [showHistory, setShowHistory] = useState(false);

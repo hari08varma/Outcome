@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { format } from 'date-fns';
+import { Link } from 'react-router-dom';
 import { Zap } from 'lucide-react';
 import { useToastContext } from '../../../components/Toast';
 import { useActionsSettings } from '../../../hooks/useActionsSettings';
@@ -85,7 +86,7 @@ export default function ActionsSettings(): React.ReactElement {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
         <div>
           <h2 className="text-2xl font-bold">Actions Registry</h2>
-          <p className="text-sm text-[#a1a1aa] mt-1">Actions are named operations your agent can perform. Only registered actions can be logged.</p>
+          <p className="text-sm text-[#a1a1aa] mt-1">Actions discovered from real outcomes across your agents.</p>
         </div>
         <button
           className="bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg"
@@ -95,9 +96,12 @@ export default function ActionsSettings(): React.ReactElement {
         </button>
       </div>
 
-      <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-3 mb-6 text-sm text-[#e4e4e7]">
-        <span className="text-[#ffaa00] mr-2">⚡</span>
-        Layerinfinite blocks unregistered action names from being logged (hallucination prevention). Register all actions your agent uses here.
+      <div className="bg-[#b8ff00]/5 border border-[#b8ff00]/20 rounded-xl px-5 py-3 mb-6 flex items-center gap-3">
+        <span className="text-[#b8ff00]">⚡</span>
+        <p className="text-[#a1a1aa] text-sm">
+          Actions are <strong className="text-white">auto-discovered</strong> when your agent logs outcomes.
+          You can disable specific actions here.
+        </p>
       </div>
 
       <section className={`bg-[#111118] border border-[#1a1a24] rounded-xl p-5 mb-6 transition-all duration-300 ${showForm ? 'block' : 'hidden'}`}>
@@ -175,14 +179,14 @@ export default function ActionsSettings(): React.ReactElement {
         ) : !hasActions ? (
           <div className="p-10 text-center">
             <Zap size={48} className="mx-auto text-[#52525b]" />
-            <p className="text-white text-lg font-medium mt-4">No actions registered</p>
-            <p className="text-[#a1a1aa] text-sm mt-1">Register the actions your agent performs to enable outcome logging and scoring</p>
-            <button
-              className="mt-5 bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg"
-              onClick={() => setShowForm(true)}
+            <p className="text-white text-lg font-medium mt-4">No actions registered yet</p>
+            <p className="text-[#a1a1aa] text-sm mt-1">Actions are auto-registered when your agent first uses them. Connect your agent to get started.</p>
+            <Link
+              className="inline-block mt-5 bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg"
+              to="/dashboard/settings/api-keys"
             >
-              Register Your First Action
-            </button>
+              Create API Key
+            </Link>
           </div>
         ) : (
           <div className="overflow-x-auto">

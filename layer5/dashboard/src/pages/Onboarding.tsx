@@ -7,6 +7,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { API_BASE } from '../lib/config';
 
 const C = {
     bg: '#000000',
@@ -24,13 +25,11 @@ const FONT_MONO = "'JetBrains Mono', 'Fira Code', monospace";
 
 const AGENT_TYPES = ['customer_support', 'devops', 'data_pipeline', 'general', 'other'];
 
-function generateApiKey(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = 'layerinfinite_';
-    for (let i = 0; i < 32; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
+interface CreateApiKeyResponse {
+    key?: string;
+    key_id?: string;
+    error?: string;
+    details?: string;
 }
 
 export default function Onboarding() {
@@ -57,32 +56,46 @@ export default function Onboarding() {
         setLoading(true);
         setError(null);
 
-        const key = generateApiKey();
+        if (!API_BASE) {
+            setError('API endpoint is not configured. Set VITE_LAYERINFINITE_API_URL and redeploy.');
+            setLoading(false);
+            return;
+        }
 
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) { setError('Not authenticated'); setLoading(false); return; }
 
-        // Hash the key for storage (simple SHA-256 via SubtleCrypto)
-        const encoder = new TextEncoder();
-        const data = encoder.encode(key);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        try {
+            const response = await fetch(`${API_BASE}/v1/auth/api-keys`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: agentName.trim() }),
+            });
 
-        const { error: insertError } = await supabase.from('dim_agents').insert({
-            agent_name: agentName,
-            agent_type: agentType,
-            llm_model: llmModel || null,
-            customer_id: session.user.id,
-            api_key_hash: hashHex,
-        });
+            const payload = (await response.json()) as CreateApiKeyResponse;
+            if (!response.ok || !payload.key) {
+                throw new Error(payload.error ?? payload.details ?? 'Failed to generate API key');
+            }
 
-        if (insertError) {
-            setError(insertError.message);
-        } else {
-            setApiKey(key);
+            if (payload.key_id) {
+                await supabase
+                    .from('dim_agents')
+                    .update({
+                        agent_type: agentType,
+                        llm_model: llmModel.trim() ? llmModel.trim() : null,
+                    })
+                    .eq('agent_id', payload.key_id);
+            }
+
+            setApiKey(payload.key);
             setStep(2);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to generate API key');
         }
+
         setLoading(false);
     };
 
@@ -402,43 +415,48 @@ export default function Onboarding() {
 
 // ─── Code snippets per language ──────────────────────
 function getBeforeCode(lang: 'node' | 'python' | 'curl', agentName: string): string {
+        const resolvedAgentName = agentName || '<agent_id>';
+        const resolvedApiBase = API_BASE ?? 'https://your-api-base.example.com';
+
     if (lang === 'node') {
-        return `const scores = await layerinfinite.getScores({
-  context: { issue_type: 'payment_failed' }
+                return `const scores = await layerinfinite.getScores({
+    context: { issue_type: '<issue_type>' }
 });
 agent.execute(scores.ranked_actions[0].action);`;
     }
     if (lang === 'python') {
         return `scores = layerinfinite.get_scores(
-  context={"issue_type": "payment_failed"}
+    context={"issue_type": "<issue_type>"}
 )
 agent.execute(scores["ranked_actions"][0]["action"])`;
     }
-    return `curl -X GET https://api.layerinfinite.dev/v1/get-scores \\
-  -H "Authorization: Bearer layerinfinite_..." \\
+        return `curl -X GET ${resolvedApiBase}/v1/get-scores \\
+    -H "Authorization: Bearer $LAYERINFINITE_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"agent_id":"${agentName}","context":{"issue_type":"payment_failed"}}'`;
+    -d '{"agent_id":"${resolvedAgentName}","context":{"issue_type":"<issue_type>"}}'`;
 }
 
 function getAfterCode(lang: 'node' | 'python' | 'curl'): string {
+        const resolvedApiBase = API_BASE ?? 'https://your-api-base.example.com';
+
     if (lang === 'node') {
         return `await layerinfinite.logOutcome({
-  action: 'update_app',
-  success: true,
-  response_ms: 241
+    action: '<action_name>',
+    success: <true_or_false>,
+    response_ms: <response_time_ms>
 });`;
     }
     if (lang === 'python') {
         return `layerinfinite.log_outcome(
-  action="update_app",
-  success=True,
-  response_ms=241
+    action="<action_name>",
+    success=<true_or_false>,
+    response_ms=<response_time_ms>
 )`;
     }
-    return `curl -X POST https://api.layerinfinite.dev/v1/log-outcome \\
-  -H "Authorization: Bearer layerinfinite_..." \\
+        return `curl -X POST ${resolvedApiBase}/v1/log-outcome \\
+    -H "Authorization: Bearer $LAYERINFINITE_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"action":"update_app","success":true,"response_ms":241}'`;
+    -d '{"action":"<action_name>","success":<true_or_false>,"response_ms":<response_time_ms>}'`;
 }
 
 function CodeBlock({ code }: { code: string }) {

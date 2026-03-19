@@ -615,14 +615,15 @@ const shimmerBlock: React.CSSProperties = {
 export default function SimulatePage() {
     // ── Agent + action data ─────────────────────────────────
     const [agents, setAgents] = useState<Agent[]>([]);
+    const [outcomeCount, setOutcomeCount] = useState<number | null>(null);
+    const [bootstrapLoading, setBootstrapLoading] = useState(true);
+    const [bootstrapError, setBootstrapError] = useState('');
     const [selectedAgentId, setSelectedAgentId] = useState('');
     const [selectedAgentName, setSelectedAgentName] = useState('');
     const [availableActions, setAvailableActions] = useState<Action[]>([]);
 
     // ── Form state ──────────────────────────────────────────
-    const [contextPairs, setContextPairs] = useState<{ key: string; value: string }[]>([
-        { key: 'issue_type', value: '' },
-    ]);
+    const [contextPairs, setContextPairs] = useState<{ key: string; value: string }[]>([]);
     const [sequence, setSequence] = useState<string[]>([]);
     const [episodeHistory, setEpisodeHistory] = useState<string[]>([]);
     const [showHistory, setShowHistory] = useState(false);
@@ -647,16 +648,43 @@ export default function SimulatePage() {
 
     const resultRef = useRef<HTMLDivElement>(null);
 
-    // ── Fetch agents on mount ───────────────────────────────
-    useEffect(() => {
-        (async () => {
-            const { data } = await supabase
+    const loadBootstrap = async () => {
+        setBootstrapLoading(true);
+        setBootstrapError('');
+
+        const [agentsResult, outcomesResult] = await Promise.all([
+            supabase
                 .from('dim_agents')
                 .select('agent_id, agent_name')
                 .eq('is_active', true)
-                .order('agent_name');
-            if (data) setAgents(data as Agent[]);
-        })();
+                .order('agent_name'),
+            supabase
+                .from('fact_outcomes')
+                .select('outcome_id', { count: 'exact', head: true })
+                .eq('is_deleted', false)
+                .eq('is_synthetic', false),
+        ]);
+
+        if (agentsResult.error) {
+            setBootstrapError(agentsResult.error.message);
+            setBootstrapLoading(false);
+            return;
+        }
+
+        if (outcomesResult.error) {
+            setBootstrapError(outcomesResult.error.message);
+            setBootstrapLoading(false);
+            return;
+        }
+
+        setAgents((agentsResult.data ?? []) as Agent[]);
+        setOutcomeCount(outcomesResult.count ?? 0);
+        setBootstrapLoading(false);
+    };
+
+    // ── Fetch initial page data on mount ────────────────────
+    useEffect(() => {
+        void loadBootstrap();
     }, []);
 
     // ── Fetch actions when agent changes ────────────────────
@@ -828,6 +856,35 @@ export default function SimulatePage() {
     }
 
     // ── Render ──────────────────────────────────────────────
+    if (bootstrapLoading) {
+        return (
+            <div className="h-[320px] rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
+        );
+    }
+
+    if (bootstrapError) {
+        return (
+            <div className="bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm flex items-center justify-between gap-3">
+                <span>{bootstrapError}</span>
+                <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={() => void loadBootstrap()}>
+                    Retry
+                </button>
+            </div>
+        );
+    }
+
+    if ((outcomeCount ?? 0) === 0) {
+        return (
+            <section className="flex flex-col items-center justify-center py-24 text-center text-white">
+                <div className="text-5xl mb-4 opacity-20">⚡</div>
+                <h3 className="text-white font-semibold text-lg mb-2">Not enough data to simulate</h3>
+                <p className="text-[#52525b] text-sm max-w-sm">
+                    Simulation requires at least a few logged outcomes. Log outcomes via the SDK to unlock this.
+                </p>
+            </section>
+        );
+    }
+
     return (
         <div style={{ fontFamily: FONT_SANS, color: COLORS.textPrimary }}>
             <div className="w-full bg-[#111118] border border-[#1a1a24] rounded-xl px-5 py-3 mb-6 flex items-center justify-between">

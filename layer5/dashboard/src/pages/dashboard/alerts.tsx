@@ -26,7 +26,7 @@ export default function Alerts(): React.ReactElement {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [fadingIds, setFadingIds] = useState<Set<string>>(new Set());
 
-  const { alerts, resolveAlert, loading, error } = useAlerts(activeFilter, showResolved);
+  const { alerts, resolveAlert, refetch, loading, error } = useAlerts(activeFilter, showResolved);
 
   const unresolvedOnlyCount = useMemo(() => alerts.filter((a) => !a.resolved).length, [alerts]);
 
@@ -82,16 +82,21 @@ export default function Alerts(): React.ReactElement {
       </section>
 
       {error && (
-        <div className="mt-4 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm">{error}</div>
+        <div className="mt-4 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={refetch}>Retry</button>
+        </div>
       )}
 
       {loading ? (
         <div className="mt-6 h-[260px] rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
       ) : unresolvedOnlyCount === 0 && !showResolved ? (
-        <section className="mt-20 flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-[#00cc66]/10 text-[#00cc66] flex items-center justify-center text-3xl">✓</div>
-          <h2 className="text-white font-medium text-lg mt-5">No active anomalies detected</h2>
-          <p className="text-[#a1a1aa] text-sm mt-1">Your agent is operating normally</p>
+        <section className="mt-20 flex flex-col items-center text-center py-24">
+          <div className="text-5xl mb-4 opacity-20">🔔</div>
+          <h2 className="text-white font-semibold text-lg mb-2">No alerts — all clear</h2>
+          <p className="text-[#52525b] text-sm max-w-sm">
+            Degradation alerts, latency spikes, and coordinated failures appear here when detected.
+          </p>
         </section>
       ) : (
         <section className="mt-6 flex flex-col gap-3">
@@ -100,10 +105,10 @@ export default function Alerts(): React.ReactElement {
               const createdDate = parseDateSafe(alert.createdAt);
               const relativeTime = createdDate
                 ? formatDistanceToNowStrict(createdDate, { addSuffix: true })
-                : 'Unknown time';
+                : '-';
               const absoluteTime = createdDate
                 ? format(createdDate, 'MMM dd, yyyy HH:mm:ss')
-                : 'Timestamp unavailable';
+                : '-';
 
               return (
             <article
@@ -174,18 +179,6 @@ export default function Alerts(): React.ReactElement {
         </section>
       )}
 
-      <footer className="mt-10 border-t border-[#1a1a24] pt-6 flex flex-col md:flex-row gap-3 items-center justify-between">
-        <div className="text-[#52525b] text-xs">© 2024 Layerinfinite. All rights reserved.</div>
-        <div className="flex items-center gap-5 text-xs">
-          <a className="text-[#a1a1aa] hover:text-white" href="#">Docs</a>
-          <a className="text-[#a1a1aa] hover:text-white" href="#">API</a>
-          <a className="text-[#a1a1aa] hover:text-white" href="#">Support</a>
-          <div className="flex items-center gap-2 text-[#00cc66]">
-            <span className="inline-block w-2 h-2 rounded-full bg-[#00cc66]" />
-            <span>System Healthy</span>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
