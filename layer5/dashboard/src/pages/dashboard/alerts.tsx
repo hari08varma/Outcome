@@ -26,7 +26,18 @@ export default function Alerts(): React.ReactElement {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [fadingIds, setFadingIds] = useState<Set<string>>(new Set());
 
-  const { alerts, resolveAlert, refetch, loading, error } = useAlerts(activeFilter, showResolved);
+  const alertsResult = useAlerts(activeFilter, showResolved);
+  const { alerts, resolveAlert, loading, error } = alertsResult;
+
+  const onRetry = (): void => {
+    const maybeRefetch = (alertsResult as { refetch?: () => void }).refetch;
+    if (typeof maybeRefetch === 'function') {
+      maybeRefetch();
+      return;
+    }
+
+    window.location.reload();
+  };
 
   const unresolvedOnlyCount = useMemo(() => alerts.filter((a) => !a.resolved).length, [alerts]);
 
@@ -84,7 +95,7 @@ export default function Alerts(): React.ReactElement {
       {error && (
         <div className="mt-4 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm flex items-center justify-between gap-3">
           <span>{error}</span>
-          <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={refetch}>Retry</button>
+          <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={onRetry}>Retry</button>
         </div>
       )}
 
