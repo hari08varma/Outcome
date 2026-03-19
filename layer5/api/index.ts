@@ -331,7 +331,7 @@ authRoutes.use('*', rateLimitMiddleware());
 authRoutes.route('/api-keys', apiKeysRouter);
 v1.route('/auth', authRoutes);
 
-v1.use('/admin/*', primaryAuth, adminAuthMiddleware);
+v1.use('/admin/*', adminAuthMiddleware);
 v1.route('/admin', actionsRouter);
 v1.route('/admin/reinstate-agent', reinstateAgentRouter);
 v1.route('/admin', reinstateSandboxRouter);

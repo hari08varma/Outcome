@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../lib/config';
-
-const API_KEY_STORAGE_KEY = 'layerinfinite_api_key';
+import { supabase } from '../supabaseClient';
 
 export interface ActionSettingsItem {
   actionId: string;
@@ -29,7 +28,6 @@ interface UseActionsSettingsResult {
   actions: ActionSettingsItem[];
   loading: boolean;
   error: string | null;
-  missingApiKey: boolean;
   refetch: () => void;
   registerAction: (name: string, requiredParams: string[]) => Promise<void>;
   toggleAction: (actionId: string, isActive: boolean) => Promise<void>;
@@ -42,16 +40,21 @@ function extractParams(value: Record<string, unknown> | null): string[] {
   return Object.keys(value);
 }
 
-function getApiKey(): string | null {
-  if (typeof window === 'undefined') {
-    return null;
+async function getSessionToken(): Promise<string> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Not authenticated');
   }
-  return localStorage.getItem(API_KEY_STORAGE_KEY);
+
+  return session.access_token;
 }
 
-function buildAuthHeaders(apiKey: string): Record<string, string> {
+function buildAuthHeaders(token: string): Record<string, string> {
   return {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
 }
@@ -60,7 +63,6 @@ export function useActionsSettings(): UseActionsSettingsResult {
   const [actions, setActions] = useState<ActionSettingsItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [missingApiKey, setMissingApiKey] = useState(false);
   const [tick, setTick] = useState(0);
 
   const fetchActions = useCallback(async () => {
@@ -70,23 +72,14 @@ export function useActionsSettings(): UseActionsSettingsResult {
       return;
     }
 
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      setMissingApiKey(true);
-      setActions([]);
-      setError('No API key found - create one in API Keys settings first.');
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
-    setMissingApiKey(false);
     setError(null);
 
     try {
+      const token = await getSessionToken();
       const response = await fetch(`${API_BASE}/v1/admin/actions?include_inactive=true`, {
         method: 'GET',
-        headers: buildAuthHeaders(apiKey),
+        headers: buildAuthHeaders(token),
       });
 
       const payload = (await response.json()) as ActionsApiResponse;
@@ -119,12 +112,7 @@ export function useActionsSettings(): UseActionsSettingsResult {
     if (!API_BASE) {
       throw new Error('API endpoint is not configured.');
     }
-
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      setMissingApiKey(true);
-      throw new Error('No API key found - create one in API Keys settings first.');
-    }
+    const token = await getSessionToken();
 
     const requiredParamsObject = requiredParams.reduce<Record<string, string>>((acc, item) => {
       acc[item] = 'required';
@@ -133,7 +121,7 @@ export function useActionsSettings(): UseActionsSettingsResult {
 
     const response = await fetch(`${API_BASE}/v1/admin/register-action`, {
       method: 'POST',
-      headers: buildAuthHeaders(apiKey),
+      headers: buildAuthHeaders(token),
       body: JSON.stringify({
         action_name: name,
         required_params: requiredParamsObject,
@@ -152,16 +140,11 @@ export function useActionsSettings(): UseActionsSettingsResult {
     if (!API_BASE) {
       throw new Error('API endpoint is not configured.');
     }
-
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      setMissingApiKey(true);
-      throw new Error('No API key found - create one in API Keys settings first.');
-    }
+    const token = await getSessionToken();
 
     const response = await fetch(`${API_BASE}/v1/admin/actions/${actionId}`, {
       method: 'PUT',
-      headers: buildAuthHeaders(apiKey),
+      headers: buildAuthHeaders(token),
       body: JSON.stringify({ is_active: !isActive }),
     });
 
@@ -181,9 +164,8 @@ export function useActionsSettings(): UseActionsSettingsResult {
     actions,
     loading,
     error,
-    missingApiKey,
     refetch,
     registerAction,
     toggleAction,
-  }), [actions, loading, error, missingApiKey, refetch, registerAction, toggleAction]);
+  }), [actions, loading, error, refetch, registerAction, toggleAction]);
 }

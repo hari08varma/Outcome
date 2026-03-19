@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Link } from 'react-router-dom';
 import { Zap } from 'lucide-react';
 import { useToastContext } from '../../../components/Toast';
 import { useActionsSettings } from '../../../hooks/useActionsSettings';
@@ -11,7 +10,7 @@ function isValidActionName(value: string): boolean {
 
 export default function ActionsSettings(): React.ReactElement {
   const { showToast } = useToastContext();
-  const { actions, loading, error, missingApiKey, refetch, registerAction, toggleAction } = useActionsSettings();
+  const { actions, loading, error, refetch, registerAction, toggleAction } = useActionsSettings();
 
   const [showForm, setShowForm] = useState(false);
   const [actionName, setActionName] = useState('');
@@ -100,14 +99,6 @@ export default function ActionsSettings(): React.ReactElement {
         <span className="text-[#ffaa00] mr-2">⚡</span>
         Layerinfinite blocks unregistered action names from being logged (hallucination prevention). Register all actions your agent uses here.
       </div>
-
-      {missingApiKey && (
-        <div className="mb-4 bg-[#ffaa00]/10 border border-[#ffaa00]/30 text-[#ffaa00] rounded-xl px-4 py-3 text-sm">
-          No API key found - create one in API Keys settings first.
-          {' '}
-          <Link to="/dashboard/settings/api-keys" className="underline text-[#b8ff00]">Open API Keys</Link>
-        </div>
-      )}
 
       <section className={`bg-[#111118] border border-[#1a1a24] rounded-xl p-5 mb-6 transition-all duration-300 ${showForm ? 'block' : 'hidden'}`}>
         <form onSubmit={handleSubmit} className="space-y-4">
