@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { API_BASE } from '../../../lib/config';
@@ -49,7 +49,7 @@ async function getFallbackJwt(): Promise<string | null> {
   return session?.access_token ?? null;
 }
 
-async function requestApiKeys(path: string, init: RequestInit): Promise<Response> {
+async function requestApiKeys(path: string, init: RequestInit, onStaleKey?: () => void): Promise<Response> {
   const storedApiKey = getStoredApiKey();
 
   if (storedApiKey) {
@@ -65,6 +65,11 @@ async function requestApiKeys(path: string, init: RequestInit): Promise<Response
     if (![401, 403].includes(response.status)) {
       return response;
     }
+
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(API_KEY_STORAGE_KEY);
+    }
+    onStaleKey?.();
   }
 
   const jwt = await getFallbackJwt();
@@ -96,8 +101,13 @@ export default function ApiKeysSettings(): React.ReactElement {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const createInFlightRef = useRef(false);
 
   const hasAnyKeys = useMemo(() => keys.length > 0, [keys.length]);
+
+  const handleStaleKey = useCallback(() => {
+    showToast('Your stored API key was deactivated. Please create a new one.', 'warning', 6000);
+  }, [showToast]);
 
   const fetchKeys = useCallback(async () => {
     if (!API_BASE) {
@@ -110,7 +120,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     setError(null);
 
     try {
-      const response = await requestApiKeys('/v1/auth/api-keys', { method: 'GET' });
+      const response = await requestApiKeys('/v1/auth/api-keys', { method: 'GET' }, handleStaleKey);
 
       const payload = (await response.json()) as KeysApiResponse;
       if (!response.ok) {
@@ -124,7 +134,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleStaleKey]);
 
   useEffect(() => {
     void fetchKeys();
@@ -132,6 +142,10 @@ export default function ApiKeysSettings(): React.ReactElement {
 
   const createKey = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
+    if (creating || createInFlightRef.current) {
+      return;
+    }
+
     if (!newKeyName.trim()) {
       return;
     }
@@ -141,6 +155,7 @@ export default function ApiKeysSettings(): React.ReactElement {
       return;
     }
 
+    createInFlightRef.current = true;
     setCreating(true);
     setError(null);
 
@@ -148,7 +163,7 @@ export default function ApiKeysSettings(): React.ReactElement {
       const response = await requestApiKeys('/v1/auth/api-keys', {
         method: 'POST',
         body: JSON.stringify({ name: newKeyName.trim() }),
-      });
+      }, handleStaleKey);
 
       const payload = (await response.json()) as KeysApiResponse;
       if (!response.ok) {
@@ -156,20 +171,33 @@ export default function ApiKeysSettings(): React.ReactElement {
         return;
       }
 
-      if (!payload.api_key) {
-        showToast('API key response was missing api_key.', 'critical', 4500);
+      const fullKey = payload.api_key ?? '';
+      if (!fullKey) {
+        console.error('[api-keys] Key created but api_key missing in response');
+        showToast('Key created but could not be displayed. Check your keys list.', 'warning', 6000);
+        await fetchKeys();
         return;
       }
 
-      saveApiKey(payload.api_key);
-      setRevealedKey(payload.api_key);
+      saveApiKey(fullKey);
+      setRevealedKey(fullKey);
       setRevealedWarning(payload.warning ?? null);
       setCopiedKey(false);
+      showToast('API key generated. Copy it now - it cannot be shown again.', 'success', 6000);
       setShowCreateForm(false);
+      void fetchKeys();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to create API key', 'critical', 4500);
+      const message = err instanceof Error ? err.message : 'Failed to create API key';
+      const lowered = message.toLowerCase();
+      if (lowered.includes('fetch') || lowered.includes('network') || lowered.includes('timeout')) {
+        setError('Network error - your key may have been created. Refresh to check.');
+        void fetchKeys();
+      } else {
+        setError(message);
+      }
     } finally {
       setCreating(false);
+      createInFlightRef.current = false;
     }
   };
 
@@ -192,9 +220,15 @@ export default function ApiKeysSettings(): React.ReactElement {
     void fetchKeys();
   };
 
-  const copyPrefixName = async (value: string): Promise<void> => {
-    await navigator.clipboard.writeText(value);
-    showToast('Copied key name.', 'info', 2500);
+  const copyPrefixToClipboard = async (prefix: string | null, name: string): Promise<void> => {
+    if (!prefix) {
+      showToast('No prefix available for this key.', 'warning', 3000);
+      return;
+    }
+
+    const cleanPrefix = prefix.replace(/\.+$/, '');
+    await navigator.clipboard.writeText(cleanPrefix);
+    showToast(`Copied prefix for "${name}".`, 'info', 2500);
   };
 
   const deactivateKey = async (keyId: string): Promise<void> => {
@@ -209,7 +243,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     try {
       const response = await requestApiKeys(`/v1/auth/api-keys/${keyId}`, {
         method: 'DELETE',
-      });
+      }, handleStaleKey);
 
       const payload = (await response.json()) as KeysApiResponse;
       if (!response.ok) {
@@ -335,7 +369,7 @@ export default function ApiKeysSettings(): React.ReactElement {
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-[#a1a1aa]">{keyItem.prefix ?? '-'}</span>
                         <button
-                          onClick={() => void copyPrefixName(keyItem.name)}
+                          onClick={() => void copyPrefixToClipboard(keyItem.prefix, keyItem.name)}
                           className="text-xs text-[#b8ff00] hover:underline"
                         >
                           Copy Prefix

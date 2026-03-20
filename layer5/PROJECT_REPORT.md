@@ -1233,9 +1233,9 @@ AND tablename IN (
 | 023_create_mv_sequence_scores.sql | ✅ | `mv_sequence_scores` materialized view (Wilson CI + t-CI) |
 | 024_create_foundation_indexes.sql | ✅ | 14 indexes across all new tables |
 | 025_create_foundation_rls.sql | ✅ | RLS policies on all 4 new tables |
-| 026_create_mv_refresh_schedule.sql | ✅ | `refresh_mv_sequence_scores()` RPC + pg_cron job |
+| 043_create_mv_refresh_schedule.sql | ✅ | `refresh_mv_sequence_scores()` RPC + pg_cron job |
 | 027_create_notification_channels.sql | ✅ | Alert notification channel tables |
-| 027-backfill-missing-profiles.sql | ✅ | Idempotent user profile backfill |
+| 044-backfill-missing-profiles.sql | ✅ | Idempotent user profile backfill |
 | 028_create_notification_cron.sql | ✅ | Cron for notification-dispatcher |
 | 029_add_idempotency.sql | ✅ | Idempotency table and cleanup scheduling |
 | 031_verifier_signal.sql | ✅ | Verifier signal columns and discrepancy support |

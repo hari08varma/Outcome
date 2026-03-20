@@ -70,7 +70,7 @@ async function provisionMissingProfile(user: { id: string; email?: string | null
             agent_name: 'default-agent',
             agent_type: 'api-key',
             customer_id: customer.customer_id,
-            is_active: true,
+            is_active: false,
             created_at: new Date().toISOString(),
         });
 

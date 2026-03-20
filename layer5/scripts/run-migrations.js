@@ -20,7 +20,7 @@ const MIGRATIONS = [
     '023_create_mv_sequence_scores.sql',
     '024_create_foundation_indexes.sql',
     '025_create_foundation_rls.sql',
-    '026_create_mv_refresh_schedule.sql',
+    '043_create_mv_refresh_schedule.sql',
     '029_add_idempotency.sql'
 ];
 
