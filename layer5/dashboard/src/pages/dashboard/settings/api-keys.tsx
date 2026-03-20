@@ -17,8 +17,12 @@ interface ApiKeyItem {
 
 interface KeysApiResponse {
   keys?: ApiKeyItem[];
-  key?: string;
+  api_key?: string;
   key_id?: string;
+  agent_id?: string;
+  agent_name?: string;
+  created_at?: string;
+  warning?: string;
   name?: string;
   error?: string;
   details?: string;
@@ -87,6 +91,7 @@ export default function ApiKeysSettings(): React.ReactElement {
   const [newKeyName, setNewKeyName] = useState('');
   const [creating, setCreating] = useState(false);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [revealedWarning, setRevealedWarning] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -146,15 +151,16 @@ export default function ApiKeysSettings(): React.ReactElement {
       });
 
       const payload = (await response.json()) as KeysApiResponse;
-      if (!response.ok || !payload.key) {
+      if (!response.ok || !payload.api_key) {
         throw new Error(payload.error ?? payload.details ?? 'Failed to create API key');
       }
 
-      saveApiKey(payload.key);
-      setRevealedKey(payload.key);
+      saveApiKey(payload.api_key);
+      setRevealedKey(payload.api_key);
+      setRevealedWarning(payload.warning ?? null);
       setCopiedKey(false);
       showToast('API key generated successfully.', 'success', 4000);
-      setTick((value) => value + 1);
+      await fetchKeys();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create API key');
     } finally {
@@ -174,6 +180,7 @@ export default function ApiKeysSettings(): React.ReactElement {
 
   const closeCreateFlow = (): void => {
     setRevealedKey(null);
+    setRevealedWarning(null);
     setCopiedKey(false);
     setShowCreateForm(false);
     setNewKeyName('');
@@ -273,6 +280,7 @@ export default function ApiKeysSettings(): React.ReactElement {
                 onClick={() => {
                   setShowCreateForm(false);
                   setRevealedKey(null);
+                  setRevealedWarning(null);
                   setCopiedKey(false);
                 }}
                 className="border border-[#1a1a24] rounded-lg px-4 py-2 text-[#a1a1aa] hover:text-white"
@@ -284,7 +292,7 @@ export default function ApiKeysSettings(): React.ReactElement {
 
           {revealedKey && (
             <div className="mt-5 border border-[#ffaa00]/50 bg-[#ffaa00]/10 rounded-xl p-4">
-              <p className="text-[#ffaa00] text-sm font-medium mb-2">⚠ Copy this key now. It will never be shown again.</p>
+              <p className="text-[#ffaa00] text-sm font-medium mb-2">⚠ {revealedWarning ?? 'Copy this key now. It will never be shown again.'}</p>
               <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-lg p-3 font-mono text-xs break-all text-[#f4f4f5]">
                 {revealedKey}
               </div>
