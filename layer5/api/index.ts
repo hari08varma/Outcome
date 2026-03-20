@@ -329,6 +329,7 @@ const authRoutes = new Hono();
 authRoutes.use('*', userAuthMiddleware);
 authRoutes.use('*', rateLimitMiddleware());
 authRoutes.route('/api-keys', apiKeysRouter);
+authRoutes.route('/keys', apiKeysRouter);
 v1.route('/auth', authRoutes);
 
 v1.use('/admin/*', adminAuthMiddleware);
