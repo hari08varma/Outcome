@@ -80,6 +80,7 @@ import { testNotificationRouter } from './routes/admin/test-notification.js';
 import { triggerTrainingRoute } from './routes/admin/trigger-training.js';
 import { userAuthMiddleware } from './middleware/user-auth.js';
 import { apiKeysRouter } from './routes/auth/api-keys.js';
+import { meRouter } from './routes/auth/me.js';
 import { outcomeFeedbackRouter } from './routes/outcome-feedback.js';
 import { simulateRouter } from './routes/simulate.js';
 
@@ -174,6 +175,7 @@ app.get('/', (c) => c.json({
         'POST /v1/log-outcome': 'Append outcome to fact_outcomes',
         'GET  /v1/get-scores': 'Get ranked action scores',
         'GET  /v1/get-patterns': 'Get action sequence patterns',
+        'GET /v1/me': 'Verify API key identity — returns agent_id + customer_id',
         'GET  /v1/audit': 'Immutable audit trail',
         'POST /v1/admin/register-action': 'Register an action (admin)',
         'GET  /v1/admin/actions': 'List actions (admin)',
@@ -331,6 +333,9 @@ authRoutes.use('*', rateLimitMiddleware());
 authRoutes.route('/api-keys', apiKeysRouter);
 authRoutes.route('/keys', apiKeysRouter);
 v1.route('/auth', authRoutes);
+
+v1.use('/me', primaryAuth);
+v1.route('/me', meRouter);
 
 v1.use('/admin/*', adminAuthMiddleware);
 v1.route('/admin', actionsRouter);

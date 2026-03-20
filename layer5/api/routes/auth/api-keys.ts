@@ -104,11 +104,11 @@ apiKeysRouter.post('/', async (c) => {
 
     // Return the full key ONCE — it is never stored or retrievable again
     return c.json({
-        key: plainKey,
-        key_id: data.agent_id,
-        name: data.agent_name,
+        api_key: plainKey,
+        agent_id: data.agent_id,
+        agent_name: data.agent_name,
         created_at: data.created_at,
-        warning: 'Save this key now — it cannot be shown again.',
+        warning: 'Save this API key now — it cannot be shown again. This is the only credential you need. Never hardcode agent_id or customer_id in your application.',
     }, 201);
 });
 
