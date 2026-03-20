@@ -151,18 +151,23 @@ export default function ApiKeysSettings(): React.ReactElement {
       });
 
       const payload = (await response.json()) as KeysApiResponse;
-      if (!response.ok || !payload.api_key) {
-        throw new Error(payload.error ?? payload.details ?? 'Failed to create API key');
+      if (!response.ok) {
+        setError(payload.error ?? payload.details ?? 'Failed to create API key');
+        return;
+      }
+
+      if (!payload.api_key) {
+        showToast('API key response was missing api_key.', 'critical', 4500);
+        return;
       }
 
       saveApiKey(payload.api_key);
       setRevealedKey(payload.api_key);
       setRevealedWarning(payload.warning ?? null);
       setCopiedKey(false);
-      showToast('API key generated successfully.', 'success', 4000);
-      await fetchKeys();
+      setShowCreateForm(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create API key');
+      showToast(err instanceof Error ? err.message : 'Failed to create API key', 'critical', 4500);
     } finally {
       setCreating(false);
     }
@@ -184,7 +189,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     setCopiedKey(false);
     setShowCreateForm(false);
     setNewKeyName('');
-    setTick((value) => value + 1);
+    void fetchKeys();
   };
 
   const copyPrefixName = async (value: string): Promise<void> => {
@@ -289,29 +294,6 @@ export default function ApiKeysSettings(): React.ReactElement {
               </button>
             </div>
           </form>
-
-          {revealedKey && (
-            <div className="mt-5 border border-[#ffaa00]/50 bg-[#ffaa00]/10 rounded-xl p-4">
-              <p className="text-[#ffaa00] text-sm font-medium mb-2">⚠ {revealedWarning ?? 'Copy this key now. It will never be shown again.'}</p>
-              <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-lg p-3 font-mono text-xs break-all text-[#f4f4f5]">
-                {revealedKey}
-              </div>
-              <div className="flex items-center gap-3 mt-3">
-                <button
-                  onClick={copyGeneratedKey}
-                  className="bg-[#b8ff00] hover:bg-[#a5e800] text-black text-sm font-semibold px-3 py-1.5 rounded-lg"
-                >
-                  {copiedKey ? 'Copied' : 'Copy'}
-                </button>
-                <button
-                  onClick={closeCreateFlow}
-                  className="text-sm text-white border border-[#1a1a24] rounded-lg px-3 py-1.5"
-                >
-                  I've copied it
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </section>
 
@@ -410,6 +392,35 @@ export default function ApiKeysSettings(): React.ReactElement {
           Need API access for admin endpoints? Store a key using the create flow above.
           {' '}
           <Link className="text-[#b8ff00] hover:underline" to="/dashboard/settings/api-keys">API Keys</Link>
+        </div>
+      )}
+
+      {revealedKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4">
+          <div className="w-full max-w-xl rounded-2xl border border-[#1a1a24] bg-[#111118] p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-white">API Key Created — Save It Now</h3>
+            <p className="mt-3 text-sm text-[#ffaa00]">This key will never be shown again. Copy it now before closing.</p>
+            {revealedWarning && <p className="mt-1 text-xs text-[#a1a1aa]">{revealedWarning}</p>}
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-[#1a1a24] bg-[#0a0a0f] p-2">
+              <input
+                className="flex-1 bg-transparent px-2 py-1 font-mono text-xs text-[#f4f4f5] outline-none"
+                value={revealedKey}
+                readOnly
+              />
+              <button
+                onClick={copyGeneratedKey}
+                className="rounded-lg bg-[#b8ff00] px-3 py-1.5 text-sm font-semibold text-black hover:bg-[#a5e800]"
+              >
+                {copiedKey ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <button
+              onClick={closeCreateFlow}
+              className="mt-5 w-full rounded-lg border border-[#1a1a24] bg-[#00cc66] px-4 py-2 text-sm font-semibold text-black hover:bg-[#00b55a]"
+            >
+              I've copied my key
+            </button>
+          </div>
         </div>
       )}
     </div>
