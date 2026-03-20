@@ -1,165 +1,179 @@
-import React, { useEffect, useState } from 'react';
-import { format } from 'date-fns';
-import { Bot } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../../../supabaseClient';
+import React, { useMemo, useState } from 'react';
+import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAgentTrust } from '../../hooks/useAgentTrust';
+import { supabase } from '../../supabaseClient';
+import { API_BASE } from '../../lib/config';
+import { useToastContext } from '../../components/Toast';
 
-interface AgentRow {
-  agent_id: string;
-  agent_name: string;
-  agent_type: string | null;
-  is_active: boolean;
-  created_at: string;
-  llm_model: string | null;
-  trust_score: number | null; // joined from agent_trust_scores
+function statusBadge(status: 'trusted' | 'probation' | 'suspended'): string {
+  if (status === 'trusted') return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
+  if (status === 'probation') return 'bg-[#ffaa00]/10 text-[#ffaa00] border border-[#ffaa00]/30';
+  return 'bg-[#ff4444]/10 text-[#ff4444] border border-[#ff4444]/30';
 }
 
-export default function AgentsSettings(): React.ReactElement {
+function trustColor(status: 'trusted' | 'probation' | 'suspended'): string {
+  if (status === 'trusted') return '#00cc66';
+  if (status === 'probation') return '#ffaa00';
+  return '#ff4444';
+}
+
+export default function Agent(): React.ReactElement {
   const navigate = useNavigate();
-  const [agents, setAgents] = useState<AgentRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const selectedAgentId = searchParams.get('id') ?? undefined;
+  const agent = useAgentTrust(selectedAgentId);
+  const { showToast } = useToastContext();
+  const [reinstating, setReinstating] = useState(false);
 
-  const fetchAgents = async () => {
-    setLoading(true);
-    setError(null);
+  const createdText = useMemo(() => {
+    if (!agent.createdAt) return '';
+    return format(parseISO(agent.createdAt), 'MMM dd, yyyy');
+  }, [agent.createdAt]);
+
+  const exportCsv = async (): Promise<void> => {
+    if (!API_BASE) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { showToast('Session expired — please sign in again.', 'warning', 4500); return; }
     try {
-      // Step 1: fetch agents WITHOUT trust_score (that column is in agent_trust_scores)
-      const { data: agentData, error: agentError } = await supabase
-        .from('dim_agents')
-        .select('agent_id, agent_name, agent_type, is_active, created_at, llm_model')
-        .order('created_at', { ascending: false });
-
-      if (agentError) throw agentError;
-      if (!agentData || agentData.length === 0) {
-        setAgents([]);
-        return;
-      }
-
-      // Step 2: fetch trust scores separately
-      const agentIds = agentData.map((a: any) => a.agent_id);
-      const { data: trustData } = await supabase
-        .from('agent_trust_scores')
-        .select('agent_id, trust_score')
-        .in('agent_id', agentIds);
-
-      // Build a map for fast lookup
-      const trustMap: Record<string, number> = {};
-      if (trustData) {
-        for (const t of trustData as any[]) {
-          trustMap[t.agent_id] = t.trust_score;
-        }
-      }
-
-      // Merge
-      const merged: AgentRow[] = agentData.map((a: any) => ({
-        agent_id: a.agent_id,
-        agent_name: a.agent_name ?? '',
-        agent_type: a.agent_type ?? null,
-        is_active: Boolean(a.is_active),
-        created_at: a.created_at ?? '',
-        llm_model: a.llm_model ?? null,
-        trust_score: trustMap[a.agent_id] ?? null,
-      }));
-
-      setAgents(merged);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      const response = await fetch(`${API_BASE}/v1/audit?format=csv`, {
+        headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) { showToast('Failed to export CSV logs.', 'critical', 4500); return; }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `layerinfinite-audit-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      showToast('Audit CSV exported.', 'success', 2500);
+    } catch { showToast('Network error during export.', 'critical', 4500); }
   };
 
-  useEffect(() => {
-    void fetchAgents();
-  }, []);
+  const reinstateAgent = async (): Promise<void> => {
+    if (!API_BASE || !agent.agentId) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { showToast('Session expired — please sign in again.', 'warning', 4500); navigate('/auth?mode=login'); return; }
+    setReinstating(true);
+    try {
+      const reinstatedBy = session.user.email ?? 'dashboard_admin';
+      const response = await fetch(`${API_BASE}/v1/admin/reinstate-agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ agent_id: agent.agentId, reinstated_by: reinstatedBy }),
+      });
+      if (response.ok) { showToast('Agent reinstated. Status set to probation.', 'success', 4500); agent.refetch(); }
+      else { const body = await response.json().catch(() => ({} as Record<string, string>)); showToast(body.error ?? 'Failed to reinstate agent.', 'critical', 4500); }
+    } catch { showToast('Network error — could not reinstate agent.', 'critical', 4500); }
+    finally { setReinstating(false); }
+  };
+
+  if (agent.loading) return <div className="h-[320px] rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />;
+
+  if (agent.error) return (
+    <div className="bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl p-4 text-sm flex items-center justify-between gap-3">
+      <span>{agent.error}</span>
+      <button className="text-white text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5" onClick={agent.refetch}>Retry</button>
+    </div>
+  );
+
+  if (!agent.hasAgent) return (
+    <section className="flex flex-col items-center justify-center py-24 text-center text-white">
+      <div className="text-5xl mb-4 opacity-20">🤖</div>
+      <h3 className="text-white font-semibold text-lg mb-2">No agents connected</h3>
+      <p className="text-[#52525b] text-sm max-w-sm mb-6">Your agents appear here once they start logging outcomes via the SDK.</p>
+      <button className="bg-[#b8ff00] text-black font-semibold px-5 py-2 rounded-lg text-sm hover:bg-[#a0e600]" onClick={() => navigate('/dashboard/settings/api-keys')}>Create API Key</button>
+    </section>
+  );
+
+  const barColor = trustColor(agent.status);
 
   return (
     <div className="text-white">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold">Agents</h2>
-        <p className="text-sm text-[#a1a1aa] mt-1">
-          Your connected AI agents. Agents are created automatically when you generate an API key.
-        </p>
-      </div>
-
-      {error && (
-        <div className="mb-4 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl px-4 py-3 text-sm flex items-center justify-between">
-          <span>{error}</span>
-          <button
-            className="text-xs text-white border border-[#1a1a24] rounded-lg px-3 py-1.5"
-            onClick={() => void fetchAgents()}
-          >
-            Retry
-          </button>
+      {(agent.status === 'probation' || agent.status === 'suspended') && (
+        <div className={`mb-6 rounded-xl px-4 py-3 text-sm font-medium ${agent.status === 'probation' ? 'bg-[#ffaa00]/10 border border-[#ffaa00]/30 text-[#ffaa00]' : 'bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff4444]'}`}>
+          {agent.status === 'probation' ? 'Agent on probation - conservative policy active' : 'Agent suspended - human review required'}
         </div>
       )}
 
-      {loading ? (
-        <div className="space-y-3">
-          <div className="h-24 rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
-          <div className="h-24 rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
-        </div>
-      ) : agents.length === 0 ? (
-        <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-10 text-center">
-          <Bot size={48} className="mx-auto text-[#52525b]" />
-          <p className="text-white text-lg font-medium mt-4">No agents yet</p>
-          <p className="text-[#a1a1aa] text-sm mt-1">
-            Agents are created automatically when you generate an API key. Each key = one agent.
-          </p>
-          <button
-            className="mt-5 bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg"
-            onClick={() => navigate('/dashboard/settings/api-keys')}
-          >
-            Create API Key →
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.5fr] gap-6">
+        <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-6">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-white">{agent.agentName}</h1>
+              <p className="text-[#52525b] text-xs mt-1">Created {createdText}</p>
+            </div>
+            <span className={`uppercase tracking-wider text-xs font-bold px-3 py-1 rounded-full ${statusBadge(agent.status)}`}>{agent.status}</span>
+          </div>
+
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[#a1a1aa] text-xs font-semibold tracking-wide">TRUST SCORE</span>
+              <span className="text-white font-mono text-lg font-bold">{agent.trustScore.toFixed(2)} / 1.0</span>
+            </div>
+            <div className="h-2 bg-[#1a1a24] rounded-full overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(agent.trustScore * 100, 100))}%`, backgroundColor: barColor }} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-xl p-4">
+              <p className="text-[11px] tracking-wide text-[#a1a1aa]">RECENT ERRORS</p>
+              <p className="text-xl font-bold mt-1" style={{ color: agent.consecutiveFailures > 0 ? '#ff4444' : '#ffffff' }}>{agent.consecutiveFailures}</p>
+            </div>
+            <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-xl p-4">
+              <p className="text-[11px] tracking-wide text-[#a1a1aa]">OUTCOMES</p>
+              <p className="text-xl font-bold mt-1">{agent.totalOutcomes.toLocaleString()}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {agent.status === 'suspended' && (
+              <button className="w-full bg-[#00cc66] hover:bg-[#00b55a] text-black font-semibold py-2.5 rounded-lg disabled:opacity-60" onClick={reinstateAgent} disabled={reinstating}>
+                {reinstating ? 'Reinstating...' : 'Reinstate Agent'}
+              </button>
+            )}
+            <button className="w-full bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold py-2.5 rounded-lg" onClick={() => navigate('/dashboard/settings/api-keys')}>View API Keys</button>
+            <button className="w-full border border-[#1a1a24] text-[#a1a1aa] hover:text-white hover:border-[#2a2a34] font-semibold py-2.5 rounded-lg" onClick={exportCsv}>Export Data Logs</button>
+          </div>
+        </section>
+
+        <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-bold">Trust History <span className="text-[#52525b] text-sm font-normal">(last 10 events)</span></h2>
+            <div className="flex items-center gap-2 text-xs text-[#00cc66]">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#00cc66]" />
+              <span>Live Updates Enabled</span>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="absolute left-4 top-0 bottom-0 w-px bg-[#1a1a24]" />
+            <div className="space-y-4">
+              {agent.trustHistory.map((event) => (
+                <div key={event.id} className="relative flex items-start gap-4 pb-4 border-b border-[#1a1a24] last:border-b-0">
+                  <div className={`z-10 w-8 h-8 rounded-full border flex items-center justify-center ${event.eventType === 'success' ? 'bg-[#00cc66]/10 border-[#00cc66]/40 text-[#00cc66]' : 'bg-[#ff4444]/10 border-[#ff4444]/40 text-[#ff4444]'}`}>
+                    {event.eventType === 'success' ? '✓' : '✕'}
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-white text-sm font-mono">{event.actionName || 'Action unavailable'}</div>
+                    <div className="text-[#a1a1aa] text-xs mt-1">{event.notes || 'No notes available.'}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-white font-mono text-sm">{event.trustScoreAfter.toFixed(2)}</div>
+                    <div className="text-[#52525b] text-xs mt-1">{formatDistanceToNowStrict(parseISO(event.createdAt), { addSuffix: true })}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button className="mt-6 text-[#b8ff00] text-sm hover:underline" onClick={() => navigate('/dashboard/settings/audit')}>
+            View Full Audit {'->'}
           </button>
         </section>
-      ) : (
-        <div className="space-y-4">
-          {agents.map((agent) => (
-            <article
-              key={agent.agent_id}
-              className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 flex items-center gap-4"
-            >
-              <Bot
-                size={32}
-                className={agent.is_active ? 'text-[#b8ff00] shrink-0' : 'text-[#52525b] shrink-0'}
-              />
-
-              <div className="flex-1 min-w-0">
-                <p className="text-lg font-bold text-white font-mono truncate">{agent.agent_name}</p>
-                <p className="text-sm text-[#a1a1aa]">{agent.agent_type ?? 'general'}</p>
-                <p className="text-xs text-[#52525b] mt-1">
-                  Created {format(new Date(agent.created_at), 'MMM dd, yyyy')}
-                </p>
-                <p className="text-xs text-[#52525b] mt-1">
-                  Model: {agent.llm_model ?? '—'} | Trust:{' '}
-                  {agent.trust_score == null ? '—' : agent.trust_score.toFixed(2)}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span
-                  className={
-                    agent.is_active
-                      ? 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30'
-                      : 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'
-                  }
-                >
-                  {agent.is_active ? 'ACTIVE' : 'INACTIVE'}
-                </span>
-
-                <button
-                  onClick={() => navigate(`/dashboard/agent?id=${agent.agent_id}`)}
-                  className="border border-[#1a1a24] text-[#a1a1aa] hover:text-white rounded-lg px-3 py-1.5 text-sm"
-                >
-                  View Trust
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }

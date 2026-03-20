@@ -24,17 +24,36 @@ export default function AgentsSettings(): React.ReactElement {
     setLoading(true);
     setError(null);
     try {
-      const { data, error } = await (supabase as any)
+      // Fetch agents WITHOUT trust_score — that column lives in agent_trust_scores
+      const { data: agentData, error: agentError } = await supabase
         .from('dim_agents')
-        .select(
-          'agent_id, agent_name, agent_type, is_active, ' +
-          'created_at, llm_model, trust_score'
-        )
+        .select('agent_id, agent_name, agent_type, is_active, created_at, llm_model')
         .order('created_at', { ascending: false });
-      // RLS scopes this to current user's customer_id
 
-      if (error) throw error;
-      setAgents((data ?? []) as AgentRow[]);
+      if (agentError) throw agentError;
+      if (!agentData || agentData.length === 0) { setAgents([]); return; }
+
+      // Fetch trust scores separately
+      const agentIds = agentData.map((a: any) => a.agent_id);
+      const { data: trustData } = await supabase
+        .from('agent_trust_scores')
+        .select('agent_id, trust_score')
+        .in('agent_id', agentIds);
+
+      const trustMap: Record<string, number> = {};
+      if (trustData) {
+        for (const t of trustData as any[]) trustMap[t.agent_id] = t.trust_score;
+      }
+
+      setAgents(agentData.map((a: any) => ({
+        agent_id:   a.agent_id,
+        agent_name: a.agent_name ?? '',
+        agent_type: a.agent_type ?? null,
+        is_active:  Boolean(a.is_active),
+        created_at: a.created_at ?? '',
+        llm_model:  a.llm_model ?? null,
+        trust_score: trustMap[a.agent_id] ?? null,
+      })));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -42,9 +61,7 @@ export default function AgentsSettings(): React.ReactElement {
     }
   };
 
-  useEffect(() => {
-    void fetchAgents();
-  }, []);
+  useEffect(() => { void fetchAgents(); }, []);
 
   return (
     <div className="text-white">
@@ -71,17 +88,9 @@ export default function AgentsSettings(): React.ReactElement {
       ) : agents.length === 0 ? (
         <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-10 text-center">
           <Bot size={48} className="mx-auto text-[#52525b]" />
-          <p className="text-white text-lg font-medium mt-4">
-            No agents yet
-          </p>
-          <p className="text-[#a1a1aa] text-sm mt-1">
-            Agents are created automatically when you generate
-            an API key. Each key = one agent.
-          </p>
-          <button
-            className="mt-5 bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg"
-            onClick={() => navigate('/dashboard/settings/api-keys')}
-          >
+          <p className="text-white text-lg font-medium mt-4">No agents yet</p>
+          <p className="text-[#a1a1aa] text-sm mt-1">Agents are created automatically when you generate an API key. Each key = one agent.</p>
+          <button className="mt-5 bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg" onClick={() => navigate('/dashboard/settings/api-keys')}>
             Create API Key →
           </button>
         </section>
@@ -90,7 +99,6 @@ export default function AgentsSettings(): React.ReactElement {
           {agents.map((agent) => (
             <article key={agent.agent_id} className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 flex items-center gap-4">
               <Bot size={32} className={agent.is_active ? 'text-[#b8ff00] shrink-0' : 'text-[#52525b] shrink-0'} />
-
               <div className="flex-1 min-w-0">
                 <p className="text-lg font-bold text-white font-mono truncate">{agent.agent_name}</p>
                 <p className="text-sm text-[#a1a1aa]">{agent.agent_type ?? 'general'}</p>
@@ -99,19 +107,13 @@ export default function AgentsSettings(): React.ReactElement {
                   Model: {agent.llm_model ?? '—'} | Trust: {agent.trust_score == null ? '—' : agent.trust_score.toFixed(2)}
                 </p>
               </div>
-
               <div className="flex items-center gap-3">
                 <span className={agent.is_active
                   ? 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30'
-                  : 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'}
-                >
+                  : 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'}>
                   {agent.is_active ? 'ACTIVE' : 'INACTIVE'}
                 </span>
-
-                <button
-                  onClick={() => navigate(`/dashboard/agent?id=${agent.agent_id}`)}
-                  className="border border-[#1a1a24] text-[#a1a1aa] hover:text-white rounded-lg px-3 py-1.5 text-sm"
-                >
+                <button onClick={() => navigate(`/dashboard/agent?id=${agent.agent_id}`)} className="border border-[#1a1a24] text-[#a1a1aa] hover:text-white rounded-lg px-3 py-1.5 text-sm">
                   View Trust
                 </button>
               </div>
