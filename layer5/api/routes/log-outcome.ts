@@ -163,13 +163,13 @@ async function verifyOutcome(body: any, customerId: string, agentId: string) {
     return verification;
 }
 
-async function resolveActionId(c: Context, body: any) {
+async function resolveActionId(c: Context, body: any, customerId: string) {
     const validatedAction = c.get('validated_action') as any;
     if (validatedAction) return validatedAction.action_id;
     
     // Fallback: validate directly
     const { validateAction } = await import('../middleware/validate-action.js');
-    const result = await validateAction(body.action_name, body.action_params);
+    const result = await validateAction(body.action_name, customerId, body.action_params);
     if (!result.valid) throw new Error(`UNKNOWN_ACTION:${result.error_code ?? 'UNKNOWN_ACTION'}:${result.error}`);
     return result.action_id!;
 }
@@ -331,7 +331,7 @@ logOutcomeRouter.post('/', async (c) => {
         const finalOutcomeScore = verification.confidence_override ?? body.outcome_score ?? null;
 
         // 4. Resolve References
-        const actionId = await resolveActionId(c, body);
+        const actionId = await resolveActionId(c, body, customerId);
         const contextId = await resolveContextId(body);
         
         // 5. Insert Core Fact

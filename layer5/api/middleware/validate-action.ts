@@ -27,8 +27,12 @@ interface ActionCacheEntry {
     expires_at: number;
 }
 
-// Cache by action_name
+// Cache by customer_id:action_name
 const actionCache = new Map<string, ActionCacheEntry>();
+
+function getActionCacheKey(customerId: string, actionName: string): string {
+    return `${customerId}:${actionName}`;
+}
 
 // Evict expired entries every 5 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60_000;
@@ -125,14 +129,19 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
                 action_category: 'auto-discovered',
                 action_description: 'Auto-registered on first use by SDK',
                 required_params: [],
-                validation_mode: 'none',
+                validation_mode: 'advisory',
             })
             .select('action_id, action_name, is_active')
             .single();
 
         if (insertError) {
             // Only fail if DB itself errors
-            console.error('Auto-register failed:', insertError.message);
+            console.error('[validate-action] Auto-register failed', {
+                action_name: actionName,
+                customer_id: customerId,
+                error_code: insertError.code,
+                error_message: insertError.message,
+            });
             return c.json({ error: 'Failed to register action' }, 500);
         }
 
@@ -174,9 +183,11 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
 // ── Core validation function (also exported for direct use) ──
 export async function validateAction(
     actionName: string,
+    customerId: string,
     params?: Record<string, unknown>
 ): Promise<ActionValidationResult> {
-    const cached = actionCache.get(actionName);
+    const cacheKey = getActionCacheKey(customerId, actionName);
+    const cached = actionCache.get(cacheKey);
 
     if (cached && cached.expires_at > Date.now()) {
         if (!cached.is_active) {
@@ -190,6 +201,7 @@ export async function validateAction(
         .from('dim_actions')
         .select('action_id, action_name, action_category, action_description, required_params, is_active, validation_mode')
         .eq('action_name', actionName)
+        .eq('customer_id', customerId)
         .maybeSingle();
 
     if (error) {
@@ -199,13 +211,13 @@ export async function validateAction(
     if (!data) {
         return {
             valid: false,
-            error: `action_name '${actionName}' not found in registry. Register it via POST /v1/admin/actions first.`,
+            error: `action_name '${actionName}' not found in registry and could not be auto-registered.`,
             error_code: 'UNKNOWN_ACTION',
         };
     }
 
     // Cache result
-    actionCache.set(actionName, {
+    actionCache.set(cacheKey, {
         ...data,
         required_params: data.required_params as Record<string, unknown>,
         expires_at: Date.now() + ACTION_CACHE_TTL_MS,
@@ -270,7 +282,11 @@ function validateParams(
 // Invalidate action cache (call after admin registers new action)
 export function invalidateActionCache(actionName?: string): void {
     if (actionName) {
-        actionCache.delete(actionName);
+        for (const key of actionCache.keys()) {
+            if (key.endsWith(`:${actionName}`)) {
+                actionCache.delete(key);
+            }
+        }
     } else {
         actionCache.clear();
     }
