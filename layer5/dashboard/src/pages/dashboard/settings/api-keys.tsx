@@ -48,32 +48,11 @@ async function getFallbackJwt(): Promise<string | null> {
   return session?.access_token ?? null;
 }
 
-async function requestApiKeys(path: string, init: RequestInit, onStaleKey?: () => void): Promise<Response> {
-  const storedApiKey = getStoredApiKey();
-
-  if (storedApiKey) {
-    const response = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        Authorization: `Bearer ${storedApiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (![401, 403].includes(response.status)) {
-      return response;
-    }
-
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(AGENT_API_KEY_STORAGE_KEY);
-    }
-    onStaleKey?.();
-  }
-
+async function requestApiKeys(path: string, init: RequestInit): Promise<Response> {
+  // /v1/auth/* routes ONLY accept Supabase JWT — never send agent key here
   const jwt = await getFallbackJwt();
   if (!jwt) {
-    throw new Error('No API key found - create one in API Keys settings first.');
+    throw new Error('Session expired — please sign in again.');
   }
 
   return fetch(`${API_BASE}${path}`, {
@@ -119,7 +98,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     setError(null);
 
     try {
-      const response = await requestApiKeys('/v1/auth/api-keys', { method: 'GET' }, handleStaleKey);
+      const response = await requestApiKeys('/v1/auth/api-keys', { method: 'GET' });
 
       const payload = (await response.json()) as KeysApiResponse;
       if (!response.ok) {
@@ -162,7 +141,7 @@ export default function ApiKeysSettings(): React.ReactElement {
       const response = await requestApiKeys('/v1/auth/api-keys', {
         method: 'POST',
         body: JSON.stringify({ name: newKeyName.trim() }),
-      }, handleStaleKey);
+      });
 
       const payload = (await response.json()) as KeysApiResponse;
       if (!response.ok) {
@@ -246,7 +225,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     try {
       const response = await requestApiKeys(`/v1/auth/api-keys/${keyId}`, {
         method: 'DELETE',
-      }, handleStaleKey);
+      });
 
       const payload = (await response.json()) as KeysApiResponse;
       if (!response.ok) {
