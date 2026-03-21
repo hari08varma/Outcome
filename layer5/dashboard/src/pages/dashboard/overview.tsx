@@ -58,7 +58,9 @@ export default function Overview(): React.ReactElement {
 
   const isLoading              = metrics.loading || trend.loading;
   const error                  = metrics.error ?? trend.error;
-  const isAccountSetupIncomplete = error?.includes('Account setup incomplete') ?? false;
+  const isApiNotConfigured = error?.includes('VITE_LAYERINFINITE_API_URL') ?? false;
+  const isAccountSetupIncomplete = (error?.includes('Account setup incomplete') ?? false)
+    && !isApiNotConfigured;
   const showEmptyState         = !isLoading && !error && !metrics.hasScores;
   const chartData              = useMemo(() => trend.data, [trend.data]);
 
@@ -81,6 +83,18 @@ export default function Overview(): React.ReactElement {
           Last updated {secondsSinceRefresh}s ago
         </button>
       </div>
+
+      {isApiNotConfigured && (
+        <div className="bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] p-4 rounded-xl mb-6">
+          <span>
+            ⚠ API not configured — set{' '}
+            <code className="font-mono text-xs bg-[#ff4444]/10 px-1 rounded">
+              VITE_LAYERINFINITE_API_URL
+            </code>{' '}
+            in your deployment environment and redeploy the dashboard.
+          </span>
+        </div>
+      )}
 
       {isAccountSetupIncomplete && (
         <div className="bg-[#ffaa00]/10 border border-[#ffaa00]/30 text-[#ffaa00] p-4 rounded-xl mb-6 flex items-center justify-between gap-3">

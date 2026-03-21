@@ -112,6 +112,64 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
             });
         }
     });
+
+    // Non-blocking: upsert live trust score so dashboard health card
+    // shows real data immediately (not 0 while waiting for backprop engine)
+    upsertLiveTrustScore(params.agentId, params.customerId).catch((err) =>
+        console.warn('[orchestrator] upsertLiveTrustScore failed:', (err as Error).message)
+    );
+}
+
+// ── Live Trust Score Upsert (fire-and-forget, creates row for new agents) ──
+async function upsertLiveTrustScore(
+    agentId: string,
+    customerId: string,
+): Promise<void> {
+    const { data: outcomes, error } = await supabase
+        .from('fact_outcomes')
+        .select('success')
+        .eq('agent_id', agentId)
+        .eq('is_synthetic', false)
+        .eq('is_deleted', false)
+        .order('timestamp', { ascending: false })
+        .limit(100);
+
+    if (error || !outcomes || outcomes.length === 0) return;
+
+    const total = outcomes.length;
+    const successes = outcomes.filter((o) => o.success).length;
+    const rawScore = successes / total;
+
+    const recent = outcomes.slice(0, 10);
+    const recentSuccesses = recent.filter((o) => o.success).length;
+    const recentWeight = recent.length > 0 ? recentSuccesses / recent.length : rawScore;
+    const weightedScore = Math.round(((rawScore * 0.6) + (recentWeight * 0.4)) * 10000) / 10000;
+
+    const consecutiveFailures = (() => {
+        let count = 0;
+        for (const o of outcomes) {
+            if (!o.success) count++;
+            else break;
+        }
+        return count;
+    })();
+
+    // Check >= 10 before >= 5 so 'suspended' is reachable
+    const trustStatus =
+        consecutiveFailures >= 10 ? 'suspended' :
+        consecutiveFailures >= 5  ? 'degraded'  :
+        weightedScore >= 0.7      ? 'trusted'   : 'probation';
+
+    await supabase
+        .from('agent_trust_scores')
+        .upsert({
+            agent_id: agentId,
+            trust_score: weightedScore,
+            trust_status: trustStatus,
+            consecutive_failures: consecutiveFailures,
+            total_decisions: total,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'agent_id' });
 }
 
 // ── Imported Helper Implementations ──

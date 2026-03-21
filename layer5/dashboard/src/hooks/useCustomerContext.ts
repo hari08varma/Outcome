@@ -24,7 +24,10 @@ let contextPromise: Promise<CustomerContextData> | null = null;
 
 async function tryBootstrapProfile(): Promise<void> {
   if (!API_BASE) {
-    return;
+    throw new Error(
+      'API not configured. Set VITE_LAYERINFINITE_API_URL in your ' +
+      'deployment environment and redeploy the dashboard.'
+    );
   }
 
   const {
