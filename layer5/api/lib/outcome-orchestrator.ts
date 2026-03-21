@@ -245,7 +245,7 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
                 old_status: oldStatus,
                 new_status: oldStatus,
                 reason: `Failure excluded: coordinated infrastructure failure detected on action "${actionName}". Trust score frozen.`,
-            }).catch(() => {});
+            });
             console.info('[trust] Failure excluded — coordinated infrastructure event', { agentId, actionName });
             return; // No trust modification
         }

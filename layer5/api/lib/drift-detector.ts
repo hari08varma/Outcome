@@ -113,7 +113,7 @@ export async function runDriftDetection(): Promise<DriftReport> {
     const driftDetected = meanSim < DRIFT_THRESHOLD;
 
     // Persist report
-    await supabase.from('embedding_drift_reports').insert({
+    const { error: reportErr } = await supabase.from('embedding_drift_reports').insert({
         mean_similarity: meanSim,
         min_similarity: minSim,
         sample_size: similarities.length,
@@ -121,9 +121,10 @@ export async function runDriftDetection(): Promise<DriftReport> {
         drift_threshold: DRIFT_THRESHOLD,
         embedding_model: embeddingModel,
         checked_at: checkedAt,
-    }).catch((err) => {
-        console.warn('[drift-detector] Failed to persist drift report:', err.message);
     });
+    if (reportErr) {
+        console.warn('[drift-detector] Failed to persist drift report:', reportErr.message);
+    }
 
     if (driftDetected) {
         console.warn(

@@ -110,7 +110,7 @@ restoreTrustSnapshotRouter.post('/', async (c) => {
         new_status: snapshot.trust_status,
         performed_by: body.restored_by,
         reason: `Trust restored from snapshot (incident: ${body.incident_id ?? 'latest pre_incident'}, snapshot_id: ${snapshot.id}). Operator: ${body.restored_by}.`,
-    }).catch(() => {});
+    });
 
     return c.json({
         restored: true,
