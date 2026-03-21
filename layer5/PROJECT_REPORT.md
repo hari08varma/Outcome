@@ -1,7 +1,7 @@
 # Layerinfinite — Project Report
 
 ### Outcome-Ranked Decision Intelligence Middleware
-**Version:** 3.1.0 | **Report Date:** March 16, 2026 | **Status:** Production-Ready (Live Hotfixes Applied)
+**Version:** 3.1.1 | **Report Date:** March 21, 2026 | **Status:** Production-Ready (Hardening Update Applied)
 
 ---
 
@@ -14,7 +14,7 @@ Layerinfinite is a 10-layer, append-only, outcome-ranked decision intelligence m
 | Metric | Value |
 |--------|-------|
 | Total Tests | **230 passing** (16 backend test suites) + **86 Python SDK** + **13 TS SDK simulate** |
-| SQL Migrations | **38 total files** (36 in `supabase/migrations` + 2 in `db/migrations`) |
+| SQL Migrations | **44 total files** (44 in `supabase/migrations` + 0 in `db/migrations`) |
 | Edge Functions | **6 / 6 deployed** to Supabase Edge |
 | API Endpoints | **15 routes** fully implemented (incl. POST /v1/simulate) |
 | Dashboard Pages | **8 pages** fully built |
@@ -1244,8 +1244,8 @@ AND tablename IN (
 | 034_add_backprop_columns.sql | ✅ | Reward-backprop linkage columns |
 | 035_add_backprop_columns.sql | ✅ | Backprop compatibility update |
 | 036_backfill_missing_profiles.sql | ✅ | Dynamic-name-column profile backfill with summary notices |
-| db/029_rehash_api_keys.sql | ⚠️ Not in primary deploy path | Legacy rehash script (`updated_at` dependency) |
-| db/030_rate_limit_store.sql | ✅ | Persistent `rate_limit_buckets` + RLS policy + index |
+| 037_rehash_api_keys.sql | ✅ | API key rehash migration for auth consistency |
+| 038_rate_limit_store.sql | ✅ | Persistent `rate_limit_buckets` + RLS policy + index |
 
 ### Edge Functions (Supabase)
 
@@ -1281,7 +1281,7 @@ AND tablename IN (
 | npm dependencies installed | ✅ (84 packages) |
 | Environment config | ✅ `dashboard/.env` with Supabase vars + API URL checks (`VITE_LAYERINFINITE_API_URL`) |
 
-### Recent Hotfix Timeline (Mar 15–16, 2026)
+### Recent Hotfix Timeline (Mar 15–21, 2026)
 
 | Commit | Area | Summary |
 |--------|------|---------|
@@ -1293,6 +1293,24 @@ AND tablename IN (
 | `5010147` | API keys UX | 3 production bug fixes for API keys behavior and auth handling. |
 | `cbd7798` | Provisioning flow | Repaired account provisioning path and PROFILE_MISSING handling. |
 | `ef6f1c9` | Auth migrations + UX | Trigger repair + backfill migration + friendly dashboard error UX. |
+| `551b1d9` | API keys contract fix | Updated dashboard create-key handler to honor `res.ok` and `api_key` payload contract. |
+| `b3b6be9` | API keys modal UX | Added save-once modal flow after key creation with copy action and refresh-on-close. |
+| `14e5b6d` | Production hardening | Stale localStorage key auto-clear + warning toast, duplicate-submit guard, prefix-copy fix, default-agent provisioning hardening, and migration-number collision cleanup (043/044/045). |
+
+### March 20–21, 2026 Hardening Update
+
+This production hardening pass focused on eliminating API key management UX regressions, removing silent provisioning inconsistencies, and restoring deterministic migration ordering for CI/CD deployment safety.
+
+| Area | Outcome |
+|------|---------|
+| API key creation UX | Success flow stabilized around `response.ok`; create errors no longer appear on successful 201 responses. |
+| Save-once key reveal | Dashboard now presents a dedicated modal with copy action and explicit one-time visibility warning. |
+| Double-submit protection | Added synchronous in-flight guard to block Enter/double-click races during key generation. |
+| Stale key handling | Deactivated keys stored in localStorage are cleared on 401/403 with warning toast, then fallback auth continues safely. |
+| Prefix copy behavior | “Copy Prefix” now copies the actual key hash prefix (not the human-readable key name). |
+| Provisioning consistency | Placeholder `default-agent` created during profile self-heal is now inactive by default. |
+| Migration ordering | Removed duplicate numeric prefixes by renaming migrations to `043_create_mv_refresh_schedule.sql`, `044-backfill-missing-profiles.sql`, and `045_remove_seed_data.sql` (SQL unchanged). |
+| Build/typecheck validation | Dashboard build and TypeScript checks pass after hardening changes. |
 
 ---
 
@@ -1302,8 +1320,8 @@ AND tablename IN (
 
 | Directory | Files | Total Lines (approx.) | Description |
 |-----------|-------|-----------------------|-------------|
-| `supabase/migrations/` | 36 | ~3,900 | SQL schema, indexes, policies, views, functions, cron, vector index, auth, scoring, latency, notification, backprop, verifier, and backfills |
-| `db/migrations/` | 2 | ~70 | Runtime DB patches (`rehash_api_keys`, `rate_limit_store`) |
+| `supabase/migrations/` | 44 | ~4,300 | SQL schema, indexes, policies, views, functions, cron, vector index, auth, scoring, latency, notification, backprop, verifier, and backfills |
+| `db/migrations/` | 0 | 0 | No active migration files in this directory (historical path retained). |
 | `supabase/seed/` | 1 | ~76 | Cold-start prior data |
 | `supabase/functions/` | 5 | ~1,700 | Deno Edge Functions (scoring, trend, cold-start, trust, pruning) |
 | `api/lib/` | 6 | ~1,000 | Core scoring, policy, context, Supabase client, IPS engine, sequence tracker |
@@ -1425,7 +1443,7 @@ See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md), [DEPLOY.md](DEPLOY.md), 
 
 Layerinfinite is **100% feature-complete** against the full implementation plan — all core layers, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
 
-The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. Migration inventory is now **38 SQL files** across `supabase/migrations` + `db/migrations`, with live deployment verified through the full auth/provisioning and sequence foundation stack. **6 Edge Functions** are deployed (including `notification-dispatcher`). The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
+The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. Migration inventory is now **44 SQL files** in `supabase/migrations`, with live deployment verified through the full auth/provisioning and sequence foundation stack. **6 Edge Functions** are deployed (including `notification-dispatcher`). The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
 
 **Key capabilities built:**
 - **6-layer decision intelligence** — structured memory → aggregation → scoring → temporal trends → adaptive policy → trust management
