@@ -4,7 +4,9 @@
  * Human-readable log, CSV export button, date range filter.
  */
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { AGENT_API_KEY_STORAGE_KEY } from '../hooks/useAgentApiKey';
 
 interface AuditRow {
     outcome_id: string;
@@ -20,11 +22,19 @@ interface AuditRow {
 }
 
 export default function AuditTrail() {
+    const navigate = useNavigate();
     const [rows, setRows] = useState<AuditRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+
+    let hasStoredApiKey = false;
+    try {
+        hasStoredApiKey = Boolean(localStorage.getItem(AGENT_API_KEY_STORAGE_KEY));
+    } catch {
+        hasStoredApiKey = false;
+    }
 
     useEffect(() => { fetchAudit(); }, [startDate, endDate]);
 
@@ -111,6 +121,39 @@ export default function AuditTrail() {
                     </button>
                 </div>
             </div>
+
+            {!hasStoredApiKey && (
+                <div style={{
+                    marginBottom: '1rem',
+                    color: '#854d0e',
+                    background: 'rgba(245,158,11,0.12)',
+                    border: '1px solid rgba(245,158,11,0.3)',
+                    borderRadius: '10px',
+                    padding: '0.9rem 1rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '1rem',
+                    flexWrap: 'wrap',
+                }}>
+                    <span>To view your audit trail, go to Settings {'->'} API Keys and create an API key first. Your key is used to authenticate the audit export.</span>
+                    <button
+                        onClick={() => navigate('/dashboard/settings/api-keys')}
+                        style={{
+                            padding: '0.35rem 0.8rem',
+                            borderRadius: '6px',
+                            border: '1px solid #b45309',
+                            background: '#f59e0b',
+                            color: '#111827',
+                            cursor: 'pointer',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                        }}
+                    >
+                        Go to API Keys
+                    </button>
+                </div>
+            )}
 
             {loading ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>

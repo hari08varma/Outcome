@@ -4,8 +4,7 @@ import { Link } from 'react-router-dom';
 import { API_BASE } from '../../../lib/config';
 import { useToastContext } from '../../../components/Toast';
 import { supabase } from '../../../supabaseClient';
-
-const API_KEY_STORAGE_KEY = 'layerinfinite_api_key';
+import { AGENT_API_KEY_STORAGE_KEY } from '../../../hooks/useAgentApiKey';
 
 interface ApiKeyItem {
   key_id: string;
@@ -32,14 +31,14 @@ function getStoredApiKey(): string | null {
   if (typeof window === 'undefined') {
     return null;
   }
-  return localStorage.getItem(API_KEY_STORAGE_KEY);
+  return localStorage.getItem(AGENT_API_KEY_STORAGE_KEY);
 }
 
 function saveApiKey(value: string): void {
   if (typeof window === 'undefined') {
     return;
   }
-  localStorage.setItem(API_KEY_STORAGE_KEY, value);
+  localStorage.setItem(AGENT_API_KEY_STORAGE_KEY, value);
 }
 
 async function getFallbackJwt(): Promise<string | null> {
@@ -67,7 +66,7 @@ async function requestApiKeys(path: string, init: RequestInit, onStaleKey?: () =
     }
 
     if (typeof window !== 'undefined') {
-      localStorage.removeItem(API_KEY_STORAGE_KEY);
+      localStorage.removeItem(AGENT_API_KEY_STORAGE_KEY);
     }
     onStaleKey?.();
   }
@@ -179,7 +178,6 @@ export default function ApiKeysSettings(): React.ReactElement {
         return;
       }
 
-      saveApiKey(fullKey);
       setRevealedKey(fullKey);
       setRevealedWarning(payload.warning ?? null);
       setCopiedKey(false);
@@ -207,6 +205,11 @@ export default function ApiKeysSettings(): React.ReactElement {
     }
 
     await navigator.clipboard.writeText(revealedKey);
+    try {
+      saveApiKey(revealedKey);
+    } catch {
+      // Private browsing — silently skip
+    }
     setCopiedKey(true);
     showToast('API key copied to clipboard.', 'success', 3000);
   };
@@ -449,7 +452,16 @@ export default function ApiKeysSettings(): React.ReactElement {
               </button>
             </div>
             <button
-              onClick={closeCreateFlow}
+              onClick={() => {
+                if (revealedKey) {
+                  try {
+                    saveApiKey(revealedKey);
+                  } catch {
+                    // Private browsing — silently skip
+                  }
+                }
+                closeCreateFlow();
+              }}
               className="mt-5 w-full rounded-lg border border-[#1a1a24] bg-[#00cc66] px-4 py-2 text-sm font-semibold text-black hover:bg-[#00b55a]"
             >
               I've copied my key
