@@ -76,7 +76,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
                     episodeId: params.episodeId,
                     finalOutcome: finalScore,
                 });
-                
+
                 await backpropagateReward({
                     episode_id: params.episodeId,
                     final_outcome: finalScore,
@@ -172,7 +172,6 @@ async function upsertLiveTrustScore(
         }, { onConflict: 'agent_id' });
 }
 
-// ── Imported Helper Implementations ──
 // ── Trust Snapshot (fire-and-forget) ──────────────────────────
 async function snapshotTrust(
     agentId: string,
@@ -190,7 +189,12 @@ async function snapshotTrust(
     });
 }
 
-async function updateAgentTrust(agentId: string, customerId: string, success: boolean, actionName?: string): Promise<void> {
+async function updateAgentTrust(
+    agentId: string,
+    customerId: string,
+    success: boolean,
+    actionName?: string,
+): Promise<void> {
     const { data: trust } = await supabase
         .from('agent_trust_scores')
         .select('trust_id, trust_score, total_decisions, correct_decisions, consecutive_failures, trust_status')
@@ -199,14 +203,18 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
 
     if (!trust) return;
 
-    const currentScore = typeof trust.trust_score === 'number' ? trust.trust_score : 0.7;
-    const currentTotalDecisions = typeof trust.total_decisions === 'number' ? trust.total_decisions : 0;
-    const currentCorrectDecisions = typeof trust.correct_decisions === 'number' ? trust.correct_decisions : 0;
-    const currentConsecutiveFailures = typeof trust.consecutive_failures === 'number' ? trust.consecutive_failures : 0;
-    const currentStatus = typeof trust.trust_status === 'string' ? trust.trust_status : 'trusted';
+    const currentScore            = typeof trust.trust_score          === 'number' ? trust.trust_score          : 0.7;
+    const currentTotalDecisions   = typeof trust.total_decisions       === 'number' ? trust.total_decisions       : 0;
+    const currentCorrectDecisions = typeof trust.correct_decisions     === 'number' ? trust.correct_decisions     : 0;
+    const currentFailures         = typeof trust.consecutive_failures  === 'number' ? trust.consecutive_failures  : 0;
+    const currentStatus           = typeof trust.trust_status          === 'string'  ? trust.trust_status          : 'trusted';
 
-    const oldScore = currentScore;
+    // Always capture old values before any mutation.
+    // These are written to every audit row so the dashboard can show
+    // the score delta for each event in the Trust History timeline.
+    const oldScore  = currentScore;
     const oldStatus = currentStatus;
+
     let newScore: number;
     let newFailures: number;
     let newCorrect = currentCorrectDecisions;
@@ -217,9 +225,9 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         newScore = Math.min(currentScore * 1.03, 1.0);
     } else {
         // ── Coordinated Failure Interlock ──────────────────────
-        // Check if this failure is infrastructure-attributed before applying decay.
-        // detect_coordinated_failures() looks for 3+ agents failing the same action
-        // within the last 5 minutes — indicating a shared infrastructure issue.
+        // Check if this failure is infrastructure-attributed before
+        // applying decay. detect_coordinated_failures() looks for 3+
+        // agents failing the same action within the last 5 minutes.
         let isInfrastructureFailure = false;
         if (actionName) {
             try {
@@ -227,9 +235,7 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
                     window_minutes: 5,
                     min_agent_count: 3,
                 });
-                if (coordError) {
-                    throw new Error(coordError.message);
-                }
+                if (coordError) throw new Error(coordError.message);
                 if (coordFailures && Array.isArray(coordFailures)) {
                     isInfrastructureFailure = coordFailures.some(
                         (row: { action_name: string }) => row.action_name === actionName
@@ -242,17 +248,16 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         }
 
         if (isInfrastructureFailure) {
-            // Snapshot current trust BEFORE freezing — allows restore after incident resolves
             snapshotTrust(agentId, trust, 'pre_incident', `coordinated:${actionName ?? 'unknown'}`).catch(() => {});
-            // Log the excluded failure for audit; no score modification
+
             const { error: auditError } = await supabase.from('agent_trust_audit').insert({
                 agent_id: agentId,
                 customer_id: customerId,
                 event_type: 'failure_excluded_infrastructure',
                 old_score: oldScore,
-                new_score: oldScore,
+                new_score: oldScore,        // score unchanged — frozen
                 old_status: oldStatus,
-                new_status: oldStatus,
+                new_status: oldStatus,      // status unchanged — frozen
                 reason: `Failure excluded: coordinated infrastructure failure detected on action "${actionName}". Trust score frozen.`,
             });
             if (auditError) {
@@ -264,12 +269,12 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
 
         // Normal agent-attributable failure: snapshot then decay
         snapshotTrust(agentId, trust, 'pre_failure').catch(() => {});
-        newFailures = currentConsecutiveFailures + 1;
-        newScore = currentScore * Math.pow(0.9, newFailures);
+        newFailures = currentFailures + 1;
+        newScore    = currentScore * Math.pow(0.9, newFailures);
     }
 
     let newStatus: string;
-    let newSuspensionReason = null;
+    let newSuspensionReason: string | null = null;
 
     if (newScore < 0.1 || newFailures >= 10) {
         newStatus = 'suspended';
@@ -296,34 +301,70 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         })
         .eq('agent_id', agentId);
 
-    if (oldStatus !== newStatus) {
-        const { error: auditError } = await supabase.from('agent_trust_audit').insert({
-            agent_id: agentId,
-            customer_id: customerId,
-            event_type: newStatus === 'suspended' ? 'suspended' : 'recalibrated',
-            old_score: oldScore,
-            new_score: newScore,
-            old_status: oldStatus,
-            new_status: newStatus,
-            reason: newStatus === 'suspended' || newStatus === 'sandbox'
-                ? `Trust recalibrated: ${oldStatus} → ${newStatus}. Score: ${newScore.toFixed(3)}, Failures: ${newFailures}`
-                : `Trust recalibrated: ${oldStatus} → ${newStatus}`,
-        });
-        if (auditError) {
-            throw new Error(`[trust] failed to write audit transition: ${auditError.message}`);
-        }
+    // ── FIX: write audit row for EVERY outcome ─────────────────
+    // BEFORE: audit was only written when oldStatus !== newStatus.
+    // This meant the Trust History timeline was almost always empty —
+    // only showing 1 row per status transition, not one per outcome.
+    //
+    // AFTER: every outcome writes one audit row. Status-change rows
+    // get an additional descriptive note in the reason field.
+    //
+    // Reason format is intentional — agent.tsx parseActionFromReason()
+    // relies on exactly these two patterns to extract the action name:
+    //   "Outcome success via SDK: {actionName}"
+    //   "Outcome failure recorded: {actionName}"
+    // Status-change events append a transition note that
+    // parseStatusLabel() in agent.tsx picks up separately.
+
+    const action  = actionName?.trim() || 'unknown_action';
+    const statusChanged = oldStatus !== newStatus;
+
+    // Base reason — always parseable by the dashboard
+    const baseReason = success
+        ? `Outcome success via SDK: ${action}`
+        : `Outcome failure recorded: ${action}`;
+
+    // Append status transition note when status changed so the
+    // dashboard subLabel shows the transition clearly
+    const reason = statusChanged
+        ? `${baseReason} | Trust recalibrated: ${oldStatus} → ${newStatus}`
+        : baseReason;
+
+    const { error: auditError } = await supabase.from('agent_trust_audit').insert({
+        agent_id:    agentId,
+        customer_id: customerId,
+        // event_type drives the ✓ / ✕ icon in the Trust History timeline
+        event_type:  success ? 'success' : 'failure',
+        old_score:   oldScore,    // always populated now
+        new_score:   newScore,
+        old_status:  oldStatus,   // always populated now
+        new_status:  newStatus,
+        performed_by: 'outcome-orchestrator',
+        reason,
+    });
+
+    if (auditError) {
+        throw new Error(`[trust] failed to write audit row: ${auditError.message}`);
     }
 }
 
+// ── FIX: detectContextDrift — scope by customer_id ────────────
+// BEFORE: context lookup used only issue_type with no customer_id filter.
+// This meant Customer A's contexts were matched against Customer B's
+// outcomes, causing false "context drift" alerts across customers.
+//
+// AFTER: every query is scoped by customer_id. Each customer only
+// sees their own contexts and their own outcomes.
 async function detectContextDrift(
     sb: SupabaseClient,
     customerId: string,
     contextType: string,
-    agentId: string
+    agentId: string,
 ): Promise<void> {
     const { data: existingContext } = await sb
         .from('dim_contexts')
         .select('context_id')
+        .eq('customer_id', customerId)       // FIX: was missing — caused cross-customer matches
         .eq('issue_type', contextType)
         .limit(1)
         .maybeSingle();
