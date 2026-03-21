@@ -2,8 +2,23 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../../lib/config';
-import { createAgentFetch } from '../../../lib/api';
-import { useAgentApiKey } from '../../../hooks/useAgentApiKey';
+import { supabase } from '../../../supabaseClient';
+
+const AGENT_KEY_STORAGE = 'layerinfinite_api_key';
+
+async function auditFetch(params: string): Promise<Response> {
+  const agentKey = localStorage.getItem(AGENT_KEY_STORAGE);
+  if (agentKey) {
+    return fetch(`${API_BASE}/v1/audit?${params}`, {
+      headers: { 'X-API-Key': agentKey, 'Content-Type': 'application/json' },
+    });
+  }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Session expired — please sign in again.');
+  return fetch(`${API_BASE}/v1/audit?${params}`, {
+    headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+  });
+}
 
 interface AuditOutcome {
   outcome_id: string;
@@ -22,13 +37,23 @@ interface AuditResponse {
   pagination: { total_rows: number; has_more: boolean; next_cursor: string | null };
 }
 
+function safeFormat(ts: string): string {
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '—';
+    return format(d, 'MMM dd HH:mm:ss');
+  } catch {
+    return '—';
+  }
+}
+
 export default function AuditPage(): React.ReactElement {
   const navigate = useNavigate();
-  const { apiKey, isValid, handleAuthFailure } = useAgentApiKey();
 
   const [outcomes, setOutcomes] = useState<AuditOutcome[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsApiKey, setNeedsApiKey] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [appliedFrom, setAppliedFrom] = useState('');
@@ -37,24 +62,29 @@ export default function AuditPage(): React.ReactElement {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   const fetchAudit = useCallback(async (reset: boolean, cursor: string | null = null): Promise<void> => {
-    if (!isValid || !apiKey || !API_BASE) return;
+    if (!API_BASE) return;
 
     setLoading(true);
     if (reset) setError(null);
 
     try {
-      const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
       const params = new URLSearchParams();
       if (appliedFrom) params.set('from', appliedFrom);
       if (appliedTo) params.set('to', appliedTo);
       if (cursor) params.set('cursor', cursor);
 
-      const res = await agentFetch(`${API_BASE}/v1/audit?${params.toString()}`);
+      const res = await auditFetch(params.toString());
+      if (res.status === 401 || res.status === 403) {
+        setNeedsApiKey(true);
+        setLoading(false);
+        return;
+      }
       if (!res.ok) {
         const body = await res.json() as { error?: string };
         throw new Error(body.error ?? `Request failed: ${res.status}`);
       }
 
+      setNeedsApiKey(false);
       const data = await res.json() as AuditResponse;
       setOutcomes((prev) => reset ? data.outcomes : [...prev, ...data.outcomes]);
       setHasMore(data.pagination.has_more);
@@ -64,13 +94,11 @@ export default function AuditPage(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, [isValid, apiKey, handleAuthFailure, appliedFrom, appliedTo]);
+  }, [appliedFrom, appliedTo]);
 
   useEffect(() => {
-    if (isValid) {
-      void fetchAudit(true);
-    }
-  }, [fetchAudit, isValid]);
+    void fetchAudit(true);
+  }, [fetchAudit]);
 
   const applyFilter = (): void => {
     setAppliedFrom(from);
@@ -78,13 +106,16 @@ export default function AuditPage(): React.ReactElement {
   };
 
   const exportCSV = async (): Promise<void> => {
-    if (!isValid || !apiKey || !API_BASE) return;
+    if (!API_BASE) return;
     try {
-      const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
       const params = new URLSearchParams({ format: 'csv' });
       if (appliedFrom) params.set('from', appliedFrom);
       if (appliedTo) params.set('to', appliedTo);
-      const res = await agentFetch(`${API_BASE}/v1/audit?${params.toString()}`);
+      const res = await auditFetch(params.toString());
+      if (!res.ok) {
+        const body = await res.json() as { error?: string };
+        throw new Error(body.error ?? `Export failed: ${res.status}`);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -105,19 +136,16 @@ export default function AuditPage(): React.ReactElement {
           <h2 className="text-2xl font-bold">Audit Trail</h2>
           <p className="text-sm text-[#a1a1aa] mt-1">Every outcome logged by your agents, in order.</p>
         </div>
-        {isValid && (
           <button
             onClick={() => void exportCSV()}
             className="bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg text-sm"
           >
             Export CSV
           </button>
-        )}
       </div>
 
       {/* Date filter */}
-      {isValid && (
-        <div className="flex flex-wrap items-center gap-3 mb-6">
+      <div className="flex flex-wrap items-center gap-3 mb-6">
           <label className="text-xs text-[#a1a1aa] flex items-center gap-2">
             From
             <input
@@ -142,15 +170,13 @@ export default function AuditPage(): React.ReactElement {
           >
             Apply
           </button>
-        </div>
-      )}
+      </div>
 
-      {/* No API key banner */}
-      {!isValid && (
-        <div className="bg-[#ffaa00]/10 border border-[#ffaa00]/30 text-[#ffaa00] rounded-xl px-4 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Needs API key banner (shown only on 401/403) */}
+      {needsApiKey && (
+        <div className="bg-[#ffaa00]/10 border border-[#ffaa00]/30 text-[#ffaa00] rounded-xl px-4 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <span className="text-sm">
-            To view your audit trail, go to Settings → API Keys and create an API key first.
-            The API key authenticates your audit data.
+            Your API key is needed to view the audit trail. Create one in Settings → API Keys.
           </span>
           <button
             onClick={() => navigate('/dashboard/settings/api-keys')}
@@ -162,7 +188,7 @@ export default function AuditPage(): React.ReactElement {
       )}
 
       {/* Error banner */}
-      {isValid && error && (
+      {error && (
         <div className="mb-4 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl px-4 py-3 text-sm flex items-center justify-between gap-3">
           <span>{error}</span>
           <button
@@ -175,8 +201,7 @@ export default function AuditPage(): React.ReactElement {
       )}
 
       {/* Table / states */}
-      {isValid && (
-        <section className="bg-[#111118] border border-[#1a1a24] rounded-xl overflow-hidden">
+      <section className="bg-[#111118] border border-[#1a1a24] rounded-xl overflow-hidden">
           {loading && outcomes.length === 0 ? (
             <div className="p-5 space-y-3">
               {[0, 1, 2].map((i) => (
@@ -209,7 +234,7 @@ export default function AuditPage(): React.ReactElement {
                   {outcomes.map((o) => (
                     <tr key={o.outcome_id} className="border-b border-[#1a1a24]/70 hover:bg-[#1a1a24] transition-colors">
                       <td className="px-4 py-3 text-[#a1a1aa] whitespace-nowrap font-mono text-xs">
-                        {format(new Date(o.timestamp), 'MMM dd HH:mm:ss')}
+                        {safeFormat(o.timestamp)}
                       </td>
                       <td className="px-4 py-3 text-white">{o.agent.name}</td>
                       <td className="px-4 py-3 text-[#a1a1aa]">{o.action.name}</td>
@@ -250,8 +275,7 @@ export default function AuditPage(): React.ReactElement {
               </button>
             </div>
           )}
-        </section>
-      )}
+      </section>
     </div>
   );
 }
