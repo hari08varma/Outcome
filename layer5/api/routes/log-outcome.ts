@@ -28,7 +28,19 @@ const LogOutcomeBody = z.object({
     raw_context: z.record(z.string(), z.unknown()).optional(),
     environment: z.enum(['production', 'staging', 'development']).optional().default('production'),
     customer_tier: z.enum(['free', 'pro', 'enterprise']).optional(),
-    outcome_score: z.number().min(0.0).max(1.0).optional(),
+
+    // ── FIX 1: outcome_score is REQUIRED (was .optional()) ──────
+    // Removing .optional() ensures null is never stored in fact_outcomes.
+    // The materialized view mv_action_scores aggregates weighted_success_rate
+    // from this column — null rows produce rows=0 and break the entire
+    // scoring engine. Callers MUST supply a value between 0.0 and 1.0.
+    // If the verifier overrides it, that override takes precedence at
+    // runtime via verification.confidence_override — but a baseline
+    // outcome_score must always be present in the request.
+    outcome_score: z.number().min(0.0).max(1.0, {
+        message: 'outcome_score must be between 0.0 and 1.0',
+    }),
+
     business_outcome: z.enum(['resolved', 'partial', 'failed', 'unknown']).optional(),
     feedback_signal: z.enum(['immediate', 'delayed', 'none']).optional(),
     decision_id: z.string().uuid().optional(),
@@ -102,7 +114,7 @@ function computeSalience(
     return 1.0;
 }
 
-// ── LOGICAL CONCERNS (Extracted to resolve Bug 1) ─────────────
+// ── LOGICAL CONCERNS ─────────────────────────────────────────
 
 async function parseAndSanitizeRequest(c: Context) {
     let body: z.infer<typeof LogOutcomeBody>;
@@ -110,7 +122,11 @@ async function parseAndSanitizeRequest(c: Context) {
         const raw = c.get('parsed_body') ?? await c.req.json();
         body = LogOutcomeBody.parse(raw);
     } catch (err: any) {
-        throw new Error(`VALIDATION_ERROR:${err.errors ?? err.message}`);
+        // Surface field-level zod errors so callers know exactly what's missing
+        const details = err.errors
+            ? err.errors.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ')
+            : err.message;
+        throw new Error(`VALIDATION_ERROR:${details}`);
     }
 
     if (body.raw_context) body.raw_context = sanitizeContext(body.raw_context);
@@ -170,7 +186,7 @@ async function verifyOutcome(body: any, customerId: string, agentId: string) {
 async function resolveActionId(c: Context, body: any, customerId: string) {
     const validatedAction = c.get('validated_action') as any;
     if (validatedAction) return validatedAction.action_id;
-    
+
     // Fallback: validate directly
     const { validateAction } = await import('../middleware/validate-action.js');
     const result = await validateAction(body.action_name, customerId, body.action_params);
@@ -178,19 +194,32 @@ async function resolveActionId(c: Context, body: any, customerId: string) {
     return result.action_id!;
 }
 
-async function resolveContextId(body: any) {
+// ── FIX 2: resolveContextId now accepts and uses customerId ────
+// BEFORE: context was looked up only by (issue_type, environment).
+// This caused ALL customers with the same issue_type to share one
+// context_id row, meaning Customer A's outcome scores bled into
+// Customer B's recommendations — a complete multi-tenancy failure.
+//
+// AFTER: every SELECT and INSERT is scoped by customer_id.
+// Each customer gets their own context row per (issue_type, environment).
+// This means dim_contexts grows by (unique customers × unique issue_types)
+// which is expected and correct — the composite unique index on
+// (customer_id, issue_type, environment) prevents duplicates.
+async function resolveContextId(body: any, customerId: string): Promise<string> {
     const { data: existingCtx } = await supabase
         .from('dim_contexts')
         .select('context_id')
+        .eq('customer_id', customerId)       // ← FIX: scope by customer
         .eq('issue_type', body.issue_type)
         .eq('environment', body.environment)
         .maybeSingle();
 
-    if (existingCtx && existingCtx.context_id) return existingCtx.context_id;
+    if (existingCtx?.context_id) return existingCtx.context_id;
 
     const { data: newCtx, error: ctxErr } = await supabase
         .from('dim_contexts')
         .insert({
+            customer_id: customerId,           // ← FIX: always store customer
             issue_type: body.issue_type,
             environment: body.environment,
             customer_tier: body.customer_tier ?? null,
@@ -198,13 +227,15 @@ async function resolveContextId(body: any) {
         .select('context_id')
         .single();
 
-    if (ctxErr || !newCtx || !newCtx.context_id) throw new Error(`CONTEXT_ERROR:${ctxErr?.message || 'Missing context_id'}`);
+    if (ctxErr || !newCtx?.context_id) {
+        throw new Error(`CONTEXT_ERROR:${ctxErr?.message || 'Missing context_id'}`);
+    }
     return newCtx.context_id;
 }
 
 async function insertCoreOutcome(
     agentId: string, customerId: string, actionId: string, contextId: string,
-    body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any
+    body: any, finalSuccess: boolean, finalOutcomeScore: number, verification: any
 ) {
     // RULE: backprop_episode_id is INTERNAL — set by the backprop engine only.
     // NEVER map body.episode_id to this column. body.episode_id is the SDK's
@@ -226,7 +257,7 @@ async function insertCoreOutcome(
             raw_context: body.raw_context ?? {},
             is_synthetic: false,
             salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
-            outcome_score: finalOutcomeScore,
+            outcome_score: finalOutcomeScore,     // guaranteed non-null — schema enforces it
             business_outcome: body.business_outcome ?? null,
             feedback_signal: body.feedback_signal ?? 'immediate',
             verifier_source: body.verifier_signal?.source ?? null,
@@ -258,7 +289,7 @@ async function saveIdempotencyRecord(idempotencyKey: string | undefined, outcome
 
 async function resolveDecisionId(body: any, agentId: string, actionId: string, outcomeId: string) {
     if (!body.decision_id) return null;
-    
+
     try {
         const { data: decision, error: decErr } = await supabase
             .from('fact_decisions')
@@ -269,11 +300,11 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
         if (decErr || !decision) {
             console.warn('[log-outcome] decision_id not found:', body.decision_id);
             return null;
-        } 
+        }
         if (decision.agent_id && decision.agent_id !== agentId) {
             throw new Error('DECISION_AGENT_MISMATCH');
         }
-        
+
         await supabase
             .from('fact_decisions')
             .update({
@@ -283,7 +314,7 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
                 resolved_at: new Date().toISOString(),
             })
             .eq('id', body.decision_id);
-        
+
         return decision;
     } catch (err: any) {
         if (err.message === 'DECISION_AGENT_MISMATCH') throw err;
@@ -341,20 +372,22 @@ logOutcomeRouter.post('/', async (c) => {
         // 3. Verification Layer
         const verification = await verifyOutcome(body, customerId, agentId);
         const finalSuccess = verification.verified_success;
-        const finalOutcomeScore = verification.confidence_override ?? body.outcome_score ?? null;
+        // outcome_score is now required — confidence_override can still override it,
+        // but body.outcome_score is guaranteed non-null by the schema.
+        const finalOutcomeScore = verification.confidence_override ?? body.outcome_score;
 
         // 4. Resolve References
         const actionId = await resolveActionId(c, body, customerId);
-        const contextId = await resolveContextId(body);
-        
+        const contextId = await resolveContextId(body, customerId); // ← FIX: pass customerId
+
         // 5. Insert Core Fact
         const outcome = await insertCoreOutcome(agentId, customerId, actionId, contextId, body, finalSuccess, finalOutcomeScore, verification);
-        
+
         // 6. Post-Insert Synchronous Updates
         await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id);
         invalidateCache(customerId, contextId);
         const decisionRecord = await resolveDecisionId(body, agentId, actionId, outcome.outcome_id);
-        
+
         // 7. Fire-and-forget Asynchronous Pipelines via Orchestrator
         orchestrateOutcome({
             agentId, customerId, outcomeId: outcome.outcome_id, actionId, actionName: body.action_name,
