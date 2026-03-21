@@ -25,7 +25,16 @@ export const actionsRouter = new Hono();
 // ── Register action schema ────────────────────────────────────
 const RegisterActionBody = z.object({
     action_name: z.string().min(1).max(255),
-    action_category: z.enum(['recovery', 'escalation', 'automation', 'custom']).default('custom'),
+    // Any string is accepted. Value is normalized to lowercase.
+    // 'custom' is the default for callers that omit the field.
+    // Field is a display label — scoring.ts passes it through as-is,
+    // no branching or scoring weight applied.
+    action_category: z
+        .string()
+        .max(100)
+        .optional()
+        .default('custom')
+        .transform(val => val.trim().toLowerCase()),
     action_description: z.string().max(1000).optional(),
     required_params: z.array(z.string()).optional().default([]),
     validation_mode: z.string().optional().default('none'),

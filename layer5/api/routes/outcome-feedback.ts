@@ -21,7 +21,20 @@ export const outcomeFeedbackRouter = new Hono();
 const FeedbackBody = z.object({
     outcome_id: z.string().uuid(),
     final_score: z.number().min(0.0).max(1.0),
-    business_outcome: z.enum(['resolved', 'partial', 'failed', 'unknown']),
+    // Any string is accepted. Values are normalized to the four canonical
+    // labels at the application layer. Unknown values map to 'unknown'.
+    // Field is metadata-only — never read by scoring, trust, or policy.
+    business_outcome: z
+        .string()
+        .min(1)
+        .max(100)
+        .transform(val => {
+            const normalized = val.trim().toLowerCase();
+            const known = ['resolved', 'partial', 'failed', 'unknown'] as const;
+            return (known as readonly string[]).includes(normalized)
+                ? (normalized as typeof known[number])
+                : 'unknown';
+        }),
     feedback_notes: z.string().max(2000).optional(),
 });
 

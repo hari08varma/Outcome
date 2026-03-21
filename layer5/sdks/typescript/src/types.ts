@@ -31,10 +31,22 @@ export interface LogOutcomeRequest {
     success: boolean;
     /** Must be between 0.0 and 1.0 */
     outcome_score: number;
-    business_outcome: 'resolved' | 'failed' | 'pending';
+    /**
+     * Outcome label for reporting. API accepts any string and normalizes:
+     * - 'resolved' | 'partial' | 'failed' | 'unknown' → stored as-is
+     * - any other value (e.g. 'unresolved', 'escalated') → stored as 'unknown'
+     * @example 'resolved' | 'partial' | 'failed' | 'unknown'
+     */
+    business_outcome?: string;
     episode_id?: string;
     response_ms?: number;
-    feedback_signal?: 'immediate' | 'delayed' | 'none';
+    /**
+     * When feedback was received. API accepts any string and normalizes:
+     * - 'immediate' | 'delayed' | 'none' → stored as-is
+     * - any other value (e.g. 'async', 'webhook') → stored as 'none'
+     * @example 'immediate' | 'delayed' | 'none'
+     */
+    feedback_signal?: string;
 }
 
 export interface LogOutcomeResponse {

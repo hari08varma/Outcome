@@ -39,10 +39,15 @@ class LogOutcomeRequest(BaseModel):
     issue_type: str
     success: bool
     outcome_score: float = Field(ge=0.0, le=1.0)
-    business_outcome: Literal["resolved", "failed", "pending"]
+    # API accepts any string; normalizes to: resolved | partial | failed | unknown
+    # NOTE: "pending" (previous SDK value) is not canonical — maps to "unknown".
+    # Use "partial" for partial outcomes.
+    business_outcome: str | None = None
     episode_id: str | None = None
     response_ms: int | None = None
-    feedback_signal: Literal["immediate", "delayed", "none"] = "immediate"
+    # API accepts any string; known values: immediate | delayed | none
+    # Unknown values normalize to "none" (no clear feedback signal).
+    feedback_signal: str = "immediate"
 
 
 class LogOutcomeResponse(BaseModel):

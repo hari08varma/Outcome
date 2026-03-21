@@ -26,7 +26,32 @@ const LogOutcomeBody = z.object({
     error_code: z.string().max(100).optional(),
     error_message: z.string().max(1000).optional(),
     raw_context: z.record(z.string(), z.unknown()).optional(),
-    environment: z.enum(['production', 'staging', 'development']).optional().default('production'),
+    // Any string is accepted. Common abbreviations are normalized.
+    // Unknown values default to 'production'. Field is metadata-only —
+    // not referenced by any conditional branch in scoring or policy.
+    environment: z
+        .string()
+        .max(50)
+        .optional()
+        .default('production')
+        .transform(val => {
+            const normalized = val.trim().toLowerCase();
+            const aliases: Record<string, string> = {
+                'prod':    'production',
+                'dev':     'development',
+                'develop': 'development',
+                'stage':   'staging',
+                'stg':     'staging',
+                'qa':      'staging',
+                'test':    'staging',
+                'uat':     'staging',
+            };
+            if (aliases[normalized]) return aliases[normalized] as 'production' | 'staging' | 'development';
+            const known = ['production', 'staging', 'development'] as const;
+            return (known as readonly string[]).includes(normalized)
+                ? (normalized as typeof known[number])
+                : 'production';
+        }),
     customer_tier: z.enum(['free', 'pro', 'enterprise']).optional(),
 
     // ── FIX 1: outcome_score is REQUIRED (was .optional()) ──────
@@ -41,8 +66,33 @@ const LogOutcomeBody = z.object({
         message: 'outcome_score must be between 0.0 and 1.0',
     }),
 
-    business_outcome: z.enum(['resolved', 'partial', 'failed', 'unknown']).optional(),
-    feedback_signal: z.enum(['immediate', 'delayed', 'none']).optional(),
+    business_outcome: z
+        .string()
+        .max(100)
+        .optional()
+        .transform(val => {
+            if (val === undefined || val === null) return undefined;
+            const normalized = val.trim().toLowerCase();
+            const known = ['resolved', 'partial', 'failed', 'unknown'] as const;
+            return (known as readonly string[]).includes(normalized)
+                ? (normalized as typeof known[number])
+                : 'unknown';
+        }),
+    // Any string is accepted. Known values are normalized to lowercase.
+    // Unknown values map to 'none' (neutral — no clear feedback signal).
+    // Field is metadata-only — never read by scoring, trust, or policy.
+    feedback_signal: z
+        .string()
+        .max(50)
+        .optional()
+        .transform(val => {
+            if (val === undefined || val === null) return 'immediate';
+            const normalized = val.trim().toLowerCase();
+            const known = ['immediate', 'delayed', 'none'] as const;
+            return (known as readonly string[]).includes(normalized)
+                ? (normalized as typeof known[number])
+                : 'none';
+        }),
     decision_id: z.string().uuid().optional(),
     episode_id: z.string().uuid().optional(),
     episode_history: z.array(z.string()).optional(),
