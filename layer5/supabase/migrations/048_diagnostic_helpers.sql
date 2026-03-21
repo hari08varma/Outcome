@@ -35,7 +35,7 @@ AS $$
     (SELECT COUNT(*) FROM mv_action_scores)           AS mv_action_scores_rows,
     (SELECT COUNT(*) FROM dim_actions WHERE is_active = TRUE) AS registered_actions,
     (SELECT COUNT(*) FROM dim_agents  WHERE is_active = TRUE) AS active_agents,
-    MAX(recorded_at)                                  AS last_outcome_at
+    MAX(timestamp)                                    AS last_outcome_at
   FROM fact_outcomes;
 $$;
 
