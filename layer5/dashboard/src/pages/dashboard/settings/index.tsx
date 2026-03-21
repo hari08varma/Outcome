@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Key, Zap } from 'lucide-react';
+import { Bot, ClipboardList, Key, Zap } from 'lucide-react';
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
 
 interface SettingsNavItem {
@@ -12,6 +12,7 @@ const ITEMS: SettingsNavItem[] = [
   { label: 'API Keys', path: '/dashboard/settings/api-keys', icon: <Key size={16} /> },
   { label: 'Agents', path: '/dashboard/settings/agents', icon: <Bot size={16} /> },
   { label: 'Actions', path: '/dashboard/settings/actions', icon: <Zap size={16} /> },
+  { label: 'Audit Trail', path: '/dashboard/settings/audit', icon: <ClipboardList size={16} /> },
 ];
 
 function isActive(pathname: string, target: string): boolean {

@@ -9,7 +9,7 @@ import SignupPage from './pages/auth/signup';
 import LogoutPage from './pages/auth/logout';
 import PrivacyPolicy from './pages/privacy';
 import TermsOfService from './pages/terms';
-import AuditTrail from './pages/audit';
+import AuditPage from './pages/dashboard/settings/audit';
 import Overview from './pages/dashboard/overview';
 import Agent from './pages/dashboard/agent';
 import Actions from './pages/dashboard/actions';
@@ -78,8 +78,8 @@ function App(): React.ReactElement {
               <Route path="api-keys" element={<ApiKeysSettings />} />
               <Route path="agents" element={<AgentsSettings />} />
               <Route path="actions" element={<ActionsSettings />} />
+              <Route path="audit" element={<AuditPage />} />
             </Route>
-            <Route path="settings/audit" element={<AuditTrail />} />
           </Route>
 
           <Route path="/outcomes" element={<Navigate to="/dashboard" replace />} />
