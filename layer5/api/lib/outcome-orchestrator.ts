@@ -26,7 +26,7 @@ export interface OrchestratorParams {
 export async function orchestrateOutcome(params: OrchestratorParams): Promise<void> {
 
     async function taskTrustUpdate() {
-        await updateAgentTrust(params.agentId, params.customerId, params.finalSuccess);
+        await updateAgentTrust(params.agentId, params.customerId, params.finalSuccess, params.actionName);
     }
 
     async function taskContextDrift() {
@@ -173,7 +173,24 @@ async function upsertLiveTrustScore(
 }
 
 // ── Imported Helper Implementations ──
-async function updateAgentTrust(agentId: string, customerId: string, success: boolean): Promise<void> {
+// ── Trust Snapshot (fire-and-forget) ──────────────────────────
+async function snapshotTrust(
+    agentId: string,
+    trust: { trust_score: number; trust_status: string; consecutive_failures: number },
+    reason: 'pre_failure' | 'pre_incident' | 'manual',
+    incidentId?: string,
+): Promise<void> {
+    await supabase.from('agent_trust_snapshots').insert({
+        agent_id: agentId,
+        trust_score: trust.trust_score,
+        trust_status: trust.trust_status,
+        consecutive_failures: trust.consecutive_failures,
+        snapshot_reason: reason,
+        incident_id: incidentId ?? null,
+    });
+}
+
+async function updateAgentTrust(agentId: string, customerId: string, success: boolean, actionName?: string): Promise<void> {
     const { data: trust } = await supabase
         .from('agent_trust_scores')
         .select('trust_id, trust_score, total_decisions, correct_decisions, consecutive_failures, trust_status')
@@ -193,6 +210,48 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         newCorrect += 1;
         newScore = Math.min(trust.trust_score * 1.03, 1.0);
     } else {
+        // ── Coordinated Failure Interlock ──────────────────────
+        // Check if this failure is infrastructure-attributed before applying decay.
+        // detect_coordinated_failures() looks for 3+ agents failing the same action
+        // within the last 5 minutes — indicating a shared infrastructure issue.
+        let isInfrastructureFailure = false;
+        if (actionName) {
+            try {
+                const { data: coordFailures } = await supabase.rpc('detect_coordinated_failures', {
+                    window_minutes: 5,
+                    min_agent_count: 3,
+                });
+                if (coordFailures && Array.isArray(coordFailures)) {
+                    isInfrastructureFailure = coordFailures.some(
+                        (row: { action_name: string }) => row.action_name === actionName
+                    );
+                }
+            } catch (err) {
+                // Coordination check failed — proceed with normal decay (fail safe)
+                console.warn('[trust] Coordinated failure check failed:', (err as Error).message);
+            }
+        }
+
+        if (isInfrastructureFailure) {
+            // Snapshot current trust BEFORE freezing — allows restore after incident resolves
+            snapshotTrust(agentId, trust, 'pre_incident', `coordinated:${actionName ?? 'unknown'}`).catch(() => {});
+            // Log the excluded failure for audit; no score modification
+            await supabase.from('agent_trust_audit').insert({
+                agent_id: agentId,
+                customer_id: customerId,
+                event_type: 'failure_excluded_infrastructure',
+                old_score: oldScore,
+                new_score: oldScore,
+                old_status: oldStatus,
+                new_status: oldStatus,
+                reason: `Failure excluded: coordinated infrastructure failure detected on action "${actionName}". Trust score frozen.`,
+            }).catch(() => {});
+            console.info('[trust] Failure excluded — coordinated infrastructure event', { agentId, actionName });
+            return; // No trust modification
+        }
+
+        // Normal agent-attributable failure: snapshot then decay
+        snapshotTrust(agentId, trust, 'pre_failure').catch(() => {});
         newFailures = trust.consecutive_failures + 1;
         newScore = trust.trust_score * Math.pow(0.9, newFailures);
     }

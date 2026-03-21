@@ -67,16 +67,15 @@ export default function ActionsSettings(): React.ReactElement {
       .eq('action_id', actionId);
 
     if (updateError) {
-      console.error('Toggle failed:', updateError.message);
-      setError(updateError.message);
+      showToast(updateError.message, 'critical', 5000);
       return;
     }
-    // Optimistic update
     setActions(prev => prev.map(a =>
       a.action_id === actionId
         ? { ...a, is_active: !currentState }
         : a
     ));
+    showToast('Action updated.', 'success', 2500);
   };
 
   const registerAction = async (payload: {
@@ -271,7 +270,7 @@ export default function ActionsSettings(): React.ReactElement {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-[#a1a1aa]">
-                      {action.created_at ? format(new Date(action.created_at), 'MMM dd, yyyy') : '—'}
+                      {action.created_at ? (() => { try { const d = new Date(action.created_at!); return isNaN(d.getTime()) ? '—' : format(d, 'MMM dd, yyyy'); } catch { return '—'; } })() : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <button

@@ -3,11 +3,10 @@ import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../../lib/config';
 import { supabase } from '../../../supabaseClient';
-
-const AGENT_KEY_STORAGE = 'layerinfinite_api_key';
+import { AGENT_API_KEY_STORAGE_KEY } from '../../../hooks/useAgentApiKey';
 
 async function auditFetch(params: string): Promise<Response> {
-  const agentKey = localStorage.getItem(AGENT_KEY_STORAGE);
+  const agentKey = localStorage.getItem(AGENT_API_KEY_STORAGE_KEY);
   if (agentKey) {
     return fetch(`${API_BASE}/v1/audit?${params}`, {
       headers: { 'X-API-Key': agentKey, 'Content-Type': 'application/json' },

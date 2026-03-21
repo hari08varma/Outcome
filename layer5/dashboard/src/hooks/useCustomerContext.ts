@@ -21,6 +21,7 @@ interface CustomerContextState {
 
 let contextCache: CustomerContextData | null = null;
 let contextPromise: Promise<CustomerContextData> | null = null;
+let contextGeneration = 0;
 
 async function tryBootstrapProfile(): Promise<void> {
   if (!API_BASE) {
@@ -128,8 +129,11 @@ async function resolveCustomerContext(forceRefresh = false): Promise<CustomerCon
   }
 
   if (!contextPromise) {
+    const capturedGen = contextGeneration;
     contextPromise = fetchCustomerContext().then((data) => {
-      contextCache = data;
+      if (contextGeneration === capturedGen) {
+        contextCache = data;
+      }
       return data;
     }).finally(() => {
       contextPromise = null;
@@ -173,6 +177,7 @@ export function useCustomerContext(): CustomerContextState {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+        contextGeneration++;
         contextCache = null;
         contextPromise = null;
       }

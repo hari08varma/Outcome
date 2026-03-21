@@ -39,10 +39,11 @@ export interface SimulationResult {
 }
 
 export interface WorldModelPrediction {
-  q50:   number;   // median prediction
-  q025:  number;   // lower 95% bound
-  q975:  number;   // upper 95% bound
-  width: number;   // q975 - q025
+  q50:          number;                       // median prediction
+  q025:         number;                       // lower 95% bound
+  q975:         number;                       // upper 95% bound
+  width:        number;                       // q975 - q025
+  model_source: 'production' | 'canary';     // which model served this prediction
 }
 
 // LightGBM tree structure (JSON-serialized from Python)
@@ -58,15 +59,18 @@ export interface LGBMTree {
 }
 
 export interface WorldModelArtifact {
-  q50:              { trees: LGBMTree[]; num_trees: number };
-  q025:             { trees: LGBMTree[]; num_trees: number };
-  q975:             { trees: LGBMTree[]; num_trees: number };
-  feature_names:    string[];
-  num_features:     number;
-  action_encoding:  Record<string, number>;
-  context_encoding: Record<string, Record<string, number>>;
-  learning_rate:    number;
-  trained_at:       string;
-  version:          number;
+  q50:               { trees: LGBMTree[]; num_trees: number };
+  q025:              { trees: LGBMTree[]; num_trees: number };
+  q975:              { trees: LGBMTree[]; num_trees: number };
+  feature_names:     string[];
+  num_features:      number;
+  action_encoding:   Record<string, number>;
+  context_encoding:  Record<string, Record<string, number>>;
+  learning_rate:     number;
+  trained_at:        string;
+  version:           number;
   training_episodes: number;
+  // Canary routing fields (populated from DB row at load time)
+  is_canary:         boolean;
+  canary_traffic_pct: number;  // 0–100; 0 means no canary routing
 }

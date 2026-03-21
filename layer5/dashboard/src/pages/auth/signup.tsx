@@ -15,6 +15,7 @@ export default function SignupPage() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [confirmationSent, setConfirmationSent] = useState(false);
 
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -27,7 +28,7 @@ export default function SignupPage() {
         setError('');
         setLoading(true);
 
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
             email,
             password,
             options: {
@@ -44,6 +45,13 @@ export default function SignupPage() {
             return;
         }
 
+        if (!data.session) {
+            // Email confirmation is required — no session yet
+            setLoading(false);
+            setConfirmationSent(true);
+            return;
+        }
+
         navigate('/', { replace: true });
     }
 
@@ -53,9 +61,15 @@ export default function SignupPage() {
                 <h1 style={{ margin: 0, fontSize: '1.5rem', color: '#1e293b' }}>Layerinfinite</h1>
                 <p style={{ color: '#64748b', margin: '0.25rem 0 1.5rem' }}>Create your account</p>
 
+                {confirmationSent && (
+                    <div style={{ background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', borderRadius: '0.375rem', padding: '0.75rem', fontSize: '0.875rem', marginBottom: '1rem' }}>
+                        Account created! Check your email for a confirmation link before signing in.
+                    </div>
+                )}
+
                 {error && <div style={errorBox}>{error}</div>}
 
-                <form onSubmit={handleSubmit}>
+                {!confirmationSent && <form onSubmit={handleSubmit}>
                     <label style={label}>Full Name</label>
                     <input
                         type="text"
@@ -100,7 +114,7 @@ export default function SignupPage() {
                     <button type="submit" disabled={loading} style={button}>
                         {loading ? 'Creating account…' : 'Create Account'}
                     </button>
-                </form>
+                </form>}
 
                 <p style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.875rem', color: '#64748b' }}>
                     Already have an account? <Link to="/login" style={link}>Sign in</Link>

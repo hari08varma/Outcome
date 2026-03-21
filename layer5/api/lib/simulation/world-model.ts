@@ -19,6 +19,8 @@ import type {
 // ── Module-level cache ───────────────────────────────────────
 let cachedModel: WorldModelArtifact | null = null;
 let cacheLoadedAt: Date | null = null;
+let cachedCanaryModel: WorldModelArtifact | null = null;
+let canaryLoadedAt: Date | null = null;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
@@ -51,6 +53,8 @@ export async function loadWorldModel(): Promise<WorldModelArtifact | null> {
   model.trained_at = data.trained_at;
   model.version = data.version;
   model.training_episodes = data.training_episodes;
+  model.is_canary = false;
+  model.canary_traffic_pct = 0;
 
   cachedModel = model;
   cacheLoadedAt = new Date();
@@ -58,12 +62,51 @@ export async function loadWorldModel(): Promise<WorldModelArtifact | null> {
 }
 
 /**
- * Invalidate the model cache.
+ * Load the active canary model (is_canary=true) if one exists.
+ * Returns null if no canary model is deployed.
+ */
+async function loadCanaryModel(): Promise<WorldModelArtifact | null> {
+  if (
+    cachedCanaryModel &&
+    canaryLoadedAt &&
+    Date.now() - canaryLoadedAt.getTime() < CACHE_TTL_MS
+  ) {
+    return cachedCanaryModel;
+  }
+
+  const { data, error } = await supabase
+    .from('world_model_artifacts')
+    .select('model_data, trained_at, version, training_episodes, canary_traffic_pct')
+    .eq('tier', 2)
+    .eq('is_canary', true)
+    .maybeSingle();
+
+  if (error || !data) {
+    cachedCanaryModel = null;
+    return null;
+  }
+
+  const model = data.model_data as WorldModelArtifact;
+  model.trained_at = data.trained_at;
+  model.version = data.version;
+  model.training_episodes = data.training_episodes;
+  model.is_canary = true;
+  model.canary_traffic_pct = data.canary_traffic_pct ?? 0;
+
+  cachedCanaryModel = model;
+  canaryLoadedAt = new Date();
+  return cachedCanaryModel;
+}
+
+/**
+ * Invalidate the model cache (production and canary).
  * Called when a new model is activated.
  */
 export function invalidateModelCache(): void {
   cachedModel = null;
   cacheLoadedAt = null;
+  cachedCanaryModel = null;
+  canaryLoadedAt = null;
 }
 
 /**
@@ -168,7 +211,8 @@ export function buildFeatures(
 
 /**
  * Predict outcome for a given action in given context.
- * Returns q50 (median), q025 (lower), q975 (upper).
+ * Returns q50 (median), q025 (lower), q975 (upper), and model_source.
+ * Routes a percentage of traffic to the canary model when one is deployed.
  * Returns null if action not in model encoding.
  */
 export async function predictOutcome(
@@ -177,20 +221,40 @@ export async function predictOutcome(
   contextHash: string,
   contextFreq: number = 0.5,
 ): Promise<WorldModelPrediction | null> {
-  const model = await loadWorldModel();
-  if (!model) return null;
+  // Load production model first (always required as fallback)
+  const productionModel = await loadWorldModel();
+  if (!productionModel) return null;
+
+  // Check if a canary model is deployed and should serve this request
+  const canaryModel = await loadCanaryModel();
+  const useCanary =
+    canaryModel !== null &&
+    canaryModel.canary_traffic_pct > 0 &&
+    Math.random() * 100 < canaryModel.canary_traffic_pct;
+
+  const model = useCanary ? canaryModel! : productionModel;
+  const modelSource: 'production' | 'canary' = useCanary ? 'canary' : 'production';
 
   if (!(actionName in model.action_encoding)) {
+    // If canary doesn't know this action, fall back to production
+    if (useCanary && actionName in productionModel.action_encoding) {
+      return runPrediction(productionModel, actionName, episodeHistory, contextHash, contextFreq, 'production');
+    }
     return null;
   }
 
-  const features = buildFeatures(
-    model,
-    actionName,
-    episodeHistory,
-    contextHash,
-    contextFreq,
-  );
+  return runPrediction(model, actionName, episodeHistory, contextHash, contextFreq, modelSource);
+}
+
+function runPrediction(
+  model: WorldModelArtifact,
+  actionName: string,
+  episodeHistory: string[],
+  contextHash: string,
+  contextFreq: number,
+  modelSource: 'production' | 'canary',
+): WorldModelPrediction {
+  const features = buildFeatures(model, actionName, episodeHistory, contextHash, contextFreq);
 
   const q50 = predictEnsemble(model.q50.trees, features, model.learning_rate);
   const q025 = predictEnsemble(model.q025.trees, features, model.learning_rate);
@@ -198,10 +262,18 @@ export async function predictOutcome(
 
   const clamp = (v: number) => Math.max(0.0, Math.min(1.0, v));
 
+  if (modelSource === 'canary') {
+    console.info(
+      `[world-model] canary prediction — action=${actionName} ` +
+      `version=${model.version} traffic_pct=${model.canary_traffic_pct}`
+    );
+  }
+
   return {
     q50: clamp(q50),
     q025: clamp(q025),
     q975: clamp(q975),
     width: clamp(q975) - clamp(q025),
+    model_source: modelSource,
   };
 }

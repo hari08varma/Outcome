@@ -84,6 +84,27 @@ export function rateLimitMiddleware() {
                 const refillRate = maxTokens / 60_000; // tokens per ms
 
                 tokens = Math.min(maxTokens, data.tokens + (deltaMs * refillRate));
+            } else {
+                // New bucket — check cardinality before allowing creation
+                try {
+                    const countResult = await Promise.race([
+                        supabase.rpc('get_rate_limit_bucket_count'),
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 50)),
+                    ]);
+                    const approxCount = (countResult as any)?.data as number | null;
+                    if (approxCount !== null && approxCount > 950_000) {
+                        console.warn('[rate-limit] Store capacity critical — rejecting new bucket creation', { approxCount });
+                        c.header('X-RateLimit-Limit', String(maxTokens));
+                        c.header('X-RateLimit-Remaining', '0');
+                        c.header('X-Rate-Limit-Reason', 'store_capacity_exhausted');
+                        return c.json(
+                            { error: 'Rate limit store at capacity. Try again later.', code: 'RATE_LIMIT_STORE_CAPACITY' },
+                            503
+                        );
+                    }
+                } catch {
+                    // Capacity check failed — fail open, allow the request
+                }
             }
         } catch (err: any) {
             if (typeof err?.message === 'string' && err.message.includes('Rate limit read timeout')) {
@@ -120,13 +141,17 @@ export function rateLimitMiddleware() {
         const newTokens = tokens - 1;
 
         // Async fire-and-forget Atomic UPSERT (Latency path offloaded)
+        // window_expiry: 60s from now — reaper removes rows where now() > expiry + 2min grace
+        const windowExpiry = new Date(now + 60_000).toISOString();
         Promise.resolve(
             supabase.from('rate_limit_buckets').upsert({
                 api_key_hash: apiKeyHash,
                 tokens: newTokens,
                 last_refill_at: new Date(now).toISOString(),
                 tier: tier,
-                updated_at: new Date(now).toISOString()
+                updated_at: new Date(now).toISOString(),
+                window_expiry: windowExpiry,
+                last_touched: new Date(now).toISOString(),
             }, { onConflict: 'api_key_hash' })
         ).then(({ error }) => {
             if (error) console.error('[rate-limit] Upsert failed:', error.message);

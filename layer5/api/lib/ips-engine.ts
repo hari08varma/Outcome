@@ -12,9 +12,10 @@
 
 import { supabase } from './supabase.js';
 
-const TEMPERATURE = 1.0;       // softmax temperature
-const IPS_WEIGHT_CAP = 0.3;    // max confidence for counterfactuals
-const MIN_PROPENSITY = 0.001;  // floor to prevent division by zero
+const TEMPERATURE = 1.0;        // softmax temperature
+const IPS_WEIGHT_MIN = 0.01;    // min IPS weight (importance weight floor)
+const IPS_WEIGHT_CAP = 100.0;   // max IPS weight (per DR-estimator spec)
+const MIN_PROPENSITY = 0.001;   // floor to prevent division by zero
 
 export interface RankedActionEntry {
     action_name: string;
@@ -60,40 +61,34 @@ export function computePropensities(
     return propensityMap;
 }
 
-export const PROPENSITY_RATIO_CAP = 5.0;
-
 /**
  * Compute IPS estimate for one unchosen action.
  *
- * Formula:
- *   raw_est = real_outcome * (p_unchosen / p_chosen)
- *   clipped = min(raw_est, real_outcome)  ← conservative
- *   weight  = p_unchosen * (1 - |clipped - real_outcome|)
- *   weight  = min(weight, IPS_WEIGHT_CAP)
+ * Formula (doubly-robust compatible):
+ *   weight   = clip(p_unchosen / p_chosen, IPS_WEIGHT_MIN, IPS_WEIGHT_CAP)
+ *   estimate = clip(real_outcome * weight, 0, 1)
+ *
+ * The conservative propensity-ratio cap from the old implementation
+ * has been removed — IPS weights now span [0.01, 100.0] to provide
+ * sufficient signal range for the DR estimator in Python training.
+ * DR corrects variance: reward_hat + weight * (observed - reward_hat).
  */
 export function computeIPSEstimate(
     realOutcome: number,
     propensityChosen: number,
     propensityUnchosen: number
 ): { estimate: number; weight: number } {
-    const propensityRatio = Math.min(
-        propensityUnchosen / propensityChosen,
-        PROPENSITY_RATIO_CAP
+    // Importance weight: propensity ratio clipped to [IPS_WEIGHT_MIN, IPS_WEIGHT_CAP]
+    const weight = Math.min(
+        Math.max(propensityUnchosen / propensityChosen, IPS_WEIGHT_MIN),
+        IPS_WEIGHT_CAP
     );
-    const rawEstimate = realOutcome * propensityRatio;
 
-    // Conservative: unchosen action cannot be estimated as
-    // better than what actually happened
-    const clippedEstimate = Math.min(rawEstimate, realOutcome);
-
-    // Weight: lower when unchosen was unlikely OR
-    // when estimate is far from reality
-    const rawWeight = propensityUnchosen *
-        (1.0 - Math.abs(clippedEstimate - realOutcome));
-    const weight = Math.min(Math.max(rawWeight, 0.0), IPS_WEIGHT_CAP);
+    // Unbiased IPS estimate — clamp to [0,1] since it's a score
+    const estimate = Math.min(Math.max(realOutcome * weight, 0.0), 1.0);
 
     return {
-        estimate: Math.round(clippedEstimate * 10000) / 10000,
+        estimate: Math.round(estimate * 10000) / 10000,
         weight: Math.round(weight * 10000) / 10000,
     };
 }

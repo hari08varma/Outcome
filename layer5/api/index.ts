@@ -78,6 +78,8 @@ import { reinstateAgentRouter } from './routes/admin/reinstate-agent.js';
 import { reinstateSandboxRouter } from './routes/admin/reinstate-sandbox.js';
 import { testNotificationRouter } from './routes/admin/test-notification.js';
 import { triggerTrainingRoute } from './routes/admin/trigger-training.js';
+import { restoreTrustSnapshotRouter } from './routes/admin/restore-trust-snapshot.js';
+import { embeddingDriftRouter } from './routes/admin/embedding-drift.js';
 import { userAuthMiddleware } from './middleware/user-auth.js';
 import { apiKeysRouter } from './routes/auth/api-keys.js';
 import { meRouter } from './routes/auth/me.js';
@@ -343,6 +345,8 @@ v1.route('/admin/reinstate-agent', reinstateAgentRouter);
 v1.route('/admin', reinstateSandboxRouter);
 v1.route('/admin/test-notification', testNotificationRouter);
 v1.route('/admin/trigger-training', triggerTrainingRoute);
+v1.route('/admin/restore-trust-snapshot', restoreTrustSnapshotRouter);
+v1.route('/admin/embedding-drift', embeddingDriftRouter);
 
 v1.use('/log-outcome/*', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
 v1.use('/outcome-feedback/*', primaryAuth, rateLimitMiddleware());
