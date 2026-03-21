@@ -199,9 +199,14 @@ async function resolveContextId(body: any) {
 }
 
 async function insertCoreOutcome(
-    agentId: string, customerId: string, actionId: string, contextId: string, 
+    agentId: string, customerId: string, actionId: string, contextId: string,
     body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any
 ) {
+    // RULE: backprop_episode_id is INTERNAL — set by the backprop engine only.
+    // NEVER map body.episode_id to this column. body.episode_id is the SDK's
+    // sequence-tracking field; backprop_episode_id has a FK to fact_episodes which
+    // only the backprop engine populates. Passing body.episode_id here causes FK
+    // violation 23503 on every request that sends episode_id.
     const { data: outcome, error: insertErr } = await supabase
         .from('fact_outcomes')
         .insert({
@@ -223,7 +228,7 @@ async function insertCoreOutcome(
             verifier_source: body.verifier_signal?.source ?? null,
             verifier_value: body.verifier_signal?.value?.toString() ?? null,
             discrepancy_detected: verification.discrepancy_detected,
-            backprop_episode_id: body.episode_id ?? null,
+            backprop_episode_id: body.backprop_episode_id ?? null,
         })
         .select('outcome_id, timestamp')
         .single();

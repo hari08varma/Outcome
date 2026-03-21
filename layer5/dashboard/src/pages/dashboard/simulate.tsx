@@ -878,9 +878,17 @@ export default function SimulatePage() {
             <section className="flex flex-col items-center justify-center py-24 text-center text-white">
                 <div className="text-5xl mb-4 opacity-20">⚡</div>
                 <h3 className="text-white font-semibold text-lg mb-2">Not enough data to simulate</h3>
-                <p className="text-[#52525b] text-sm max-w-sm">
+                <p className="text-[#52525b] text-sm max-w-sm mb-6">
                     Simulation requires at least a few logged outcomes. Log outcomes via the SDK to unlock this.
                 </p>
+                <a
+                    href="https://pypi.org/project/layerinfinite-sdk/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-[#b8ff00] text-black font-semibold px-5 py-2 rounded-lg text-sm hover:bg-[#a0e600]"
+                >
+                    View SDK Docs
+                </a>
             </section>
         );
     }
@@ -1185,6 +1193,14 @@ export default function SimulatePage() {
                                         {cap.icon} {cap.label}
                                     </span>
                                 ))}
+                            </div>
+                            <div style={{
+                                marginTop: '1.25rem',
+                                fontSize: '0.78rem',
+                                color: COLORS.textSecondary,
+                                fontFamily: FONT_SANS,
+                            }}>
+                                Simulation works best with <span style={{ color: COLORS.textPrimary, fontFamily: FONT_MONO }}>episode_id</span>. Pass <span style={{ color: COLORS.textPrimary, fontFamily: FONT_MONO }}>episode_id</span> in log-outcome to enable sequence predictions.
                             </div>
                         </div>
                     )}

@@ -4,6 +4,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAgentTrust } from '../../hooks/useAgentTrust';
 import { supabase } from '../../supabaseClient';
 import { API_BASE } from '../../lib/config';
+import { createAgentFetch } from '../../lib/api';
+import { AGENT_API_KEY_STORAGE_KEY } from '../../hooks/useAgentApiKey';
 import { useToastContext } from '../../components/Toast';
 
 function statusBadge(status: 'trusted' | 'probation' | 'suspended'): string {
@@ -33,12 +35,18 @@ export default function Agent(): React.ReactElement {
 
   const exportCsv = async (): Promise<void> => {
     if (!API_BASE) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { showToast('Session expired — please sign in again.', 'warning', 4500); return; }
+    // API CALL RULE: /v1/audit uses agent API key auth, NOT Supabase JWT.
+    const storedKey = localStorage.getItem(AGENT_API_KEY_STORAGE_KEY);
+    if (!storedKey) {
+      showToast('API key not found. Go to Settings → API Keys to create one.', 'warning', 4500);
+      return;
+    }
+    const agentFetch = createAgentFetch(storedKey, () => {
+      localStorage.removeItem(AGENT_API_KEY_STORAGE_KEY);
+      window.location.href = '/onboarding?step=2&reason=expired';
+    });
     try {
-      const response = await fetch(`${API_BASE}/v1/audit?format=csv`, {
-        headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-      });
+      const response = await agentFetch(`${API_BASE}/v1/audit?format=csv`);
       if (!response.ok) { showToast('Failed to export CSV logs.', 'critical', 4500); return; }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);

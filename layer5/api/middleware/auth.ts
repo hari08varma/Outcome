@@ -60,9 +60,13 @@ setInterval(() => {
     console.info(`[cache-size] authCache: ${authCache.size} entries`);
 }, 15 * 60_000).unref();
 
+// AUTH RULE: This middleware accepts ONLY agent API keys (format: layerinfinite_XXXX).
+// Supabase JWTs (format: eyJhbG...) are NOT valid here and return a 400 with a
+// helpful error. Dashboard pages MUST use useAgentApiKey() hook, never getSession().
+
 /**
  * Hashes an incoming API key to compare against database records.
- * 
+ *
  * Algorithm: SHA-256
  * Rationale: MD5 is cryptographically broken. bcrypt is strictly for passwords
  *   because its intentional slowness causes DoS vulnerabilities on API limits.
@@ -100,6 +104,19 @@ export async function authMiddleware(c: Context, next: Next): Promise<Response |
         return c.json(
             { error: 'Missing API key. Provide X-API-Key header.', code: 'MISSING_API_KEY' },
             401
+        );
+    }
+
+    // Detect Supabase JWT tokens sent by mistake — give a helpful error instead of
+    // silently failing with INVALID_API_KEY (which is confusing for dashboard users).
+    if (apiKey.startsWith('eyJ')) {
+        return c.json(
+            {
+                error: 'JWT tokens are not valid for agent API routes. Use your agent API key.',
+                hint: 'Find your API key in Settings → API Keys',
+                code: 'WRONG_AUTH_TYPE',
+            },
+            400
         );
     }
 

@@ -1,7 +1,7 @@
 # Layerinfinite — Project Report
 
 ### Outcome-Ranked Decision Intelligence Middleware
-**Version:** 3.1.1 | **Report Date:** March 21, 2026 | **Status:** Production-Ready (Hardening Update Applied)
+**Version:** 3.1.2 | **Report Date:** March 21, 2026 | **Status:** Production-Ready (Bug Fix Pass Applied)
 
 ---
 
@@ -14,7 +14,7 @@ Layerinfinite is a 10-layer, append-only, outcome-ranked decision intelligence m
 | Metric | Value |
 |--------|-------|
 | Total Tests | **230 passing** (16 backend test suites) + **86 Python SDK** + **13 TS SDK simulate** |
-| SQL Migrations | **44 total files** (44 in `supabase/migrations` + 0 in `db/migrations`) |
+| SQL Migrations | **47 total files** (47 in `supabase/migrations` + 0 in `db/migrations`) |
 | Edge Functions | **6 / 6 deployed** to Supabase Edge |
 | API Endpoints | **15 routes** fully implemented (incl. POST /v1/simulate) |
 | Dashboard Pages | **8 pages** fully built |
@@ -1246,6 +1246,16 @@ AND tablename IN (
 | 036_backfill_missing_profiles.sql | ✅ | Dynamic-name-column profile backfill with summary notices |
 | 037_rehash_api_keys.sql | ✅ | API key rehash migration for auth consistency |
 | 038_rate_limit_store.sql | ✅ | Persistent `rate_limit_buckets` + RLS policy + index |
+| 039_create_api_keys_table.sql | ✅ | `dim_agent_api_keys` table for named multi-key management |
+| 040_add_agent_api_key_hash.sql | ✅ | `api_key_hash` + `api_key_prefix` columns on `dim_agents` |
+| 041_fix_autoregister.sql | ✅ | Fixes corrupted `dim_actions.auto_registered` rows (NULL → false) |
+| 042_fix_validation_mode.sql | ✅ | Sets `validation_mode = 'advisory'` for actions missing it |
+| 043_create_mv_refresh_schedule.sql | ✅ | `refresh_mv_sequence_scores()` RPC + pg_cron job |
+| 044-backfill-missing-profiles.sql | ✅ | Idempotent user profile backfill |
+| 045_remove_seed_data.sql | ✅ | Removes synthetic cold-start seed rows from production |
+| 046_fix_backprop_nullable.sql | ✅ | Drops + re-adds `backprop_episode_id` FK with `ON DELETE SET NULL`; ensures nullable |
+| 047_ensure_matview_cron.sql | ✅ | Idempotent direct-SQL pg_cron job for `mv_action_scores` (free-tier cold-start safe) |
+| 048_diagnostic_helpers.sql | ✅ | `get_customer_health()` SECURITY DEFINER diagnostic function |
 
 ### Edge Functions (Supabase)
 
@@ -1312,6 +1322,25 @@ This production hardening pass focused on eliminating API key management UX regr
 | Migration ordering | Removed duplicate numeric prefixes by renaming migrations to `043_create_mv_refresh_schedule.sql`, `044-backfill-missing-profiles.sql`, and `045_remove_seed_data.sql` (SQL unchanged). |
 | Build/typecheck validation | Dashboard build and TypeScript checks pass after hardening changes. |
 
+### March 21, 2026 Bug Fix Pass (v3.1.2)
+
+Five critical bugs fixed across the API, Edge Functions, and Dashboard that were blocking real-world SDK usage.
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| **FK violation on every log-outcome with `episode_id`** | `log-outcome.ts` mapped `body.episode_id` (SDK sequence UUID) to `backprop_episode_id` (FK → `fact_episodes`). UUID never exists there → Postgres error `23503` on every insert with `episode_id`. | Changed mapping to `body.backprop_episode_id ?? null` (always null from SDK). Migration `046` drops + re-adds the FK with `ON DELETE SET NULL` and `EXCEPTION WHEN duplicate_object` guard. |
+| **`mv_action_scores` permanently stale (“No Scores Yet”)** | pg_cron job in migration 011 used bare `cron.schedule()` — throws on replay (non-idempotent). Edge Function cron unreliable on Supabase free tier due to cold-start sleep. | Migration `047` adds a direct-SQL pg_cron job (`refresh_mv_action_scores()`) with idempotent `DO $$ BEGIN IF EXISTS ... PERFORM cron.unschedule(); END IF; END $$` pattern. Bypasses Edge Function cold-start entirely. |
+| **Stale `mv_action_scores` not self-detected** | `scoring-engine` Edge Function had no guard to detect empty matview despite real data existing. | Added self-healing guard with `Promise.all` count check (`fact_outcomes` real rows vs `mv_action_scores` rows); logs `SELF-HEAL` warning if mismatch. |
+| **JWT token sent to agent API routes → silent 401** | Dashboard `exportCsv` in `agent.tsx` used `supabase.auth.getSession()` JWT as `Authorization: Bearer` header. Auth middleware rejects JWTs (not agent API keys) — previously with a confusing `INVALID_API_KEY` 401. | `exportCsv` now reads agent API key from localStorage via `AGENT_API_KEY_STORAGE_KEY` and calls `/v1/audit` with `X-API-Key` header using `createAgentFetch`. Auth middleware now returns a clear `400 WRONG_AUTH_TYPE` with a helpful hint for any JWT-prefixed token (`eyJ…`). |
+| **Simulate page dead-end on zero outcomes** | Empty state showed text only; no call to action for new users. | Added “View SDK Docs” button (PyPI link) to the `outcomeCount === 0` state. Added `episode_id` hint to the simulation right-panel empty state (shown when outcomes exist but no simulation has been run). |
+
+**New files added:**
+- `layer5/dashboard/src/hooks/useAgentApiKey.ts` — localStorage key validation (`/^layerinfinite_[0-9a-f]{32}$/`), `handleAuthFailure` redirect, `refresh()` trigger
+- `layer5/dashboard/src/lib/api.ts` — `createAgentFetch(apiKey, onAuthFailure)` utility attaching `X-API-Key` header with global 401/403 handler
+- `layer5/supabase/migrations/046_fix_backprop_nullable.sql` — FK repair (idempotent)
+- `layer5/supabase/migrations/047_ensure_matview_cron.sql` — direct SQL matview cron (idempotent)
+- `layer5/supabase/migrations/048_diagnostic_helpers.sql` — `get_customer_health()` SECURITY DEFINER diagnostic function with `SET search_path = public`
+
 ---
 
 ## File Inventory
@@ -1320,7 +1349,7 @@ This production hardening pass focused on eliminating API key management UX regr
 
 | Directory | Files | Total Lines (approx.) | Description |
 |-----------|-------|-----------------------|-------------|
-| `supabase/migrations/` | 44 | ~4,300 | SQL schema, indexes, policies, views, functions, cron, vector index, auth, scoring, latency, notification, backprop, verifier, and backfills |
+| `supabase/migrations/` | 47 | ~4,500 | SQL schema, indexes, policies, views, functions, cron, vector index, auth, scoring, latency, notification, backprop, verifier, backfills, and bug-fix patches (FK repair, matview cron, diagnostic helpers) |
 | `db/migrations/` | 0 | 0 | No active migration files in this directory (historical path retained). |
 | `supabase/seed/` | 1 | ~76 | Cold-start prior data |
 | `supabase/functions/` | 5 | ~1,700 | Deno Edge Functions (scoring, trend, cold-start, trust, pruning) |
@@ -1331,6 +1360,8 @@ This production hardening pass focused on eliminating API key management UX regr
 | `api/` (root) | 3 | ~120 | Entry point, package.json, tsconfig |
 | `dashboard/src/pages/` | 10 | ~1,800 | Landing, Auth, Onboarding, Scores, Outcomes, Audit, Trust, API Keys, login/signup/logout |
 | `dashboard/src/components/` | 5 | ~400 | ScoreCard, TrendBadge, OutcomeTable, TrustGauge, ProtectedRoute |
+| `dashboard/src/hooks/` | 1 | ~100 | `useAgentApiKey.ts` — localStorage API key validation + auth-failure redirect |
+| `dashboard/src/lib/` | 1 | ~45 | `api.ts` — `createAgentFetch` utility with 401/403 global handler |
 | `dashboard/src/` | 3 | ~50 | main.tsx, supabaseClient.ts, vite-env.d.ts |
 | `training/` | 6 | ~800 | Python ML pipeline — train, features, validate, export, Dockerfile, requirements |
 | `sdks/python/layerinfinite/` | 9 | ~1,400 | Python SDK — sync/async client, models (+ SimulateResponse), exceptions, retry, 6 integrations (all with decision_id threading) |
@@ -1353,7 +1384,7 @@ This production hardening pass focused on eliminating API key management UX regr
 |-----------------|----------------|
 | **Append-only enforcement** | BEFORE UPDATE trigger raises EXCEPTION on `fact_outcomes` |
 | **Row Level Security** | 12 RLS policies — customer isolation on all tenant-scoped tables |
-| **API Authentication** | API key hash lookup + 15-minute auth cache |
+| **API Authentication** | API key hash lookup + 60-second auth cache (revoked keys rejected within 1 min) |
 | **Admin Role Enforcement** | Separate `admin-auth.ts` middleware, `customer_admin` role required |
 | **Hallucination Prevention** | `validate-action.ts` blocks unregistered action names (30-min cache) |
 | **Rate Limiting** | Tiered token-bucket: free=200/min, pro=1000/min, enterprise=5000/min |
@@ -1443,7 +1474,7 @@ See [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md), [DEPLOY.md](DEPLOY.md), 
 
 Layerinfinite is **100% feature-complete** against the full implementation plan — all core layers, auth system, outcome scoring, landing page, auth + onboarding flow, gap detection system, developer SDKs, and no-code integrations are built, tested, and deployed.
 
-The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. Migration inventory is now **44 SQL files** in `supabase/migrations`, with live deployment verified through the full auth/provisioning and sequence foundation stack. **6 Edge Functions** are deployed (including `notification-dispatcher`). The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
+The project passes all **230 automated tests** across **16 test suites** covering layers 3–8, auth, and gap detection. The **Python SDK** passes **86 tests** across 13 test files (sync + async client, retry, models, 6 framework integrations). The **TypeScript SDK** builds cleanly (CJS + ESM + `.d.ts`) with full test coverage. Migration inventory is now **47 SQL files** in `supabase/migrations`, with live deployment verified through the full auth/provisioning and sequence foundation stack. **6 Edge Functions** are deployed (including `notification-dispatcher`). The **React dashboard** has 8 fully functional pages with Google OAuth authentication, a 3-step onboarding wizard, and protected route access.
 
 **Key capabilities built:**
 - **6-layer decision intelligence** — structured memory → aggregation → scoring → temporal trends → adaptive policy → trust management

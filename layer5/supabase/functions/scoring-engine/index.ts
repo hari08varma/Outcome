@@ -68,6 +68,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
         console.warn('[scoring-engine] Could not check staleness:', err);
     }
 
+    // ── Self-healing guard ──────────────────────────────────────
+    // MV HEALTH RULE: On every execution, verify mv_action_scores row count > 0 when
+    // fact_outcomes has real rows. If mismatch detected, log warning — Step 2 refresh
+    // below will fix it. This surfaces silent cron failures in the logs.
+    try {
+        const [{ count: realCount, error: realErr }, { count: mvCount, error: mvErr }] = await Promise.all([
+            supabase.from('fact_outcomes').select('outcome_id', { count: 'exact', head: true }).eq('is_synthetic', false),
+            supabase.from('mv_action_scores').select('action_id', { count: 'exact', head: true }),
+        ]);
+        if (!realErr && !mvErr && (realCount ?? 0) > 0 && (mvCount ?? 0) === 0) {
+            console.warn('[scoring-engine] SELF-HEAL: mv_action_scores has 0 rows but fact_outcomes has', realCount, 'real outcomes — forcing refresh now');
+            results.self_heal_triggered = true;
+        }
+    } catch (err) {
+        console.warn('[scoring-engine] Self-heal check failed (non-fatal):', err);
+    }
+
     // ── Step 2: Refresh mv_action_scores ───────────────────────
     const refreshScoresStart = Date.now();
     try {
