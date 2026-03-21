@@ -17,9 +17,12 @@ ALTER TABLE dim_contexts
 UPDATE dim_contexts
   SET embedding_model          = COALESCE(embedding_model, 'gte-small'),
       embedding_version        = COALESCE(embedding_version, '2024-01-01'),
-      embedding_dimension      = 1536,
-      embedding_schema_version = 1
-  WHERE embedding_model IS NULL OR embedding_dimension IS NULL;
+    embedding_dimension      = COALESCE(embedding_dimension, 1536),
+    embedding_schema_version = COALESCE(embedding_schema_version, 1)
+  WHERE embedding_model IS NULL
+   OR embedding_version IS NULL
+   OR embedding_dimension IS NULL
+   OR embedding_schema_version IS NULL;
 
 -- Index for filtering by model version (compatibility checks)
 CREATE INDEX IF NOT EXISTS idx_contexts_embedding_model
@@ -29,7 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_contexts_embedding_model
 CREATE TABLE IF NOT EXISTS embedding_reference_corpus (
   id               BIGSERIAL    PRIMARY KEY,
   sample_text      TEXT         NOT NULL,
-  reference_vector VECTOR(1536) NOT NULL,
+  reference_vector VECTOR       NOT NULL,
   embedding_model  TEXT         NOT NULL,
   embedding_version TEXT        NOT NULL,
   created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()

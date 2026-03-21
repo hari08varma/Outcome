@@ -78,6 +78,7 @@ async function loadCanaryModel(): Promise<WorldModelArtifact | null> {
     .from('world_model_artifacts')
     .select('model_data, trained_at, version, training_episodes, canary_traffic_pct')
     .eq('tier', 2)
+    .eq('is_active', true)
     .eq('is_canary', true)
     .maybeSingle();
 

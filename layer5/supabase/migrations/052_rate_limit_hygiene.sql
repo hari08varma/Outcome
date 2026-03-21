@@ -37,7 +37,7 @@ BEGIN
       AND NOW() > window_expiry + INTERVAL '2 minutes';
 
   -- Phase 2: LRU eviction if approaching 1M ceiling (> 800K = 80%)
-  SELECT COUNT(*) INTO v_count FROM rate_limit_buckets;
+  SELECT get_rate_limit_bucket_count() INTO v_count;
   IF v_count > 800000 THEN
     -- Evict oldest-touched until utilisation drops to 75% (750K)
     v_evict_count := v_count - 750000;

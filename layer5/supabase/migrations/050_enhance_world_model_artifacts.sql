@@ -23,15 +23,20 @@ UPDATE world_model_artifacts
 CREATE OR REPLACE FUNCTION cleanup_old_model_artifacts()
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
-  DELETE FROM world_model_artifacts
-  WHERE is_active = FALSE
-    AND is_canary = FALSE
-    AND id NOT IN (
-      SELECT id FROM world_model_artifacts
-      WHERE is_active = FALSE AND is_canary = FALSE
-      ORDER BY created_at DESC
-      LIMIT 5
-    );
+  DELETE FROM world_model_artifacts w
+  USING (
+    SELECT id
+    FROM (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (PARTITION BY tier ORDER BY created_at DESC) AS rn
+      FROM world_model_artifacts
+      WHERE is_active = FALSE
+        AND is_canary = FALSE
+    ) ranked
+    WHERE ranked.rn > 5
+  ) stale
+  WHERE w.id = stale.id;
 END;
 $$;
 

@@ -27,6 +27,14 @@ CREATE INDEX IF NOT EXISTS idx_trust_snapshots_incident
 -- RLS: snapshots are internal — no direct customer access
 ALTER TABLE agent_trust_snapshots ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "service_role_trust_snapshots" ON agent_trust_snapshots;
+CREATE POLICY "service_role_trust_snapshots"
+  ON agent_trust_snapshots
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
 -- Retention cleanup function (called daily, migration 055)
 CREATE OR REPLACE FUNCTION cleanup_trust_snapshots()
 RETURNS void LANGUAGE plpgsql AS $$

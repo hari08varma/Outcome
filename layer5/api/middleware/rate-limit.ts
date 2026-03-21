@@ -34,7 +34,10 @@ const TIER_LIMITS: Record<string, TierLimits> = {
 };
 
 const DEFAULT_LIMITS: TierLimits = { maxPerMin: 200, burstLimit: 20 };
-const RATE_LIMIT_DB_TIMEOUT_MS = parseInt(process.env.RATE_LIMIT_DB_TIMEOUT_MS ?? '250', 10);
+const parsedRateLimitDbTimeoutMs = Number.parseInt(process.env.RATE_LIMIT_DB_TIMEOUT_MS ?? '250', 10);
+const RATE_LIMIT_DB_TIMEOUT_MS = Number.isFinite(parsedRateLimitDbTimeoutMs) && parsedRateLimitDbTimeoutMs > 0
+    ? parsedRateLimitDbTimeoutMs
+    : 250;
 
 /**
  * Fail-open design:
@@ -91,11 +94,16 @@ export function rateLimitMiddleware() {
                         supabase.rpc('get_rate_limit_bucket_count'),
                         new Promise<null>((resolve) => setTimeout(() => resolve(null), 50)),
                     ]);
+                    const countError = (countResult as any)?.error as { message?: string } | undefined;
+                    if (countError?.message) {
+                        console.warn('[rate-limit] Capacity check RPC failed:', countError.message);
+                    }
                     const approxCount = (countResult as any)?.data as number | null;
                     if (approxCount !== null && approxCount > 950_000) {
                         console.warn('[rate-limit] Store capacity critical — rejecting new bucket creation', { approxCount });
                         c.header('X-RateLimit-Limit', String(maxTokens));
                         c.header('X-RateLimit-Remaining', '0');
+                        c.header('X-RateLimit-Reason', 'store_capacity_exhausted');
                         c.header('X-Rate-Limit-Reason', 'store_capacity_exhausted');
                         return c.json(
                             { error: 'Rate limit store at capacity. Try again later.', code: 'RATE_LIMIT_STORE_CAPACITY' },

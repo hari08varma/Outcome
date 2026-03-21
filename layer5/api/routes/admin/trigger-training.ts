@@ -78,6 +78,16 @@ triggerTrainingRoute.post('/', async (c) => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
             });
+
+            if (!res.ok) {
+                return c.json({
+                    ...report,
+                    triggered: false,
+                    error: 'Training webhook returned non-2xx status',
+                    status: res.status,
+                }, 502);
+            }
+
             return c.json({
                 ...report,
                 triggered: true,

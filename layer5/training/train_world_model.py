@@ -217,8 +217,13 @@ def compute_dr_targets(cf_df, outcomes_df) -> np.ndarray:
             row.get('chosen_action_name', ''), global_mean
         )
         w = float(row['ips_weight'])
-        # Use observed_score if joined, else fall back to stored real_outcome_score
-        r_obs = float(row.get('observed_score') or row.get('real_outcome_score', global_mean))
+        # Use observed_score if available (including 0.0), else fall back safely.
+        observed = row.get('observed_score', None)
+        if observed is not None and not pd.isna(observed):
+            r_obs = float(observed)
+        else:
+            fallback = row.get('real_outcome_score', global_mean)
+            r_obs = float(global_mean if pd.isna(fallback) else fallback)
 
         # DR correction: direct model estimate + IPS-weighted residual
         dr_target = mu_hat_unchosen + w * (r_obs - mu_hat_chosen)
@@ -253,6 +258,12 @@ def compute_distribution_drift(X_real: np.ndarray, X_cf: np.ndarray) -> float:
 
         # Use shared bin edges across both distributions
         combined = np.concatenate([real_col, cf_col])
+        if combined.size == 0:
+            continue
+        if np.isclose(combined.min(), combined.max()):
+            # Constant feature in both sets: zero divergence contribution.
+            kl_scores.append(0.0)
+            continue
         bins = np.linspace(combined.min(), combined.max(), 20)
 
         real_hist, _ = np.histogram(real_col, bins=bins, density=True)

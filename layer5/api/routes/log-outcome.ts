@@ -59,10 +59,14 @@ async function getAgentTrust(agentId: string): Promise<AgentTrustScore> {
         .eq('agent_id', agentId)
         .maybeSingle();
     if (error || !data) return DEFAULT_TRUST;
+    const allowedStatuses: AgentTrustScore['trust_status'][] = ['trusted', 'probation', 'sandbox', 'suspended'];
+    const normalizedStatus = allowedStatuses.includes(data.trust_status as AgentTrustScore['trust_status'])
+        ? (data.trust_status as AgentTrustScore['trust_status'])
+        : DEFAULT_TRUST.trust_status;
     return {
-        trust_score: data.trust_score,
-        trust_status: data.trust_status,
-        consecutive_failures: data.consecutive_failures,
+        trust_score: typeof data.trust_score === 'number' ? data.trust_score : DEFAULT_TRUST.trust_score,
+        trust_status: normalizedStatus,
+        consecutive_failures: typeof data.consecutive_failures === 'number' ? data.consecutive_failures : DEFAULT_TRUST.consecutive_failures,
     };
 }
 
@@ -310,6 +314,10 @@ async function computePolicyRecommendation(customerId: string, contextId: string
 logOutcomeRouter.post('/', async (c) => {
     const agentId = c.get('agent_id') as string;
     const customerId = c.get('customer_id') as string;
+
+    if (!customerId) {
+        return c.json({ error: 'Missing customer context', code: 'MISSING_CUSTOMER_ID' }, 401);
+    }
 
     try {
         // 1. Parsing & Sanitization

@@ -13,6 +13,19 @@
 -- Schedule weekly retraining check: Sundays at 02:00 UTC
 -- The endpoint is the internal API retraining trigger route.
 -- If pg_net is not available, this acts as a no-op reminder.
+CREATE TABLE IF NOT EXISTS admin_cron_log (
+  id           BIGSERIAL PRIMARY KEY,
+  job_name     TEXT NOT NULL,
+  triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  details      JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_cron_log_job_time
+  ON admin_cron_log (job_name, triggered_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_cron_log_job_trigger_unique
+  ON admin_cron_log (job_name, triggered_at);
+
 DO $$
 BEGIN
   -- Only schedule if pg_cron extension is available
@@ -20,24 +33,23 @@ BEGIN
     SELECT 1 FROM pg_extension WHERE extname = 'pg_cron'
   ) THEN
     -- Unschedule existing job if it exists (idempotent)
-    PERFORM cron.unschedule('counterfactual-retraining-weekly')
-      WHERE EXISTS (
-        SELECT 1 FROM cron.job WHERE jobname = 'counterfactual-retraining-weekly'
-      );
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'counterfactual-retraining-weekly') THEN
+      PERFORM cron.unschedule('counterfactual-retraining-weekly');
+    END IF;
 
     -- Schedule the weekly retraining check
     PERFORM cron.schedule(
       'counterfactual-retraining-weekly',
       '0 2 * * 0',  -- Sundays at 02:00 UTC
-      $$
+      $job$
         -- Increment a heartbeat counter so we can detect if cron is running
         -- The actual retraining is triggered by the API layer (counterfactual_retraining.py)
         -- called via a background worker or edge function.
         -- Here we log a trigger event for observability.
         INSERT INTO admin_cron_log (job_name, triggered_at)
         VALUES ('counterfactual-retraining-weekly', NOW())
-        ON CONFLICT DO NOTHING;
-      $$
+        ON CONFLICT (job_name, triggered_at) DO NOTHING;
+      $job$
     );
 
     RAISE NOTICE 'Scheduled counterfactual-retraining-weekly cron job (Sundays 02:00 UTC)';
@@ -46,17 +58,6 @@ BEGIN
   END IF;
 END;
 $$;
-
--- Lightweight cron log table (used by all admin cron jobs)
-CREATE TABLE IF NOT EXISTS admin_cron_log (
-  id          BIGSERIAL PRIMARY KEY,
-  job_name    TEXT NOT NULL,
-  triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  details     JSONB
-);
-
-CREATE INDEX IF NOT EXISTS idx_admin_cron_log_job_time
-  ON admin_cron_log (job_name, triggered_at DESC);
 
 -- Auto-clean log entries older than 30 days
 CREATE OR REPLACE FUNCTION cleanup_admin_cron_log()
@@ -70,12 +71,13 @@ $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    PERFORM cron.unschedule('admin-cron-log-cleanup')
-      WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'admin-cron-log-cleanup');
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'admin-cron-log-cleanup') THEN
+      PERFORM cron.unschedule('admin-cron-log-cleanup');
+    END IF;
     PERFORM cron.schedule(
       'admin-cron-log-cleanup',
       '0 5 * * *',
-      $$ SELECT cleanup_admin_cron_log(); $$
+      $job$ SELECT cleanup_admin_cron_log(); $job$
     );
   END IF;
 END;

@@ -199,16 +199,22 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
 
     if (!trust) return;
 
-    const oldScore = trust.trust_score;
-    const oldStatus = trust.trust_status;
+    const currentScore = typeof trust.trust_score === 'number' ? trust.trust_score : 0.7;
+    const currentTotalDecisions = typeof trust.total_decisions === 'number' ? trust.total_decisions : 0;
+    const currentCorrectDecisions = typeof trust.correct_decisions === 'number' ? trust.correct_decisions : 0;
+    const currentConsecutiveFailures = typeof trust.consecutive_failures === 'number' ? trust.consecutive_failures : 0;
+    const currentStatus = typeof trust.trust_status === 'string' ? trust.trust_status : 'trusted';
+
+    const oldScore = currentScore;
+    const oldStatus = currentStatus;
     let newScore: number;
     let newFailures: number;
-    let newCorrect = trust.correct_decisions;
+    let newCorrect = currentCorrectDecisions;
 
     if (success) {
         newFailures = 0;
         newCorrect += 1;
-        newScore = Math.min(trust.trust_score * 1.03, 1.0);
+        newScore = Math.min(currentScore * 1.03, 1.0);
     } else {
         // ── Coordinated Failure Interlock ──────────────────────
         // Check if this failure is infrastructure-attributed before applying decay.
@@ -217,10 +223,13 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         let isInfrastructureFailure = false;
         if (actionName) {
             try {
-                const { data: coordFailures } = await supabase.rpc('detect_coordinated_failures', {
+                const { data: coordFailures, error: coordError } = await supabase.rpc('detect_coordinated_failures', {
                     window_minutes: 5,
                     min_agent_count: 3,
                 });
+                if (coordError) {
+                    throw new Error(coordError.message);
+                }
                 if (coordFailures && Array.isArray(coordFailures)) {
                     isInfrastructureFailure = coordFailures.some(
                         (row: { action_name: string }) => row.action_name === actionName
@@ -236,7 +245,7 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
             // Snapshot current trust BEFORE freezing — allows restore after incident resolves
             snapshotTrust(agentId, trust, 'pre_incident', `coordinated:${actionName ?? 'unknown'}`).catch(() => {});
             // Log the excluded failure for audit; no score modification
-            await supabase.from('agent_trust_audit').insert({
+            const { error: auditError } = await supabase.from('agent_trust_audit').insert({
                 agent_id: agentId,
                 customer_id: customerId,
                 event_type: 'failure_excluded_infrastructure',
@@ -246,14 +255,17 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
                 new_status: oldStatus,
                 reason: `Failure excluded: coordinated infrastructure failure detected on action "${actionName}". Trust score frozen.`,
             });
+            if (auditError) {
+                throw new Error(`[trust] failed to write audit event: ${auditError.message}`);
+            }
             console.info('[trust] Failure excluded — coordinated infrastructure event', { agentId, actionName });
             return; // No trust modification
         }
 
         // Normal agent-attributable failure: snapshot then decay
         snapshotTrust(agentId, trust, 'pre_failure').catch(() => {});
-        newFailures = trust.consecutive_failures + 1;
-        newScore = trust.trust_score * Math.pow(0.9, newFailures);
+        newFailures = currentConsecutiveFailures + 1;
+        newScore = currentScore * Math.pow(0.9, newFailures);
     }
 
     let newStatus: string;
@@ -275,7 +287,7 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         .from('agent_trust_scores')
         .update({
             trust_score: newScore,
-            total_decisions: trust.total_decisions + 1,
+            total_decisions: currentTotalDecisions + 1,
             correct_decisions: newCorrect,
             consecutive_failures: newFailures,
             trust_status: newStatus,
@@ -285,7 +297,7 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
         .eq('agent_id', agentId);
 
     if (oldStatus !== newStatus) {
-        await supabase.from('agent_trust_audit').insert({
+        const { error: auditError } = await supabase.from('agent_trust_audit').insert({
             agent_id: agentId,
             customer_id: customerId,
             event_type: newStatus === 'suspended' ? 'suspended' : 'recalibrated',
@@ -297,6 +309,9 @@ async function updateAgentTrust(agentId: string, customerId: string, success: bo
                 ? `Trust recalibrated: ${oldStatus} → ${newStatus}. Score: ${newScore.toFixed(3)}, Failures: ${newFailures}`
                 : `Trust recalibrated: ${oldStatus} → ${newStatus}`,
         });
+        if (auditError) {
+            throw new Error(`[trust] failed to write audit transition: ${auditError.message}`);
+        }
     }
 }
 

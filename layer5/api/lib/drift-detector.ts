@@ -20,8 +20,18 @@
 import { supabase } from './supabase.js';
 import { generateEmbedding, cosineSimilarity } from './context-embed.js';
 
-const DRIFT_THRESHOLD = parseFloat(process.env.EMBEDDING_DRIFT_THRESHOLD ?? '0.995');
-const DRIFT_CHECK_SAMPLE_SIZE = parseInt(process.env.EMBEDDING_DRIFT_SAMPLE_SIZE ?? '100', 10);
+function parseFiniteNumber(raw: string | undefined, fallback: number): number {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(raw ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const DRIFT_THRESHOLD = parseFiniteNumber(process.env.EMBEDDING_DRIFT_THRESHOLD, 0.995);
+const DRIFT_CHECK_SAMPLE_SIZE = parsePositiveInt(process.env.EMBEDDING_DRIFT_SAMPLE_SIZE, 100);
 
 export interface DriftReport {
     mean_similarity: number;
@@ -78,6 +88,10 @@ export async function runDriftDetection(): Promise<DriftReport> {
     for (const entry of sample) {
         const freshVector = await generateEmbedding(entry.sample_text);
         if (!freshVector) continue;
+
+        if (!entry.reference_vector) {
+            continue;
+        }
 
         const storedVec = typeof entry.reference_vector === 'string'
             ? parseVec(entry.reference_vector)
@@ -153,7 +167,16 @@ export async function runDriftDetection(): Promise<DriftReport> {
 
 function parseVec(v: string): number[] {
     try {
-        return v.replace(/[\[\]]/g, '').split(',').map(Number);
+        const parsed = v
+            .replace(/[\[\]]/g, '')
+            .split(',')
+            .map((x) => Number(x.trim()));
+
+        if (parsed.length === 0 || parsed.some((n) => !Number.isFinite(n))) {
+            return [];
+        }
+
+        return parsed;
     } catch {
         return [];
     }
