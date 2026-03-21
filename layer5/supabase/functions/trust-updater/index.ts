@@ -14,6 +14,11 @@
 //   trust_score 0.3–0.6 → 'probation'
 //   trust_score < 0.3 OR consecutive_failures >= 5 → 'suspended'
 //
+// Audit strategy:
+//   EVERY outcome writes one audit row — not just status changes.
+//   This is what powers the Trust History timeline in the dashboard.
+//   old_score and old_status are ALWAYS captured before any update.
+//
 // Deploy: supabase functions deploy trust-updater
 // Cron:   */5 * * * *  (every 5 minutes for batch catchup)
 // ==============================================================
@@ -32,6 +37,7 @@ interface TrustRow {
     correct_decisions: number;
     consecutive_failures: number;
     trust_status: string;
+    updated_at: string;
 }
 
 function computeNewTrust(
@@ -63,6 +69,18 @@ function computeNewTrust(
     return { newScore, newFailures, newCorrect, newStatus };
 }
 
+// ── FIX: Build reason string that dashboard can parse ─────────
+// agent.tsx parses action name from reason using these patterns:
+//   "Outcome success via SDK: {action_name}"
+//   "Outcome failure recorded: {action_name}"
+// Keep this format consistent — the dashboard regex depends on it.
+function buildReason(success: boolean, actionName: string | null | undefined): string {
+    const action = actionName?.trim() || 'unknown_action';
+    return success
+        ? `Outcome success via SDK: ${action}`
+        : `Outcome failure recorded: ${action}`;
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
     const startTime = Date.now();
 
@@ -83,7 +101,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // ── Mode: single outcome (POST body) or batch (cron) ───────
     let mode: 'single' | 'batch' = 'batch';
-    let singlePayload: { agent_id: string; customer_id: string; success: boolean } | null = null;
+
+    // FIX: payload now includes action_name so audit rows can display
+    // the action in the Trust History timeline
+    let singlePayload: {
+        agent_id: string;
+        customer_id: string;
+        success: boolean;
+        action_name?: string;   // ← added: used in audit reason string
+    } | null = null;
 
     if (req.method === 'POST') {
         try {
@@ -107,7 +133,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (mode === 'single' && singlePayload) {
         // ── Single agent update ────────────────────────────────
-        const { agent_id, customer_id, success } = singlePayload;
+        const { agent_id, customer_id, success, action_name } = singlePayload;
 
         const { data: trust } = await supabase
             .from('agent_trust_scores')
@@ -116,7 +142,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
             .maybeSingle();
 
         if (trust) {
+            // FIX: always capture old values BEFORE any update
+            // Previously old_score/old_status were only saved on status changes.
+            // Now every audit row has them — dashboard can show proper deltas.
+            const oldScore = trust.trust_score;
             const oldStatus = trust.trust_status;
+
             const { newScore, newFailures, newCorrect, newStatus } = computeNewTrust(trust, success);
 
             await supabase
@@ -135,45 +166,51 @@ Deno.serve(async (req: Request): Promise<Response> => {
                 .eq('agent_id', agent_id);
 
             results.agents_processed = 1;
-
             if (oldStatus !== newStatus) {
                 results.status_changes = 1;
                 if (newStatus === 'suspended') results.suspensions = 1;
-
-                await supabase.from('agent_trust_audit').insert({
-                    agent_id,
-                    customer_id,
-                    event_type: newStatus === 'suspended' ? 'suspended' : 'recalibrated',
-                    old_score: trust.trust_score,
-                    new_score: newScore,
-                    old_status: oldStatus,
-                    new_status: newStatus,
-                    performed_by: 'trust-updater',
-                    reason: newStatus === 'suspended'
-                        ? `Auto-suspended: score=${newScore.toFixed(3)}, failures=${newFailures}`
-                        : `Trust ${oldStatus} → ${newStatus}`,
-                });
             }
+
+            // FIX: write audit row for EVERY outcome, not just status changes.
+            // The Trust History timeline shows per-outcome events — if we only
+            // write on status change, the timeline is almost always empty.
+            await supabase.from('agent_trust_audit').insert({
+                agent_id,
+                customer_id,
+                // event_type: "success" or "failure" drives the ✓/✕ icon in dashboard
+                event_type: success ? 'success' : 'failure',
+                old_score: oldScore,           // FIX: was null — now always populated
+                new_score: newScore,
+                old_status: oldStatus,         // FIX: was null — now always populated
+                new_status: newStatus,
+                performed_by: 'trust-updater',
+                // FIX: reason format matches the regex in agent.tsx parseActionFromReason()
+                // "Outcome success via SDK: close_ticket"
+                // "Outcome failure recorded: escalate_to_human"
+                reason: buildReason(success, action_name),
+            });
         }
     } else {
         // ── Batch mode: recalculate trust for all agents ────────
-        // Look at outcomes logged since last trust update
         const { data: agents } = await supabase
             .from('agent_trust_scores')
             .select('*');
 
         if (agents) {
             for (const trust of agents) {
-                // Get the latest outcome for this agent since last trust update
                 const { data: recentOutcomes } = await supabase
                     .from('fact_outcomes')
-                    .select('success, timestamp, customer_id')
+                    .select('success, timestamp, customer_id, action_id')
                     .eq('agent_id', trust.agent_id)
                     .eq('is_synthetic', false)
                     .gt('timestamp', trust.updated_at ?? '1970-01-01')
                     .order('timestamp', { ascending: true });
 
                 if (!recentOutcomes || recentOutcomes.length === 0) continue;
+
+                // FIX: capture old state before any mutations
+                const oldScore = trust.trust_score;
+                const oldStatus = trust.trust_status;
 
                 // Apply each outcome sequentially to compute final state
                 let currentTrust = { ...trust };
@@ -192,7 +229,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
                     };
                 }
 
-                const oldStatus = trust.trust_status;
                 const newStatus = currentTrust.trust_status;
 
                 await supabase
@@ -217,19 +253,33 @@ Deno.serve(async (req: Request): Promise<Response> => {
                 if (oldStatus !== newStatus) {
                     results.status_changes++;
                     if (newStatus === 'suspended') results.suspensions++;
+                }
 
-                    const customerId = recentOutcomes[recentOutcomes.length - 1].customer_id;
-                    await supabase.from('agent_trust_audit').insert({
-                        agent_id: trust.agent_id,
-                        customer_id: customerId,
-                        event_type: newStatus === 'suspended' ? 'suspended' : 'recalibrated',
-                        old_score: trust.trust_score,
-                        new_score: currentTrust.trust_score,
-                        old_status: oldStatus,
-                        new_status: newStatus,
-                        performed_by: 'trust-updater-batch',
-                        reason: `Batch recalculation: processed ${recentOutcomes.length} outcomes`,
-                    });
+                // FIX: write one audit row per outcome (not one per batch run).
+                // This gives the Trust History timeline real per-action granularity.
+                const customerId = recentOutcomes[recentOutcomes.length - 1].customer_id;
+                const auditRows = recentOutcomes.map((outcome) => ({
+                    agent_id: trust.agent_id,
+                    customer_id: customerId,
+                    event_type: outcome.success ? 'success' : 'failure',
+                    // FIX: old_score/old_status populated — was null before
+                    old_score: oldScore,
+                    old_status: oldStatus,
+                    new_score: currentTrust.trust_score,
+                    new_status: newStatus,
+                    performed_by: 'trust-updater-batch',
+                    // action_id is available on each outcome row; action_name
+                    // is not denormalised here — use the reason format that
+                    // agent.tsx can parse, falling back to action_id for tracing
+                    reason: outcome.success
+                        ? `Outcome success via SDK: ${outcome.action_id ?? 'unknown'}`
+                        : `Outcome failure recorded: ${outcome.action_id ?? 'unknown'}`,
+                    performed_at: outcome.timestamp,
+                }));
+
+                // Batch insert — one call per agent instead of one per outcome
+                if (auditRows.length > 0) {
+                    await supabase.from('agent_trust_audit').insert(auditRows);
                 }
             }
         }

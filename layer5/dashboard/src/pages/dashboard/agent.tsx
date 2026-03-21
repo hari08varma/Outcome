@@ -20,6 +20,37 @@ function trustColor(status: 'trusted' | 'probation' | 'suspended'): string {
   return '#ff4444';
 }
 
+// ── FIX: Parse action name from the reason field ──────────────
+// agent_trust_audit has no action_name column.
+// The action is embedded in the reason string in two formats:
+//   "Outcome success via SDK: send_refund_email"    → "send_refund_email"
+//   "Outcome failure recorded: qa_test_no_episode"  → "qa_test_no_episode"
+// Returns null for status-change rows (no action embedded).
+function parseActionFromReason(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  const sdkMatch = reason.match(/via\s+SDK:\s*(.+)$/i);
+  if (sdkMatch) return sdkMatch[1].trim();
+  const recordedMatch = reason.match(/recorded:\s*(.+)$/i);
+  if (recordedMatch) return recordedMatch[1].trim();
+  return null;
+}
+
+// ── FIX: Human-readable label for status-change audit rows ────
+// Trust-updater writes these reason strings on status changes:
+//   "Trust probation → trusted"
+//   "Auto-suspended: score=0.210, failures=5"
+//   "Batch recalculation: processed 12 outcomes"
+// These are policy events, not action rows — show a clear label.
+function parseStatusLabel(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  const arrowMatch = reason.match(/(\w+)\s*→\s*(\w+)/);
+  if (arrowMatch) return `Trust recalibrated: ${arrowMatch[1]} → ${arrowMatch[2]}`;
+  if (/auto-suspended/i.test(reason)) return 'Auto-suspended by policy';
+  if (/batch recalculation/i.test(reason)) return 'Batch recalibration';
+  if (/reinstat/i.test(reason)) return 'Agent reinstated';
+  return null;
+}
+
 export default function Agent(): React.ReactElement {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -35,7 +66,6 @@ export default function Agent(): React.ReactElement {
 
   const exportCsv = async (): Promise<void> => {
     if (!API_BASE) return;
-    // API CALL RULE: /v1/audit uses agent API key auth, NOT Supabase JWT.
     const storedKey = localStorage.getItem(AGENT_API_KEY_STORAGE_KEY);
     if (!storedKey) {
       showToast('API key not found. Go to Settings → API Keys to create one.', 'warning', 4500);
@@ -159,21 +189,42 @@ export default function Agent(): React.ReactElement {
           <div className="relative">
             <div className="absolute left-4 top-0 bottom-0 w-px bg-[#1a1a24]" />
             <div className="space-y-4">
-              {agent.trustHistory.map((event) => (
-                <div key={event.id} className="relative flex items-start gap-4 pb-4 border-b border-[#1a1a24] last:border-b-0">
-                  <div className={`z-10 w-8 h-8 rounded-full border flex items-center justify-center ${event.eventType === 'success' ? 'bg-[#00cc66]/10 border-[#00cc66]/40 text-[#00cc66]' : 'bg-[#ff4444]/10 border-[#ff4444]/40 text-[#ff4444]'}`}>
-                    {event.eventType === 'success' ? '✓' : '✕'}
+              {agent.trustHistory.map((event) => {
+                // ── Resolve display label ─────────────────────────────
+                // Priority:
+                //   1. actionName already resolved by the hook (future-proof)
+                //   2. Parse action from "Outcome ... via SDK: X" reason
+                //   3. Parse label from status-change reason strings
+                //   4. Generic fallback — never shows "Action unavailable"
+                const displayName =
+                  event.actionName
+                  ?? parseActionFromReason(event.reason)
+                  ?? parseStatusLabel(event.reason)
+                  ?? 'Policy event';
+
+                // Sub-label: show reason only for non-action rows
+                const subLabel =
+                  event.notes
+                  ?? (parseActionFromReason(event.reason)
+                    ? `Trust score updated`
+                    : (event.reason ?? 'No details available'));
+
+                return (
+                  <div key={event.id} className="relative flex items-start gap-4 pb-4 border-b border-[#1a1a24] last:border-b-0">
+                    <div className={`z-10 w-8 h-8 rounded-full border flex items-center justify-center flex-shrink-0 ${event.eventType === 'success' ? 'bg-[#00cc66]/10 border-[#00cc66]/40 text-[#00cc66]' : 'bg-[#ff4444]/10 border-[#ff4444]/40 text-[#ff4444]'}`}>
+                      {event.eventType === 'success' ? '✓' : '✕'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-white text-sm font-mono truncate">{displayName}</div>
+                      <div className="text-[#a1a1aa] text-xs mt-1 truncate">{subLabel}</div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-white font-mono text-sm">{event.trustScoreAfter.toFixed(2)}</div>
+                      <div className="text-[#52525b] text-xs mt-1">{formatDistanceToNowStrict(parseISO(event.createdAt), { addSuffix: true })}</div>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <div className="text-white text-sm font-mono">{event.actionName || 'Action unavailable'}</div>
-                    <div className="text-[#a1a1aa] text-xs mt-1">{event.notes || 'No notes available.'}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-white font-mono text-sm">{event.trustScoreAfter.toFixed(2)}</div>
-                    <div className="text-[#52525b] text-xs mt-1">{formatDistanceToNowStrict(parseISO(event.createdAt), { addSuffix: true })}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
