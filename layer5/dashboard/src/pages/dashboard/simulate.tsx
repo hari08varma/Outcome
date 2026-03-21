@@ -652,17 +652,34 @@ export default function SimulatePage() {
         setBootstrapLoading(true);
         setBootstrapError('');
 
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+            setBootstrapError('Not authenticated');
+            setBootstrapLoading(false);
+            return;
+        }
+
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('customer_id')
+            .eq('id', user.id)
+            .single();
+        const customerId = profile?.customer_id ?? null;
+
         const [agentsResult, outcomesResult] = await Promise.all([
             supabase
                 .from('dim_agents')
                 .select('agent_id, agent_name')
                 .eq('is_active', true)
                 .order('agent_name'),
-            supabase
-                .from('fact_outcomes')
-                .select('outcome_id', { count: 'exact', head: true })
-                .eq('is_deleted', false)
-                .eq('is_synthetic', false),
+            customerId
+                ? supabase
+                    .from('fact_outcomes')
+                    .select('outcome_id', { count: 'exact', head: true })
+                    .eq('customer_id', customerId)
+                    .eq('is_deleted', false)
+                    .eq('is_synthetic', false)
+                : Promise.resolve({ count: 0, error: null }),
         ]);
 
         if (agentsResult.error) {
@@ -697,7 +714,7 @@ export default function SimulatePage() {
             const { data } = await supabase
                 .from('dim_actions')
                 .select('action_id, action_name')
-                .eq('agent_id', selectedAgentId)
+                .eq('is_active', true)
                 .order('action_name');
             if (data) setAvailableActions(data as Action[]);
         })();
