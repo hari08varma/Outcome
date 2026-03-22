@@ -105,10 +105,11 @@ getScoresRouter.get('/', async (c) => {
     let contextMatch: number | null = null;  // null = exact match
 
     if (!resolvedContextId && issueType) {
-        // Step 1: Try exact string match (fast path)
+        // Step 1: Try exact string match (fast path) — scoped to this customer
         const { data: exactCtx, error } = await supabase
             .from('dim_contexts')
             .select('context_id')
+            .eq('customer_id', customerId)
             .eq('issue_type', issueType)
             .order('created_at', { ascending: false })
             .limit(1)
