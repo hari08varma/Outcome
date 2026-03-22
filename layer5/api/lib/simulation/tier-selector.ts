@@ -170,15 +170,23 @@ export async function runSimulation(
         () => null,
       );
 
-      if (
-        tier2Result &&
-        tier2Result.confidenceWidth <= TIER2_CONFIDENCE_MAX_WIDTH
-      ) {
+      if (tier2Result === null) {
+        // No trained model for this customer yet — fall back to Tier 3 (MCTS).
+        // Tier 3 (MCTS) does not require a trained model.
+        console.info('[tier-selector] No world model for customer — falling back to Tier 3', {
+          customerId: request.customerId,
+        });
+        primaryPrediction = await tier3MCTS(request, allActions, contextFreq).catch((err) => {
+          console.error('[SimEngine] MCTS fallback failed:', err);
+          return null;
+        });
+        if (primaryPrediction) actualTier = 3;
+      } else if (tier2Result.confidenceWidth <= TIER2_CONFIDENCE_MAX_WIDTH) {
         primaryPrediction = tier2Result;
         actualTier = 2;
-      } else {
-        actualTier = 1; // fall back — model not confident
       }
+      // else: model exists but low confidence — fall through to tier1
+      if (!primaryPrediction) actualTier = 1;
     }
 
     if (!primaryPrediction) {

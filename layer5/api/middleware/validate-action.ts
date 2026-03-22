@@ -101,8 +101,15 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
     const actionName = body.action_name ?? body.actionName;
     const customerId = ((c as any).get('customerId') ?? c.get('customer_id')) as string | undefined;
 
+    // If action_name is absent but action_id is present,
+    // skip middleware validation — resolveActionId() handles it.
     if (!actionName || typeof actionName !== 'string') {
-        return c.json({ error: 'action_name is required', code: 'MISSING_FIELD' }, 400);
+        if (body.action_id || body.action_id_input) {
+            c.set('parsed_body', body);
+            await next();
+            return;
+        }
+        return c.json({ error: 'action_name or action_id is required', code: 'MISSING_FIELD' }, 400);
     }
 
     if (!customerId) {
@@ -115,32 +122,35 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         .select('action_id, action_name, is_active')
         .eq('action_name', actionName.trim())
         .eq('customer_id', customerId)
-        .single();
+        .maybeSingle();
 
     if (!existingAction) {
         // AUTO-REGISTER: silently create on first use
         // This means users never need to manually register actions
         const { data: newAction, error: insertError } = await supabase
             .from('dim_actions')
-            .insert({
-                action_name: actionName.trim(),
-                customer_id: customerId,
-                is_active: true,
-                action_category: 'auto-discovered',
+            .upsert({
+                action_name:        actionName.trim(),
+                customer_id:        customerId,
+                is_active:          true,
+                action_category:    'auto-discovered',
                 action_description: 'Auto-registered on first use by SDK',
-                required_params: [],
-                validation_mode: 'advisory',
+                required_params:    [],
+                validation_mode:    'advisory',
+            }, {
+                onConflict:       'action_name,customer_id',
+                ignoreDuplicates: false,
             })
             .select('action_id, action_name, is_active')
-            .single();
+            .maybeSingle();
 
-        if (insertError) {
+        if (insertError || !newAction) {
             // Only fail if DB itself errors
             console.error('[validate-action] Auto-register failed', {
                 action_name: actionName,
                 customer_id: customerId,
-                error_code: insertError.code,
-                error_message: insertError.message,
+                error_code: insertError?.code,
+                error_message: insertError?.message,
             });
             return c.json({ error: 'Failed to register action' }, 500);
         }

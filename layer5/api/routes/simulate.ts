@@ -13,51 +13,19 @@
 
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { supabase } from '../lib/supabase.js';
 import { runSimulation } from '../lib/simulation/tier-selector.js';
 
 export const simulateRouter = new Hono();
 
 // ── Request validation schema ─────────────────────────────────
 const SimulateBody = z.object({
-  agent_id: z.string().min(1),
+  agent_id: z.string().optional(),   // ignored — auth middleware provides it
   context: z.record(z.string(), z.unknown()),
   proposed_sequence: z.array(z.string().min(1)).min(1).max(5),
   episode_history: z.array(z.string()).optional().default([]),
   simulate_alternatives: z.number().int().min(0).max(3).optional().default(2),
   max_sequence_depth: z.number().int().min(1).max(5).optional().default(5),
 });
-
-/**
- * Resolve agent_id: look up the agent UUID and customer_id in dim_agents.
- * Accepts either a UUID or an agent_name.
- * Returns { agentId, customerId } or null if not found.
- */
-async function resolveAgent(agentId: string): Promise<{ agentId: string; customerId: string } | null> {
-  // Try as-is first (most likely a UUID from auth middleware)
-  const { data: byId } = await supabase
-    .from('dim_agents')
-    .select('agent_id, customer_id')
-    .eq('agent_id', agentId)
-    .maybeSingle();
-
-  if (byId?.agent_id && byId?.customer_id) {
-    return { agentId: byId.agent_id, customerId: byId.customer_id };
-  }
-
-  // Try as agent_name
-  const { data: byName } = await supabase
-    .from('dim_agents')
-    .select('agent_id, customer_id')
-    .eq('agent_name', agentId)
-    .maybeSingle();
-
-  if (byName?.agent_id && byName?.customer_id) {
-    return { agentId: byName.agent_id, customerId: byName.customer_id };
-  }
-
-  return null;
-}
 
 /**
  * Compute a deterministic context hash from a context object.
@@ -98,7 +66,6 @@ simulateRouter.post('/', async (c) => {
   }
 
   const {
-    agent_id,
     context,
     proposed_sequence,
     episode_history,
@@ -106,10 +73,11 @@ simulateRouter.post('/', async (c) => {
     max_sequence_depth,
   } = body;
 
-  // Resolve agent UUID + customer_id
-  const resolved = await resolveAgent(agent_id);
-  if (!resolved) {
-    return c.json({ error: 'Unknown agent', code: 'AGENT_NOT_FOUND' }, 404);
+  const agentId    = c.get('agent_id')    as string;
+  const customerId = c.get('customer_id') as string;
+
+  if (!agentId || !customerId) {
+    return c.json({ error: 'Missing agent context', code: 'MISSING_AGENT' }, 401);
   }
 
   // Compute context hash
@@ -117,8 +85,8 @@ simulateRouter.post('/', async (c) => {
 
   // Run simulation
   const result = await runSimulation({
-    customerId: resolved.customerId,
-    agentId: resolved.agentId,
+    customerId: customerId,
+    agentId: agentId,
     context,
     contextHash,
     proposedSequence: proposed_sequence,

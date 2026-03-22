@@ -1,5 +1,6 @@
 import { Context, Hono } from 'hono';
 import { z } from 'zod';
+import crypto from 'node:crypto';
 import { supabase } from '../lib/supabase.js';
 import { invalidateCache, getCachedScore, getScores } from '../lib/scoring.js';
 import {
@@ -16,9 +17,10 @@ const MAX_RAW_CONTEXT_BYTES = 64 * 1024;
 
 // ── Request schema ────────────────────────────────────────────
 const LogOutcomeBody = z.object({
-    session_id: z.string().uuid(),
+    session_id: z.string().uuid().optional(),
     idempotency_key: z.string().max(255).optional(),
-    action_name: z.string().min(1).max(255),
+    action_name: z.string().min(1).max(255).optional(),
+    action_id_input: z.string().optional(),
     action_params: z.record(z.string(), z.unknown()).optional(),
     issue_type: z.string().min(1).max(255),
     success: z.boolean(),
@@ -121,7 +123,7 @@ async function getAgentTrust(agentId: string): Promise<AgentTrustScore> {
         .eq('agent_id', agentId)
         .maybeSingle();
     if (error || !data) return DEFAULT_TRUST;
-    const allowedStatuses: AgentTrustScore['trust_status'][] = ['trusted', 'probation', 'sandbox', 'suspended'];
+    const allowedStatuses: AgentTrustScore['trust_status'][] = ['trusted', 'probation', 'sandbox', 'suspended', 'new', 'degraded'];
     const normalizedStatus = allowedStatuses.includes(data.trust_status as AgentTrustScore['trust_status'])
         ? (data.trust_status as AgentTrustScore['trust_status'])
         : DEFAULT_TRUST.trust_status;
@@ -179,6 +181,11 @@ async function parseAndSanitizeRequest(c: Context) {
         throw new Error(`VALIDATION_ERROR:${details}`);
     }
 
+    // Auto-generate session_id when SDK does not send it
+    if (!body.session_id) {
+        body.session_id = crypto.randomUUID();
+    }
+
     if (body.raw_context) body.raw_context = sanitizeContext(body.raw_context);
     if (body.error_message) body.error_message = sanitizeString(body.error_message, 1000);
     if (body.error_code) body.error_code = sanitizeString(body.error_code, 100);
@@ -233,11 +240,33 @@ async function verifyOutcome(body: any, customerId: string, agentId: string) {
     return verification;
 }
 
-async function resolveActionId(c: Context, body: any, customerId: string) {
+async function resolveActionId(c: Context, body: any, customerId: string): Promise<string> {
+    // Path 1: action_id provided (backward compat) — resolve to action_name
+    if (!body.action_name && (body.action_id_input || body.action_id)) {
+        const incomingId = body.action_id_input ?? body.action_id;
+        const { data: actionRow } = await supabase
+            .from('dim_actions')
+            .select('action_id, action_name')
+            .eq('action_id', incomingId)
+            .eq('customer_id', customerId)
+            .maybeSingle();
+
+        if (actionRow) {
+            body.action_name = actionRow.action_name;
+            return actionRow.action_id;
+        }
+        // action_id not found — synthesize a name and auto-register
+        body.action_name = `action_${incomingId.toString().slice(0, 8)}`;
+    }
+
+    // Path 2: action_name already resolved by middleware
     const validatedAction = c.get('validated_action') as any;
     if (validatedAction) return validatedAction.action_id;
 
-    // Fallback: validate directly
+    // Path 3: direct validation
+    if (!body.action_name) {
+        throw new Error('UNKNOWN_ACTION:MISSING_FIELD:action_name or action_id is required');
+    }
     const { validateAction } = await import('../middleware/validate-action.js');
     const result = await validateAction(body.action_name, customerId, body.action_params);
     if (!result.valid) throw new Error(`UNKNOWN_ACTION:${result.error_code ?? 'UNKNOWN_ACTION'}:${result.error}`);
@@ -373,19 +402,22 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
     }
 }
 
-async function computePolicyRecommendation(customerId: string, contextId: string, agentId: string, issueType: string) {
+async function computePolicyRecommendation(
+    customerId: string, contextId: string, agentId: string, issueType: string
+): Promise<{ policy: ReturnType<typeof getPolicyDecision>; trust: AgentTrustScore } | null> {
     try {
         const [scores, agentTrust, customerConfig] = await Promise.all([
             getScores(customerId, contextId, issueType, false),
             getAgentTrust(agentId),
             getCustomerConfig(customerId),
         ]);
-        return getPolicyDecision({
+        const policy = getPolicyDecision({
             rankedActions: scores.ranked_actions,
-            agentTrust: agentTrust,
-            customerConfig: customerConfig,
+            agentTrust,
+            customerConfig,
             coldStartActive: scores.cold_start,
         });
+        return { policy, trust: agentTrust };
     } catch {
         return null;
     }
@@ -440,14 +472,16 @@ logOutcomeRouter.post('/', async (c) => {
 
         // 7. Fire-and-forget Asynchronous Pipelines via Orchestrator
         orchestrateOutcome({
-            agentId, customerId, outcomeId: outcome.outcome_id, actionId, actionName: body.action_name,
+            agentId, customerId, outcomeId: outcome.outcome_id, actionId, actionName: body.action_name ?? 'unknown',
             contextId, issueType: body.issue_type, finalSuccess, finalOutcomeScore,
             responseMs: body.response_time_ms ?? null, episodeId: body.episode_id,
             businessOutcome: body.business_outcome, decisionId: body.decision_id, decisionRecord,
         }).catch(err => console.error('[log-outcome] orchestrator failed:', { error: err.message, outcomeId: outcome.outcome_id }));
 
         // 8. Policy Engine Wrap-up
-        const policyResult = await computePolicyRecommendation(customerId, contextId, agentId, body.issue_type);
+        const policyResultData = await computePolicyRecommendation(customerId, contextId, agentId, body.issue_type);
+        const policyResult = policyResultData?.policy ?? null;
+        const agentTrust   = policyResultData?.trust ?? DEFAULT_TRUST;
         const finalValidatedAction = c.get('validated_action') as any;
 
         const counterfactualsComputed = !!(decisionRecord?.ranked_actions);
@@ -459,7 +493,12 @@ logOutcomeRouter.post('/', async (c) => {
             action_id: actionId,
             context_id: contextId,
             timestamp: outcome.timestamp,
-            message: `Outcome logged. Action "${body.action_name}" — ${finalSuccess ? 'SUCCESS' : 'FAILURE'}`,
+            message: `Outcome logged. Action "${body.action_name ?? 'unknown'}" — ${finalSuccess ? 'SUCCESS' : 'FAILURE'}`,
+            // ── SDK required response fields ──────────────────
+            logged:            true,
+            agent_trust_score: agentTrust.trust_score,
+            trust_status:      agentTrust.trust_status,
+            policy:            policyResult?.policy ?? 'explore',
             recommendation: policyResult?.policy ?? null,
             next_actions: policyResult ? {
                 policy: policyResult.policy, reason: policyResult.reason,

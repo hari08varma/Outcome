@@ -34,7 +34,9 @@ class GetScoresResponse(BaseModel):
 
 class LogOutcomeRequest(BaseModel):
     agent_id: str
-    action_id: str
+    action_name: str      # API validates by name, not ID
+    action_id: str | None = None   # kept for backward compat — ignored by API
+    session_id: str | None = None
     context_id: str
     issue_type: str
     success: bool

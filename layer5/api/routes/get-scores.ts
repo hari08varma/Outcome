@@ -95,7 +95,7 @@ getScoresRouter.get('/', async (c) => {
 
     if (!issueType && !contextId) {
         return c.json(
-            { error: 'Provide either issue_type or context_id query parameter', code: 'MISSING_PARAM' },
+            { error: 'Provide either issue_type or context_id query parameter', code: 'MISSING_PARAM', agent_id: '' },
             400
         );
     }
@@ -139,16 +139,22 @@ getScoresRouter.get('/', async (c) => {
                 console.warn('[get-scores] Embedding fallback failed:', err.message);
             }
 
-            // If still no context found → 404
+            // If still no context found → cold start (200, not 404)
             if (!resolvedContextId) {
-                return c.json(
-                    {
-                        error: `No context found for issue_type="${issueType}". ` +
-                            'Log at least one outcome first to create the context.',
-                        code: 'CONTEXT_NOT_FOUND',
+                return c.json({
+                    ranked_actions:    [],
+                    top_action:        null,
+                    cold_start:        true,
+                    context_id:        '',
+                    agent_id:          agentId ?? '',
+                    policy:            'explore',
+                    policy_reason:     'No prior context — cold start active',
+                    served_from_cache: false,
+                    cold_start_warning: {
+                        message:        `No context found for issue_type="${issueType}". Cold-start active.`,
+                        recommendation: 'Log at least one outcome to seed this context.',
                     },
-                    404
-                );
+                }, 200);
             }
         }
     }
@@ -295,6 +301,7 @@ getScoresRouter.get('/', async (c) => {
             should_escalate: result.should_escalate,
             cold_start: result.cold_start,
             context_id: resolvedContextId,
+            agent_id: agentId ?? '',
             customer_id: customerId,
             issue_type: issueType ?? null,
             context_match: contextMatch,
