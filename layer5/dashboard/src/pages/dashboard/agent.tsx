@@ -144,21 +144,27 @@ export default function Agent(): React.ReactElement {
               <h1 className="text-2xl font-bold text-white">{agent.agentName}</h1>
               <p className="text-[#52525b] text-xs mt-1">Created {createdText}</p>
             </div>
-            <span className={`uppercase tracking-wider text-xs font-bold px-3 py-1 rounded-full ${statusBadge(agent.status)}`}>{agent.status}</span>
+            {agent.totalOutcomes > 0 && (
+              <span className={`uppercase tracking-wider text-xs font-bold px-3 py-1 rounded-full ${statusBadge(agent.status)}`}>{agent.status}</span>
+            )}
           </div>
 
           <div className="mb-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[#a1a1aa] text-xs font-semibold tracking-wide">TRUST SCORE</span>
-              {agent.trustScore !== null ? (
-                <span className="text-white font-mono text-lg font-bold">{agent.trustScore.toFixed(2)} / 1.0</span>
-              ) : (
-                <span className="text-[#52525b] text-sm font-normal">No outcomes logged yet</span>
-              )}
-            </div>
-            <div className="h-2 bg-[#1a1a24] rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min((agent.trustScore ?? 0) * 100, 100))}%`, backgroundColor: barColor }} />
-            </div>
+            {agent.totalOutcomes > 0 ? (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[#a1a1aa] text-xs font-semibold tracking-wide">TRUST SCORE</span>
+                  <span className="text-white font-mono text-lg font-bold">{(agent.trustScore ?? 0).toFixed(2)} / 1.0</span>
+                </div>
+                <div className="h-2 bg-[#1a1a24] rounded-full overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min((agent.trustScore ?? 0) * 100, 100))}%`, backgroundColor: barColor }} />
+                </div>
+              </>
+            ) : (
+              <p className="text-[#52525b] text-xs leading-relaxed">
+                Trust score appears after your first outcome is logged via the SDK.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-6">
