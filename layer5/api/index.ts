@@ -348,12 +348,18 @@ v1.route('/admin/trigger-training', triggerTrainingRoute);
 v1.route('/admin/restore-trust-snapshot', restoreTrustSnapshotRouter);
 v1.route('/admin/embedding-drift', embeddingDriftRouter);
 
-v1.use('/log-outcome/*', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
+v1.use('/log-outcome',    primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
+v1.use('/log-outcome/*',  primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
+v1.use('/outcome-feedback',   primaryAuth, rateLimitMiddleware());
 v1.use('/outcome-feedback/*', primaryAuth, rateLimitMiddleware());
-v1.use('/get-scores/*', primaryAuth, rateLimitMiddleware());
-v1.use('/get-patterns/*', primaryAuth, rateLimitMiddleware());
-v1.use('/audit/*', primaryAuth, rateLimitMiddleware());
-v1.use('/simulate/*', primaryAuth, rateLimitMiddleware());
+v1.use('/get-scores',    primaryAuth, rateLimitMiddleware());
+v1.use('/get-scores/*',  primaryAuth, rateLimitMiddleware());
+v1.use('/get-patterns',  primaryAuth, rateLimitMiddleware());
+v1.use('/get-patterns/*',primaryAuth, rateLimitMiddleware());
+v1.use('/audit',         primaryAuth, rateLimitMiddleware());
+v1.use('/audit/*',       primaryAuth, rateLimitMiddleware());
+v1.use('/simulate',      primaryAuth, rateLimitMiddleware());
+v1.use('/simulate/*',    primaryAuth, rateLimitMiddleware());
 
 v1.route('/log-outcome', logOutcomeRouter);
 v1.route('/outcome-feedback', outcomeFeedbackRouter);

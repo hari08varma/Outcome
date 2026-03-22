@@ -25,6 +25,7 @@ const LogOutcomeBody = z.object({
     issue_type: z.string().min(1).max(255),
     success: z.boolean(),
     response_time_ms: z.number().int().positive().optional(),
+    response_ms: z.number().int().positive().optional(), // SDK alias — maps to response_time_ms
     error_code: z.string().max(100).optional(),
     error_message: z.string().max(1000).optional(),
     raw_context: z.record(z.string(), z.unknown()).optional(),
@@ -186,6 +187,9 @@ async function parseAndSanitizeRequest(c: Context) {
         body.session_id = crypto.randomUUID();
     }
 
+    // Normalize response_ms (SDK alias) → response_time_ms
+    (body as any).response_time_ms = body.response_time_ms ?? (body as any).response_ms ?? null;
+
     if (body.raw_context) body.raw_context = sanitizeContext(body.raw_context);
     if (body.error_message) body.error_message = sanitizeString(body.error_message, 1000);
     if (body.error_code) body.error_code = sanitizeString(body.error_code, 100);
@@ -255,9 +259,12 @@ async function resolveActionId(c: Context, body: any, customerId: string): Promi
             body.action_name = actionRow.action_name;
             return actionRow.action_id;
         }
-        // action_id not recognized for this tenant — fail fast with a clear error.
-        // Do not synthesize a name: there is nothing to auto-register against an unknown UUID.
-        throw new Error(`UNKNOWN_ACTION:ACTION_NOT_FOUND:action_id not found in this tenant's registry`);
+        // action_id came from our own get_scores response but the action row
+        // doesn't exist yet (cold-start: scores returned a UUID before dim_actions
+        // was seeded). Auto-register with a stable name derived from the UUID.
+        const derivedName = `action_${(incomingId as string).slice(0, 8)}`;
+        body.action_name = derivedName;
+        // Fall through to Path 3 — validateAction() will auto-register via upsert.
     }
 
     // Path 2: action_name already resolved by middleware
