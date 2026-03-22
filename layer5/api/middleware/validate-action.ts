@@ -135,7 +135,7 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
                 is_active:          true,
                 action_category:    'auto-discovered',
                 action_description: 'Auto-registered on first use by SDK',
-                required_params:    [],
+                required_params:    {},
                 validation_mode:    'advisory',
             }, {
                 onConflict:       'action_name,customer_id',

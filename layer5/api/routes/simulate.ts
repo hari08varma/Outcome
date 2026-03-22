@@ -60,6 +60,7 @@ simulateRouter.post('/', async (c) => {
         error: 'Invalid request body',
         details: err.errors ?? err.message,
         code: 'VALIDATION_ERROR',
+        agent_id: '',
       },
       400,
     );
@@ -77,7 +78,7 @@ simulateRouter.post('/', async (c) => {
   const customerId = c.get('customer_id') as string;
 
   if (!agentId || !customerId) {
-    return c.json({ error: 'Missing agent context', code: 'MISSING_AGENT' }, 401);
+    return c.json({ error: 'Missing agent context', code: 'MISSING_AGENT', agent_id: '' }, 401);
   }
 
   // Compute context hash

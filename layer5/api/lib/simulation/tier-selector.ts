@@ -171,16 +171,20 @@ export async function runSimulation(
       );
 
       if (tier2Result === null) {
-        // No trained model for this customer yet — fall back to Tier 3 (MCTS).
-        // Tier 3 (MCTS) does not require a trained model.
-        console.info('[tier-selector] No world model for customer — falling back to Tier 3', {
-          customerId: request.customerId,
-        });
-        primaryPrediction = await tier3MCTS(request, allActions, contextFreq).catch((err) => {
-          console.error('[SimEngine] MCTS fallback failed:', err);
-          return null;
-        });
-        if (primaryPrediction) actualTier = 3;
+        // No model artifact returned. Only try MCTS if this is the first time attempting
+        // it — i.e., tier was originally 2 (MCTS not yet tried). If tier was 3, MCTS
+        // already ran and failed above, so retrying it here is redundant and will fail again.
+        if (tier === 2) {
+          console.info('[tier-selector] No world model for customer — falling back to Tier 3 MCTS', {
+            customerId: request.customerId,
+          });
+          primaryPrediction = await tier3MCTS(request, allActions, contextFreq).catch((err) => {
+            console.error('[SimEngine] MCTS fallback failed:', err);
+            return null;
+          });
+          if (primaryPrediction) actualTier = 3;
+        }
+        // If tier === 3: MCTS was already attempted above and failed — skip straight to tier1.
       } else if (tier2Result.confidenceWidth <= TIER2_CONFIDENCE_MAX_WIDTH) {
         primaryPrediction = tier2Result;
         actualTier = 2;

@@ -255,8 +255,9 @@ async function resolveActionId(c: Context, body: any, customerId: string): Promi
             body.action_name = actionRow.action_name;
             return actionRow.action_id;
         }
-        // action_id not found — synthesize a name and auto-register
-        body.action_name = `action_${incomingId.toString().slice(0, 8)}`;
+        // action_id not recognized for this tenant — fail fast with a clear error.
+        // Do not synthesize a name: there is nothing to auto-register against an unknown UUID.
+        throw new Error(`UNKNOWN_ACTION:ACTION_NOT_FOUND:action_id not found in this tenant's registry`);
     }
 
     // Path 2: action_name already resolved by middleware
