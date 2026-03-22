@@ -36,7 +36,12 @@ export async function tier1Predict(
     ...request.proposedSequence,
   ];
 
-  // Query sequences that match the context
+  // Query sequences that match the context.
+  // TODO: Add .eq('customer_id', request.customerId) once customer_id is added to
+  // action_sequences and mv_sequence_scores via schema migration. Current isolation
+  // is implicit: context_hash = `${context_id}:${issue_type}` and context_id is
+  // customer-scoped (migration 044), so cross-tenant hash collisions are unlikely
+  // but not guaranteed at the DB level.
   const { data: sequences } = await supabase
     .from('mv_sequence_scores')
     .select('*')

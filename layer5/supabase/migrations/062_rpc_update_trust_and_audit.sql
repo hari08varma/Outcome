@@ -35,7 +35,10 @@ CREATE OR REPLACE FUNCTION update_trust_and_audit(
 ) RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
+DECLARE
+  rows_updated INT;
 BEGIN
   -- Atomically update trust score and write audit row in one transaction.
   -- If either operation fails, both are rolled back.
@@ -50,6 +53,13 @@ BEGIN
     suspension_reason     = p_suspension_reason,
     updated_at            = p_updated_at
   WHERE agent_id = p_agent_id;
+
+  -- Guard: if no row was updated, the agent_id doesn't exist.
+  -- Raise an exception so the audit INSERT is also rolled back (atomicity guarantee).
+  GET DIAGNOSTICS rows_updated = ROW_COUNT;
+  IF rows_updated = 0 THEN
+    RAISE EXCEPTION 'update_trust_and_audit: no agent_trust_scores row found for agent_id %', p_agent_id;
+  END IF;
 
   INSERT INTO agent_trust_audit (
     agent_id,
@@ -75,7 +85,7 @@ BEGIN
 END;
 $$;
 
--- Grant execute to authenticated and service_role
+-- Grant execute to service_role only (server-side; authenticated users must not call directly)
 GRANT EXECUTE ON FUNCTION update_trust_and_audit TO service_role;
 
 -- Verification

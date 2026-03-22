@@ -62,6 +62,14 @@ BEGIN
     );
 
     BEGIN
+      -- Race-condition guard: another session may have inserted the profile
+      -- between the outer FOR SELECT and this INSERT. Skip to avoid orphaned
+      -- dim_customers rows (customer created but profile already exists).
+      IF EXISTS (SELECT 1 FROM user_profiles WHERE id = u.id) THEN
+          RAISE NOTICE 'Backfill: user % already has a profile (concurrent insert), skipping.', u.id;
+          CONTINUE;
+      END IF;
+
       IF customer_has_is_active THEN
         INSERT INTO dim_customers (
           company_name,
@@ -139,14 +147,13 @@ BEGIN
       )
       ON CONFLICT DO NOTHING;
 
-      RAISE NOTICE 'Backfill: provisioned user % (%).', u.id, u.email;
+      RAISE NOTICE 'Backfill: provisioned user %.', u.id;
 
     EXCEPTION WHEN OTHERS THEN
       PERFORM pg_notify(
         'layer5_account_setup_error',
         json_build_object(
           'user_id', u.id,
-          'email', u.email,
           'error', SQLERRM,
           'sqlstate', SQLSTATE,
           'occurred_at', NOW(),
@@ -154,8 +161,8 @@ BEGIN
         )::text
       );
 
-      RAISE WARNING 'Backfill failed for user % (%): % [%]',
-        u.id, u.email, SQLERRM, SQLSTATE;
+      RAISE WARNING 'Backfill failed for user %: % [%]',
+        u.id, SQLERRM, SQLSTATE;
 
       CONTINUE;
     END;

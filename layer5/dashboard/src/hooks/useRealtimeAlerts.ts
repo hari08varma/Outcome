@@ -33,6 +33,8 @@ export function useRealtimeAlerts(
 ): { isConnected: boolean } {
     const [isConnected, setIsConnected] = useState(false);
     const channelId = useRef(crypto.randomUUID());
+    const onNewAlertRef = useRef(onNewAlert);
+    onNewAlertRef.current = onNewAlert;
 
     useEffect(() => {
         const channel = supabase
@@ -45,7 +47,7 @@ export function useRealtimeAlerts(
                     table: 'degradation_alert_events',
                 },
                 (payload: any) => {
-                    onNewAlert(payload.new as AlertRow);
+                    onNewAlertRef.current(payload.new as AlertRow);
                 },
             )
             .subscribe((status: string) => {
@@ -53,7 +55,7 @@ export function useRealtimeAlerts(
             });
 
         return () => {
-            void channel.unsubscribe();
+            void supabase.removeChannel(channel);
         };
     }, []); // subscribe once
 

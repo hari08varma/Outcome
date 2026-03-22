@@ -21,6 +21,8 @@ export function useRealtimeOutcomes(
 ): { isConnected: boolean } {
     const [isConnected, setIsConnected] = useState(false);
     const fallbackRef = useRef(false);
+    const onNewOutcomeRef = useRef(onNewOutcome);
+    onNewOutcomeRef.current = onNewOutcome;
 
     useEffect(() => {
         const channelName = agentId
@@ -49,7 +51,7 @@ export function useRealtimeOutcomes(
                     if (agentId && fallbackRef.current && row.agent_id !== agentId) {
                         return;
                     }
-                    onNewOutcome(row);
+                    onNewOutcomeRef.current(row);
                 },
             )
             .subscribe((status: string) => {
@@ -57,7 +59,7 @@ export function useRealtimeOutcomes(
             });
 
         return () => {
-            void channel.unsubscribe();
+            void supabase.removeChannel(channel);
         };
     }, [agentId]); // re-subscribe if agentId changes
 

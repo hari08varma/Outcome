@@ -19,6 +19,8 @@ export function useRealtimeTrust(
 ): { isConnected: boolean } {
     const [isConnected, setIsConnected] = useState(false);
     const channelId = useRef(crypto.randomUUID());
+    const onTrustChangeRef = useRef(onTrustChange);
+    onTrustChangeRef.current = onTrustChange;
 
     useEffect(() => {
         const channel = supabase
@@ -31,7 +33,7 @@ export function useRealtimeTrust(
                     table: 'agent_trust_scores',
                 },
                 (payload: any) => {
-                    onTrustChange(payload.new as TrustRow);
+                    onTrustChangeRef.current(payload.new as TrustRow);
                 },
             )
             .on(
@@ -42,7 +44,7 @@ export function useRealtimeTrust(
                     table: 'agent_trust_scores',
                 },
                 (payload: any) => {
-                    onTrustChange(payload.new as TrustRow);
+                    onTrustChangeRef.current(payload.new as TrustRow);
                 },
             )
             .subscribe((status: string) => {
@@ -50,7 +52,7 @@ export function useRealtimeTrust(
             });
 
         return () => {
-            void channel.unsubscribe();
+            void supabase.removeChannel(channel);
         };
     }, []); // subscribe once
 

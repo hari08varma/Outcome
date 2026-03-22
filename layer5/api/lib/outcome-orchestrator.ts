@@ -138,6 +138,10 @@ async function upsertLiveTrustScore(
         .order('timestamp', { ascending: false })
         .limit(100);
 
+    if (error) {
+        console.warn('[trust] upsertLiveTrustScore: failed to fetch outcomes:', error.message);
+    }
+
     if (error || !outcomes || outcomes.length === 0) {
         // Ensure zero-outcome agents stay in 'new' state with no score.
         // Guards against any race condition or manual call writing a stale score.
@@ -187,7 +191,7 @@ async function upsertLiveTrustScore(
     // INVARIANT 7: every trust score change must produce one audit row.
     // upsertLiveTrustScore is a recalculation, not an outcome event — use
     // event_type='recalculation' so dashboard can distinguish from SDK outcomes.
-    await supabase.from('agent_trust_audit').insert({
+    const { error: auditError } = await supabase.from('agent_trust_audit').insert({
         agent_id:     agentId,
         customer_id:  customerId,
         event_type:   'recalculation',
@@ -196,6 +200,9 @@ async function upsertLiveTrustScore(
         performed_by: 'upsert-live-trust-score',
         reason:       'Live score recalculation from last 100 outcomes',
     });
+    if (auditError) {
+        console.error('[trust] upsertLiveTrustScore: audit INSERT failed (INVARIANT 7):', auditError.message);
+    }
 }
 
 // ── Trust Snapshot (fire-and-forget) ──────────────────────────

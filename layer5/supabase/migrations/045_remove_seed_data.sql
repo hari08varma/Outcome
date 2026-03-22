@@ -1,11 +1,7 @@
 -- Remove cold-start seed actions (the 8 fake actions)
--- These were inserted by coldstartpriors.sql for dev testing
-DELETE FROM dim_actions 
-WHERE created_at < '2026-03-10'  
-AND customer_id IN (
-  SELECT customer_id FROM dim_customers 
-  WHERE created_at < '2026-03-10'
-);
+-- Target seed UUIDs by known prefix (b0000000-...) to avoid deleting real production records.
+DELETE FROM dim_actions
+WHERE action_id::text LIKE 'b0000000-0000-0000-0000-%';
 
 -- Remove seed institutional knowledge rows
 -- dim_institutional_knowledge has no is_synthetic column.
@@ -15,18 +11,22 @@ DELETE FROM dim_institutional_knowledge
 WHERE action_id::text LIKE 'b0000000-0000-0000-0000-%';
 
 -- Remove seed cold-start prior outcomes (synthetic rows)
-DELETE FROM fact_outcomes
-WHERE is_synthetic = true;
+-- Guard: check column exists to prevent failure if migrations run out of order.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'fact_outcomes' AND column_name = 'is_synthetic'
+  ) THEN
+    DELETE FROM fact_outcomes WHERE is_synthetic = true;
+  ELSE
+    RAISE NOTICE '045: is_synthetic column not found on fact_outcomes, skipping synthetic row cleanup';
+  END IF;
+END $$;
 
--- Remove the seed customer and their default agent
--- (the one created by coldstartpriors.sql, not by real signup)
+-- Remove the seed agent (d0000000-... prefix matches cold_start_priors.sql seed UUID)
 DELETE FROM dim_agents
-WHERE created_at < '2026-03-10'
-AND agent_name = 'default-agent'
-AND customer_id IN (
-  SELECT customer_id FROM dim_customers
-  WHERE created_at < '2026-03-10'
-);
+WHERE agent_id::text LIKE 'd0000000-0000-0000-0000-%';
 
 -- Verify: after this migration, dim_actions should be empty
 -- for any customer who has not yet used the SDK.
