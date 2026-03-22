@@ -23,22 +23,24 @@ SELECT
   da.action_category,
   -- Raw success rate: uses outcome_score if available, else binary
   ROUND(
-    AVG(COALESCE(fo.outcome_score, fo.success::FLOAT))::NUMERIC,
+    AVG(COALESCE(fo.outcome_score, fo.success::INT))::NUMERIC,
     4
   ) AS raw_success_rate,
   -- Recency-weighted success rate
   -- More recent outcomes get exponentially higher weight
   -- weight = exp(-0.01 * hours_ago) where hours_ago = age in hours
   ROUND(
-    SUM(
-      COALESCE(fo.outcome_score, fo.success::FLOAT) *
-      EXP(-0.01 * EXTRACT(EPOCH FROM (NOW() - fo.timestamp)) / 3600.0)
-    ) /
-    NULLIF(
+    (
       SUM(
+        COALESCE(fo.outcome_score, fo.success::INT) *
         EXP(-0.01 * EXTRACT(EPOCH FROM (NOW() - fo.timestamp)) / 3600.0)
-      ),
-      0
+      ) /
+      NULLIF(
+        SUM(
+          EXP(-0.01 * EXTRACT(EPOCH FROM (NOW() - fo.timestamp)) / 3600.0)
+        ),
+        0
+      )
     )::NUMERIC,
     4
   ) AS weighted_success_rate,
@@ -56,10 +58,10 @@ SELECT
   -- Positive = improving, Negative = degrading
   ROUND(
     (
-      AVG(COALESCE(fo.outcome_score, fo.success::FLOAT)) FILTER (
+      AVG(COALESCE(fo.outcome_score, fo.success::INT)) FILTER (
         WHERE fo.timestamp > NOW() - INTERVAL '7 days'
       ) -
-      AVG(COALESCE(fo.outcome_score, fo.success::FLOAT)) FILTER (
+      AVG(COALESCE(fo.outcome_score, fo.success::INT)) FILTER (
         WHERE fo.timestamp BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '7 days'
       )
     )::NUMERIC,
@@ -67,13 +69,13 @@ SELECT
   ) AS trend_delta,
   -- Time-of-day split for temporal analysis
   ROUND(
-    AVG(COALESCE(fo.outcome_score, fo.success::FLOAT)) FILTER (
+    AVG(COALESCE(fo.outcome_score, fo.success::INT)) FILTER (
       WHERE EXTRACT(HOUR FROM fo.timestamp AT TIME ZONE 'UTC') BETWEEN 9 AND 17
     )::NUMERIC,
     4
   ) AS business_hours_rate,
   ROUND(
-    AVG(COALESCE(fo.outcome_score, fo.success::FLOAT)) FILTER (
+    AVG(COALESCE(fo.outcome_score, fo.success::INT)) FILTER (
       WHERE EXTRACT(HOUR FROM fo.timestamp AT TIME ZONE 'UTC') NOT BETWEEN 9 AND 17
     )::NUMERIC,
     4

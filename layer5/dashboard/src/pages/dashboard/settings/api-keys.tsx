@@ -81,6 +81,15 @@ export default function ApiKeysSettings(): React.ReactElement {
   const [tick, setTick] = useState(0);
   const createInFlightRef = useRef(false);
 
+  // Auto-zero the revealed key after 30 seconds to limit DevTools exposure (SETTINGS-2)
+  useEffect(() => {
+    if (!revealedKey) return;
+    const timer = window.setTimeout(() => {
+      setRevealedKey(null);
+    }, 30_000);
+    return () => window.clearTimeout(timer);
+  }, [revealedKey]);
+
   const hasAnyKeys = useMemo(() => keys.length > 0, [keys.length]);
 
   const handleStaleKey = useCallback(() => {

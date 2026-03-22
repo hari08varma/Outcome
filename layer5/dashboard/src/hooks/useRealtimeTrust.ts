@@ -50,7 +50,7 @@ export function useRealtimeTrust(
             });
 
         return () => {
-            supabase.removeChannel(channel);
+            void channel.unsubscribe();
         };
     }, []); // subscribe once
 

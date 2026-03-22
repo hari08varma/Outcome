@@ -7,9 +7,12 @@ AND customer_id IN (
   WHERE created_at < '2026-03-10'
 );
 
--- Remove seed institutional knowledge rows (12 rows)
+-- Remove seed institutional knowledge rows
+-- dim_institutional_knowledge has no is_synthetic column.
+-- All seed action UUIDs follow the pattern b0000000-0000-0000-0000-* (cold_start_priors.sql).
+-- Pattern match handles any future seed action additions without needing to update this list.
 DELETE FROM dim_institutional_knowledge
-WHERE is_synthetic = true;
+WHERE action_id::text LIKE 'b0000000-0000-0000-0000-%';
 
 -- Remove seed cold-start prior outcomes (synthetic rows)
 DELETE FROM fact_outcomes

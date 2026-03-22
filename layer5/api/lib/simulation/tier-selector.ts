@@ -132,7 +132,7 @@ export async function runSimulation(
         countEpisodes(request.agentId, request.contextHash),
         getContextFrequency(request.agentId, request.contextHash),
         getAgentActions(request.agentId),
-        loadWorldModel(),
+        loadWorldModel(request.customerId),
       ]);
 
     const modelLoaded = model !== null;

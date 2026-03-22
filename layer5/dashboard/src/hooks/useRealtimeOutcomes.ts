@@ -57,7 +57,7 @@ export function useRealtimeOutcomes(
             });
 
         return () => {
-            supabase.removeChannel(channel);
+            void channel.unsubscribe();
         };
     }, [agentId]); // re-subscribe if agentId changes
 

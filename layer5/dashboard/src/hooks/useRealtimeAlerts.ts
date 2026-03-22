@@ -53,7 +53,7 @@ export function useRealtimeAlerts(
             });
 
         return () => {
-            supabase.removeChannel(channel);
+            void channel.unsubscribe();
         };
     }, []); // subscribe once
 

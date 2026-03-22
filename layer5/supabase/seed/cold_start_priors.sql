@@ -34,7 +34,7 @@ INSERT INTO dim_actions (action_id, action_name, action_category, action_descrip
   ('b0000000-0000-0000-0000-000000000006', 'switch_provider',  'recovery',    'Switch to backup payment provider',   '{"provider": "string"}'),
   ('b0000000-0000-0000-0000-000000000007', 'verify_credentials','automation', 'Re-verify user credentials',          '{}'),
   ('b0000000-0000-0000-0000-000000000008', 'send_notification','automation',  'Send notification to user',           '{"message": "string", "channel": "string"}')
-ON CONFLICT (action_name) DO NOTHING;
+ON CONFLICT (action_id) DO NOTHING;
 
 -- ────────────────────────────────────────────
 -- Seed: Default Contexts

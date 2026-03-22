@@ -28,7 +28,7 @@ export async function tier2Predict(
   request: SimulationRequest,
   contextFreq: number,
 ): Promise<SequencePrediction | null> {
-  const model = await loadWorldModel();
+  const model = await loadWorldModel(request.customerId);
   if (!model) return null;
 
   const sequence = [
@@ -44,7 +44,7 @@ export async function tier2Predict(
         request.episodeHistory.length + stepIdx,
       );
 
-      return predictOutcome(action, history, request.contextHash, contextFreq);
+      return predictOutcome(request.customerId, action, history, request.contextHash, contextFreq);
     }),
   );
 

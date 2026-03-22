@@ -632,10 +632,8 @@ export default function SimulatePage() {
     const [maxDepth, setMaxDepth] = useState(5);
 
     // ── API key ─────────────────────────────────────────────
-    const [apiKey, setApiKey] = useState(() => {
-        try { return sessionStorage.getItem('layerinfinite_sim_key') ?? ''; } catch { return ''; }
-    });
-    const [showApiKeyField, setShowApiKeyField] = useState(!apiKey);
+    const [apiKey, setApiKey] = useState('');
+    const [showApiKeyField, setShowApiKeyField] = useState(true);
 
     // ── Results ─────────────────────────────────────────────
     const [result, setResult] = useState<SimulateResponse | null>(null);
@@ -766,9 +764,6 @@ export default function SimulatePage() {
         if (episodeHistory.length > 0) {
             payload.episode_history = episodeHistory;
         }
-
-        // Persist API key in session
-        try { sessionStorage.setItem('layerinfinite_sim_key', apiKey); } catch { /* private mode */ }
 
         try {
             const res = await fetch(`${API_BASE}/v1/simulate`, {

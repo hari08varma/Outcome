@@ -29,28 +29,34 @@ const SimulateBody = z.object({
 });
 
 /**
- * Resolve agent_id: look up the agent UUID in dim_agents.
+ * Resolve agent_id: look up the agent UUID and customer_id in dim_agents.
  * Accepts either a UUID or an agent_name.
- * Returns the UUID or null if not found.
+ * Returns { agentId, customerId } or null if not found.
  */
-async function resolveAgentId(agentId: string): Promise<string | null> {
+async function resolveAgent(agentId: string): Promise<{ agentId: string; customerId: string } | null> {
   // Try as-is first (most likely a UUID from auth middleware)
   const { data: byId } = await supabase
     .from('dim_agents')
-    .select('agent_id')
+    .select('agent_id, customer_id')
     .eq('agent_id', agentId)
     .maybeSingle();
 
-  if (byId) return byId.agent_id;
+  if (byId?.agent_id && byId?.customer_id) {
+    return { agentId: byId.agent_id, customerId: byId.customer_id };
+  }
 
   // Try as agent_name
   const { data: byName } = await supabase
     .from('dim_agents')
-    .select('agent_id')
+    .select('agent_id, customer_id')
     .eq('agent_name', agentId)
     .maybeSingle();
 
-  return byName?.agent_id ?? null;
+  if (byName?.agent_id && byName?.customer_id) {
+    return { agentId: byName.agent_id, customerId: byName.customer_id };
+  }
+
+  return null;
 }
 
 /**
@@ -100,9 +106,9 @@ simulateRouter.post('/', async (c) => {
     max_sequence_depth,
   } = body;
 
-  // Resolve agent UUID
-  const resolvedAgentId = await resolveAgentId(agent_id);
-  if (!resolvedAgentId) {
+  // Resolve agent UUID + customer_id
+  const resolved = await resolveAgent(agent_id);
+  if (!resolved) {
     return c.json({ error: 'Unknown agent', code: 'AGENT_NOT_FOUND' }, 404);
   }
 
@@ -111,7 +117,8 @@ simulateRouter.post('/', async (c) => {
 
   // Run simulation
   const result = await runSimulation({
-    agentId: resolvedAgentId,
+    customerId: resolved.customerId,
+    agentId: resolved.agentId,
     context,
     contextHash,
     proposedSequence: proposed_sequence,

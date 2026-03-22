@@ -7,6 +7,7 @@
  */
 
 export interface SimulationRequest {
+  customerId:           string;     // tenant scoping for world model lookup
   agentId:              string;
   context:              Record<string, unknown>;
   contextHash:          string;

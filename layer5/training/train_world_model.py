@@ -73,9 +73,9 @@ LGBM_PARAMS_BASE = {
 
 # ── Sample gate ───────────────────────────────────────────────
 
-def fetch_last_model_info(client):
+def fetch_last_model_info(client, customer_id: str):
     """
-    Returns (trained_at, metrics) for the current active model, or
+    Returns (trained_at, metrics) for the current active model for this customer, or
     (None, None) if no model has been trained yet.
     """
     response = (
@@ -83,6 +83,7 @@ def fetch_last_model_info(client):
         .select('trained_at, metrics, version')
         .eq('tier', 2)
         .eq('is_active', True)
+        .eq('customer_id', customer_id)
         .order('version', desc=True)
         .limit(1)
         .execute()
@@ -95,15 +96,16 @@ def fetch_last_model_info(client):
     return row.get('trained_at'), row.get('metrics')
 
 
-def count_new_cf_samples(client, since_iso: str | None) -> int:
+def count_new_cf_samples(client, since_iso: str | None, customer_id: str) -> int:
     """
-    Count counterfactual samples created since the last training run.
+    Count counterfactual samples created since the last training run for this customer.
     If since_iso is None (no previous model), count all samples.
     """
     query = (
         client.table('fact_outcome_counterfactuals')
         .select('id', count='exact')
         .gte('ips_weight', 0.05)
+        .eq('customer_id', customer_id)
     )
 
     if since_iso:
@@ -115,17 +117,17 @@ def count_new_cf_samples(client, since_iso: str | None) -> int:
 
 # ── Data fetching ─────────────────────────────────────────────
 
-def fetch_training_data(client):
+def fetch_training_data(client, customer_id: str):
     """
-    Fetch all data needed for training from Supabase.
+    Fetch all data needed for training from Supabase, scoped to customer_id.
     Returns DataFrames for outcomes, sequences, counterfactuals.
     Counterfactuals include real_outcome_score for DR computation.
     """
     import pandas as pd
 
-    log.info("Fetching training data from Supabase...")
+    log.info(f"Fetching training data from Supabase for customer_id={customer_id}...")
 
-    # Fetch fact_outcomes
+    # Fetch fact_outcomes scoped to this customer
     outcomes_response = (
         client.table('fact_outcomes')
         .select(
@@ -133,6 +135,7 @@ def fetch_training_data(client):
             'outcome_score, context_hash, episode_id, '
             'response_ms, created_at'
         )
+        .eq('customer_id', customer_id)
         .execute()
     )
 
@@ -154,7 +157,7 @@ def fetch_training_data(client):
     )
     sequences_df = pd.DataFrame(sequences_response.data)
 
-    # Fetch counterfactuals with real_outcome_score for DR computation
+    # Fetch counterfactuals with real_outcome_score for DR computation, scoped to this customer
     cf_response = (
         client.table('fact_outcome_counterfactuals')
         .select(
@@ -162,6 +165,7 @@ def fetch_training_data(client):
             'ips_weight, real_outcome_score, context_hash, created_at'
         )
         .gte('ips_weight', 0.05)
+        .eq('customer_id', customer_id)
         .execute()
     )
     cf_df = pd.DataFrame(cf_response.data)
@@ -328,11 +332,12 @@ def check_performance_gates(validation, current_metrics: dict | None) -> list[st
 
 # ── Model utilities ───────────────────────────────────────────
 
-def get_next_version(client) -> int:
-    """Get next model version number (max existing + 1)."""
+def get_next_version(client, customer_id: str) -> int:
+    """Get next model version number for this customer (max existing + 1)."""
     response = (
         client.table('world_model_artifacts')
         .select('version')
+        .eq('customer_id', customer_id)
         .order('version', desc=True)
         .limit(1)
         .execute()
@@ -375,14 +380,23 @@ def train_quantile_model(
 
 # ── Main ──────────────────────────────────────────────────────
 
-def main(force: bool = False):
+def main(force: bool = False, customer_id: str | None = None):
     """
-    Run the full training pipeline.
+    Run the full training pipeline for a specific customer.
 
     Args:
         force: If True, bypass the CF sample gate.
                Used by the admin trigger-training endpoint.
+        customer_id: UUID of the customer to train for (required).
+                     Training is always per-customer to prevent cross-tenant data contamination.
     """
+    if not customer_id:
+        customer_id = os.environ.get('CUSTOMER_ID', '')
+    if not customer_id:
+        raise ValueError(
+            "customer_id is required. Pass it as a parameter or set the CUSTOMER_ID env var. "
+            "Training must be scoped per customer to prevent cross-tenant data contamination."
+        )
     supabase_url = os.environ.get('SUPABASE_URL')
     supabase_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 
@@ -395,14 +409,14 @@ def main(force: bool = False):
     client = create_client(supabase_url, supabase_key)
 
     # 1. Check when the last model was trained + fetch its metrics
-    last_trained_at, current_metrics = fetch_last_model_info(client)
+    last_trained_at, current_metrics = fetch_last_model_info(client, customer_id)
     log.info(
         f"Current active model: trained_at={last_trained_at}, "
         f"metrics={current_metrics}"
     )
 
     # 2. Sample gate: require MIN_CF_SAMPLES new counterfactuals since last run
-    new_cf_count = count_new_cf_samples(client, last_trained_at)
+    new_cf_count = count_new_cf_samples(client, last_trained_at, customer_id)
     log.info(
         f"New counterfactual samples since last training: {new_cf_count} "
         f"(threshold: {MIN_CF_SAMPLES}, force={force})"
@@ -422,7 +436,7 @@ def main(force: bool = False):
         }
 
     # 3. Fetch data
-    outcomes_df, sequences_df, cf_df = fetch_training_data(client)
+    outcomes_df, sequences_df, cf_df = fetch_training_data(client, customer_id)
 
     # 4. Compute doubly-robust targets for counterfactual data
     dr_used = False
@@ -553,7 +567,7 @@ def main(force: bool = False):
     log.info("All gates passed. Deploying as canary...")
 
     # 11. Export to JSON
-    version = get_next_version(client)
+    version = get_next_version(client, customer_id)
     trained_at = datetime.now(timezone.utc).isoformat()
 
     model_json = export_quantile_models(
@@ -593,6 +607,7 @@ def main(force: bool = False):
             {
                 'version': version,
                 'tier': 2,
+                'customer_id': customer_id,
                 'model_data': model_json,
                 'training_episodes': len(outcomes_df),
                 'counterfactual_episodes': len(cf_df),
@@ -637,5 +652,11 @@ def main(force: bool = False):
 if __name__ == '__main__':
     import sys
     force_flag = '--force' in sys.argv
-    result = main(force=force_flag)
+    # Accept --customer-id <uuid> or fall back to CUSTOMER_ID env var
+    cid = None
+    if '--customer-id' in sys.argv:
+        idx = sys.argv.index('--customer-id')
+        if idx + 1 < len(sys.argv):
+            cid = sys.argv[idx + 1]
+    result = main(force=force_flag, customer_id=cid)
     print(json.dumps(result, indent=2, default=str))

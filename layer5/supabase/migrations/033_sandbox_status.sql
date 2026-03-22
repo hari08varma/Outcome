@@ -4,7 +4,7 @@ ALTER TABLE agent_trust_scores
 
 ALTER TABLE agent_trust_scores
   ADD CONSTRAINT agent_trust_scores_trust_status_check
-  CHECK (trust_status IN ('trusted', 'probation', 'sandbox', 'suspended'));
+  CHECK (trust_status IN ('trusted', 'probation', 'sandbox', 'suspended', 'new', 'degraded'));
 
 -- Add human_review_required flag to policy responses
 ALTER TABLE fact_decisions

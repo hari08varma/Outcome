@@ -108,6 +108,7 @@ function expand(
  */
 async function rollout(
   node: MCTSNode,
+  customerId: string,
   episodeHistory: string[],
   contextHash: string,
   contextFreq: number,
@@ -120,6 +121,7 @@ async function rollout(
   const action = sequence[sequence.length - 1]!;
 
   const prediction = await predictOutcome(
+    customerId,
     action,
     fullHistory,
     contextHash,
@@ -211,7 +213,7 @@ async function runTier3MCTS(
   allActionNames: string[],
   contextFreq: number,
 ): Promise<SequencePrediction | null> {
-  const model = await loadWorldModel();
+  const model = await loadWorldModel(request.customerId);
   if (!model) return null;
 
   // Filter to actions known to the model
@@ -250,6 +252,7 @@ async function runTier3MCTS(
       promises.push(
         rollout(
           expanded,
+          request.customerId,
           request.episodeHistory,
           request.contextHash,
           contextFreq,
@@ -269,6 +272,7 @@ async function runTier3MCTS(
 
   // Get Tier 2 confidence interval for the best sequence
   const tier2Pred = await predictOutcome(
+    request.customerId,
     sequence[sequence.length - 1]!,
     [...request.episodeHistory, ...sequence.slice(0, -1)],
     request.contextHash,

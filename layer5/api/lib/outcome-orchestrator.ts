@@ -86,8 +86,13 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         }
     }
 
+    // FIX-04 (INVARIANT 8): Trust update is CRITICAL — failures must propagate
+    // to the API caller. Run it directly with await BEFORE allSettled so that
+    // a failed trust write returns HTTP 500 instead of being swallowed.
+    await taskTrustUpdate();
+
+    // Lower-criticality tasks run concurrently. Failures are logged but not fatal.
     const results = await Promise.allSettled([
-        taskTrustUpdate(),
         taskContextDrift(),
         taskSilentFailure(),
         taskCounterfactuals(),
@@ -95,7 +100,6 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
     ]);
 
     const taskNames = [
-        'trust-update',
         'context-drift',
         'silent-failure',
         'counterfactuals',
@@ -179,6 +183,19 @@ async function upsertLiveTrustScore(
             total_decisions: total,
             updated_at: new Date().toISOString(),
         }, { onConflict: 'agent_id' });
+
+    // INVARIANT 7: every trust score change must produce one audit row.
+    // upsertLiveTrustScore is a recalculation, not an outcome event — use
+    // event_type='recalculation' so dashboard can distinguish from SDK outcomes.
+    await supabase.from('agent_trust_audit').insert({
+        agent_id:     agentId,
+        customer_id:  customerId,
+        event_type:   'recalculation',
+        new_score:    weightedScore,
+        new_status:   trustStatus,
+        performed_by: 'upsert-live-trust-score',
+        reason:       'Live score recalculation from last 100 outcomes',
+    });
 }
 
 // ── Trust Snapshot (fire-and-forget) ──────────────────────────
@@ -297,26 +314,11 @@ async function updateAgentTrust(
         newStatus = 'trusted';
     }
 
-    await supabase
-        .from('agent_trust_scores')
-        .update({
-            trust_score: newScore,
-            total_decisions: currentTotalDecisions + 1,
-            correct_decisions: newCorrect,
-            consecutive_failures: newFailures,
-            trust_status: newStatus,
-            suspension_reason: newSuspensionReason,
-            updated_at: new Date().toISOString(),
-        })
-        .eq('agent_id', agentId);
-
-    // ── FIX: write audit row for EVERY outcome ─────────────────
-    // BEFORE: audit was only written when oldStatus !== newStatus.
-    // This meant the Trust History timeline was almost always empty —
-    // only showing 1 row per status transition, not one per outcome.
-    //
-    // AFTER: every outcome writes one audit row. Status-change rows
-    // get an additional descriptive note in the reason field.
+    // ── ML-CHECK-2.1-B FIX: atomic trust UPDATE + audit INSERT via RPC ──
+    // Previously: two separate supabase calls. If the audit INSERT failed,
+    // trust score was already updated with no audit record (INVARIANT 7 violation).
+    // Now: both ops execute inside one PL/pgSQL transaction (migration 052).
+    // Either both succeed or both are rolled back.
     //
     // Reason format is intentional — agent.tsx parseActionFromReason()
     // relies on exactly these two patterns to extract the action name:
@@ -328,32 +330,34 @@ async function updateAgentTrust(
     const action  = actionName?.trim() || 'unknown_action';
     const statusChanged = oldStatus !== newStatus;
 
-    // Base reason — always parseable by the dashboard
     const baseReason = success
         ? `Outcome success via SDK: ${action}`
         : `Outcome failure recorded: ${action}`;
 
-    // Append status transition note when status changed so the
-    // dashboard subLabel shows the transition clearly
     const reason = statusChanged
         ? `${baseReason} | Trust recalibrated: ${oldStatus} → ${newStatus}`
         : baseReason;
 
-    const { error: auditError } = await supabase.from('agent_trust_audit').insert({
-        agent_id:    agentId,
-        customer_id: customerId,
-        // event_type drives the ✓ / ✕ icon in the Trust History timeline
-        event_type:  success ? 'success' : 'failure',
-        old_score:   oldScore,    // always populated now
-        new_score:   newScore,
-        old_status:  oldStatus,   // always populated now
-        new_status:  newStatus,
-        performed_by: 'outcome-orchestrator',
-        reason,
+    const { error: rpcError } = await supabase.rpc('update_trust_and_audit', {
+        p_agent_id:             agentId,
+        p_customer_id:          customerId,
+        p_trust_score:          newScore,
+        p_total_decisions:      currentTotalDecisions + 1,
+        p_correct_decisions:    newCorrect,
+        p_consecutive_failures: newFailures,
+        p_trust_status:         newStatus,
+        p_suspension_reason:    newSuspensionReason,
+        p_updated_at:           new Date().toISOString(),
+        p_event_type:           success ? 'success' : 'failure',
+        p_old_score:            oldScore,
+        p_old_status:           oldStatus,
+        p_new_status:           newStatus,
+        p_performed_by:         'outcome-orchestrator',
+        p_reason:               reason,
     });
 
-    if (auditError) {
-        throw new Error(`[trust] failed to write audit row: ${auditError.message}`);
+    if (rpcError) {
+        throw new Error(`[trust] atomic trust+audit update failed: ${rpcError.message}`);
     }
 }
 

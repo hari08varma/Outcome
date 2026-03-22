@@ -16,25 +16,23 @@ import type {
   WorldModelPrediction,
 } from './types.js';
 
-// ── Module-level cache ───────────────────────────────────────
-let cachedModel: WorldModelArtifact | null = null;
-let cacheLoadedAt: Date | null = null;
-let cachedCanaryModel: WorldModelArtifact | null = null;
-let canaryLoadedAt: Date | null = null;
+// ── Module-level cache (keyed by customer_id for multi-tenant isolation) ─
+const modelCache = new Map<string, WorldModelArtifact>();
+const modelCacheLoadedAt = new Map<string, Date>();
+const canaryCache = new Map<string, WorldModelArtifact>();
+const canaryCacheLoadedAt = new Map<string, Date>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
- * Load the active Tier 2 world model from world_model_artifacts.
- * Caches in module scope for edge function instance lifetime.
- * Returns null if no trained model exists yet.
+ * Load the active Tier 2 world model for a specific customer.
+ * Caches per customer_id for edge function instance lifetime.
+ * Returns null if no trained model exists yet for this customer.
  */
-export async function loadWorldModel(): Promise<WorldModelArtifact | null> {
-  if (
-    cachedModel &&
-    cacheLoadedAt &&
-    Date.now() - cacheLoadedAt.getTime() < CACHE_TTL_MS
-  ) {
-    return cachedModel;
+export async function loadWorldModel(customerId: string): Promise<WorldModelArtifact | null> {
+  const cached = modelCache.get(customerId);
+  const loadedAt = modelCacheLoadedAt.get(customerId);
+  if (cached && loadedAt && Date.now() - loadedAt.getTime() < CACHE_TTL_MS) {
+    return cached;
   }
 
   const { data, error } = await supabase
@@ -42,10 +40,11 @@ export async function loadWorldModel(): Promise<WorldModelArtifact | null> {
     .select('model_data, trained_at, version, training_episodes')
     .eq('tier', 2)
     .eq('is_active', true)
-    .single();
+    .eq('customer_id', customerId)
+    .maybeSingle();
 
   if (error || !data) {
-    cachedModel = null;
+    modelCache.delete(customerId);
     return null;
   }
 
@@ -56,22 +55,20 @@ export async function loadWorldModel(): Promise<WorldModelArtifact | null> {
   model.is_canary = false;
   model.canary_traffic_pct = 0;
 
-  cachedModel = model;
-  cacheLoadedAt = new Date();
-  return cachedModel;
+  modelCache.set(customerId, model);
+  modelCacheLoadedAt.set(customerId, new Date());
+  return model;
 }
 
 /**
- * Load the active canary model (is_canary=true) if one exists.
- * Returns null if no canary model is deployed.
+ * Load the active canary model (is_canary=true) for a specific customer.
+ * Returns null if no canary model is deployed for this customer.
  */
-async function loadCanaryModel(): Promise<WorldModelArtifact | null> {
-  if (
-    cachedCanaryModel &&
-    canaryLoadedAt &&
-    Date.now() - canaryLoadedAt.getTime() < CACHE_TTL_MS
-  ) {
-    return cachedCanaryModel;
+async function loadCanaryModel(customerId: string): Promise<WorldModelArtifact | null> {
+  const cached = canaryCache.get(customerId);
+  const loadedAt = canaryCacheLoadedAt.get(customerId);
+  if (cached && loadedAt && Date.now() - loadedAt.getTime() < CACHE_TTL_MS) {
+    return cached;
   }
 
   const { data, error } = await supabase
@@ -79,12 +76,13 @@ async function loadCanaryModel(): Promise<WorldModelArtifact | null> {
     .select('model_data, trained_at, version, training_episodes, canary_traffic_pct')
     .eq('tier', 2)
     .eq('is_canary', true)
+    .eq('customer_id', customerId)
     .order('version', { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error || !data) {
-    cachedCanaryModel = null;
+    canaryCache.delete(customerId);
     return null;
   }
 
@@ -95,20 +93,28 @@ async function loadCanaryModel(): Promise<WorldModelArtifact | null> {
   model.is_canary = true;
   model.canary_traffic_pct = data.canary_traffic_pct ?? 0;
 
-  cachedCanaryModel = model;
-  canaryLoadedAt = new Date();
-  return cachedCanaryModel;
+  canaryCache.set(customerId, model);
+  canaryCacheLoadedAt.set(customerId, new Date());
+  return model;
 }
 
 /**
- * Invalidate the model cache (production and canary).
- * Called when a new model is activated.
+ * Invalidate the model cache for a specific customer (production and canary).
+ * Called when a new model is activated. Pass customerId to clear one tenant,
+ * or omit to clear all cached models.
  */
-export function invalidateModelCache(): void {
-  cachedModel = null;
-  cacheLoadedAt = null;
-  cachedCanaryModel = null;
-  canaryLoadedAt = null;
+export function invalidateModelCache(customerId?: string): void {
+  if (customerId) {
+    modelCache.delete(customerId);
+    modelCacheLoadedAt.delete(customerId);
+    canaryCache.delete(customerId);
+    canaryCacheLoadedAt.delete(customerId);
+  } else {
+    modelCache.clear();
+    modelCacheLoadedAt.clear();
+    canaryCache.clear();
+    canaryCacheLoadedAt.clear();
+  }
 }
 
 /**
@@ -218,17 +224,18 @@ export function buildFeatures(
  * Returns null if action not in model encoding.
  */
 export async function predictOutcome(
+  customerId: string,
   actionName: string,
   episodeHistory: string[],
   contextHash: string,
   contextFreq: number = 0.5,
 ): Promise<WorldModelPrediction | null> {
   // Load production model first (always required as fallback)
-  const productionModel = await loadWorldModel();
+  const productionModel = await loadWorldModel(customerId);
   if (!productionModel) return null;
 
   // Check if a canary model is deployed and should serve this request
-  const canaryModel = await loadCanaryModel();
+  const canaryModel = await loadCanaryModel(customerId);
   const useCanary =
     canaryModel !== null &&
     canaryModel.canary_traffic_pct > 0 &&
