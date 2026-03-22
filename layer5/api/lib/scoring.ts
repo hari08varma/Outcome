@@ -33,8 +33,12 @@ const W_TREND = 0.20;  // directional momentum
 const W_SALIENCE = 0.10;  // action importance
 const W_RECENCY = 0.10;  // freshness bonus
 
-export const PRIOR_ALPHA = 1.0;  // prior successes (neutral)
-export const PRIOR_BETA = 1.0;  // prior failures (neutral)
+// Bayesian (Laplace) smoothing priors for composite score calculation.
+// Used in computeCompositeScore(): (successes + α) / (total + α + β).
+// NOTE: These are NOT used in updateAgentTrust() (outcome-orchestrator.ts),
+// which uses exponential smoothing independently.
+export const PRIOR_ALPHA = 1.0;  // Laplace prior successes (neutral = 1)
+export const PRIOR_BETA  = 1.0;  // Laplace prior failures  (neutral = 1)
 
 // ── Thresholds ───────────────────────────────────────────────
 const MIN_CONFIDENCE = 0.30;  // below this → cold-start fallback

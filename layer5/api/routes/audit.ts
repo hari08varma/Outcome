@@ -56,10 +56,18 @@ auditRouter.get('/', async (c) => {
         .eq('customer_id', customerId)
         .eq('is_deleted', false)           // GDPR: exclude soft-deleted
         .order('timestamp', { ascending: false })
+        .order('outcome_id', { ascending: false })  // secondary sort: stable pagination across tied timestamps
         .limit(pageSize);
 
     if (cursor) {
-        query = query.lt('timestamp', cursor);
+        try {
+            const { ts, id } = JSON.parse(Buffer.from(cursor, 'base64').toString('utf-8'));
+            // Composite row-value comparison (descending): skip rows at or before the cursor position.
+            // Handles ties at page boundaries: same timestamp rows are ordered by outcome_id descending.
+            query = query.or(`timestamp.lt.${ts},and(timestamp.eq.${ts},outcome_id.lt.${id})`);
+        } catch {
+            // Malformed cursor — ignore and return from the beginning
+        }
     } else if (pageStr || offsetStr) {
         // Fallback for legacy offset pagination
         const offset = offsetStr ? parseInt(offsetStr, 10) : (page - 1) * pageSize;
@@ -92,7 +100,10 @@ auditRouter.get('/', async (c) => {
 
     const totalPages = Math.ceil((count ?? 0) / pageSize);
     const hasMore = (data && data.length === pageSize);
-    const nextCursor = hasMore ? data[data.length - 1].timestamp : null;
+    const lastRow = hasMore ? data[data.length - 1] : null;
+    const nextCursor = (lastRow?.timestamp && lastRow?.outcome_id)
+        ? Buffer.from(JSON.stringify({ ts: lastRow.timestamp, id: lastRow.outcome_id })).toString('base64')
+        : null;
 
     return c.json({
         outcomes: (data ?? []).map((row: any) => ({

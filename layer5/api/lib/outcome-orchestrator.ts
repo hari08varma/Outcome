@@ -209,6 +209,28 @@ async function snapshotTrust(
     });
 }
 
+/**
+ * Updates agent trust score using exponential smoothing.
+ *
+ * Formula:
+ *   On success: new_score = min(score × 1.03, 1.0)
+ *               consecutive_failures reset to 0
+ *   On failure: new_score = score × (0.9 ^ consecutive_failures)
+ *               consecutive_failures incremented
+ *
+ * Status thresholds:
+ *   score >= 0.6                       → trusted
+ *   score 0.3–0.6                      → probation
+ *   score 0.1–0.3 OR failures >= 5     → sandbox
+ *   score < 0.1  OR failures >= 10     → suspended
+ *
+ * Cold-start prior: 0.70 (set on first DB insert by account-setup trigger).
+ * First real outcome moves score to ~0.721 (success) or ~0.567 (failure).
+ *
+ * Note: scoring.ts uses a separate Bayesian (Laplace) smoothing formula for
+ * composite action scores (computeCompositeScore). These are independent calculations.
+ * This function uses exponential smoothing only.
+ */
 async function updateAgentTrust(
     agentId: string,
     customerId: string,

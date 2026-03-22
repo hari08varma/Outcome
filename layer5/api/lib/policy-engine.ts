@@ -17,7 +17,7 @@ import { ScoredAction } from './scoring.js';
 
 export interface AgentTrustScore {
     trust_score: number;       // 0.0–1.0
-    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended';
+    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded';
     consecutive_failures: number;
 }
 
@@ -57,13 +57,15 @@ export const DEFAULT_TRUST: AgentTrustScore = {
 export function getPolicyDecision(
     params: {
         rankedActions: ScoredAction[];
-        agentTrust: AgentTrustScore;
+        agentTrust: AgentTrustScore | null | undefined;
         customerConfig: CustomerPolicyConfig;
         coldStartActive: boolean;
     },
     randomFn: () => number = Math.random
 ): PolicyDecision {
-    const { rankedActions, agentTrust, customerConfig, coldStartActive } = params;
+    // ── FIX: null guard — use DEFAULT_TRUST if trust not available ──
+    const agentTrust = params.agentTrust ?? DEFAULT_TRUST;
+    const { rankedActions, customerConfig, coldStartActive } = params;
 
     // ── Rule 1: Suspended agent → always escalate ─────────────
     if (agentTrust.trust_status === 'suspended') {

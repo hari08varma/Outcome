@@ -58,6 +58,8 @@ async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConf
     };
 }
 
+const STALE_THRESHOLD_MINUTES = 10;
+
 export const getScoresRouter = new Hono();
 
 // ── GET /v1/get-scores ────────────────────────────────────────
@@ -280,6 +282,13 @@ getScoresRouter.get('/', async (c) => {
             coldStartActive: result.cold_start,
         });
 
+        // ── Staleness signal ─────────────────────────────────
+        const lastRefresh = result.view_refreshed_at ?? null;
+        const ageMinutes = lastRefresh
+            ? (Date.now() - new Date(lastRefresh).getTime()) / 60_000
+            : null;
+        const isStale = ageMinutes !== null && ageMinutes > STALE_THRESHOLD_MINUTES;
+
         return c.json({
             ranked_actions: ranked,
             top_action: result.top_action,
@@ -298,6 +307,11 @@ getScoresRouter.get('/', async (c) => {
             view_refreshed_at: result.view_refreshed_at,
             scores_as_of: result.view_refreshed_at,
             scores_max_age_seconds: 300,
+            scoring_metadata: {
+                view_refreshed_at: lastRefresh,
+                is_stale: isStale,
+                stale_threshold_minutes: STALE_THRESHOLD_MINUTES,
+            },
             served_from_cache: result.served_from_cache,
             policy: policy.policy,
             policy_reason: policy.reason,
