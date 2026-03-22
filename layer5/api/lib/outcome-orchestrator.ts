@@ -86,13 +86,12 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         }
     }
 
-    // FIX-04 (INVARIANT 8): Trust update is CRITICAL — failures must propagate
-    // to the API caller. Run it directly with await BEFORE allSettled so that
-    // a failed trust write returns HTTP 500 instead of being swallowed.
-    await taskTrustUpdate();
-
-    // Lower-criticality tasks run concurrently. Failures are logged but not fatal.
+    // Trust atomicity is guaranteed by the update_trust_and_audit() RPC (migration 062),
+    // which writes both the trust score UPDATE and audit INSERT in one DB transaction.
+    // Surfacing trust failures as HTTP 500 to agents is counterproductive — a trust DB
+    // issue should not block outcome logging entirely. Run all tasks via allSettled.
     const results = await Promise.allSettled([
+        taskTrustUpdate(),
         taskContextDrift(),
         taskSilentFailure(),
         taskCounterfactuals(),
@@ -100,6 +99,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
     ]);
 
     const taskNames = [
+        'trust-update',
         'context-drift',
         'silent-failure',
         'counterfactuals',
@@ -119,7 +119,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
 
     // Non-blocking: upsert live trust score so dashboard health card
     // shows real data immediately (not 0 while waiting for backprop engine)
-    upsertLiveTrustScore(params.agentId, params.customerId).catch((err) =>
+    upsertLiveTrustScore(params.agentId).catch((err) =>
         console.warn('[orchestrator] upsertLiveTrustScore failed:', (err as Error).message)
     );
 }
@@ -127,7 +127,6 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
 // ── Live Trust Score Upsert (fire-and-forget, creates row for new agents) ──
 async function upsertLiveTrustScore(
     agentId: string,
-    customerId: string,
 ): Promise<void> {
     const { data: outcomes, error } = await supabase
         .from('fact_outcomes')
@@ -188,21 +187,9 @@ async function upsertLiveTrustScore(
             updated_at: new Date().toISOString(),
         }, { onConflict: 'agent_id' });
 
-    // INVARIANT 7: every trust score change must produce one audit row.
-    // upsertLiveTrustScore is a recalculation, not an outcome event — use
-    // event_type='recalculation' so dashboard can distinguish from SDK outcomes.
-    const { error: auditError } = await supabase.from('agent_trust_audit').insert({
-        agent_id:     agentId,
-        customer_id:  customerId,
-        event_type:   'recalculation',
-        new_score:    weightedScore,
-        new_status:   trustStatus,
-        performed_by: 'upsert-live-trust-score',
-        reason:       'Live score recalculation from last 100 outcomes',
-    });
-    if (auditError) {
-        console.error('[trust] upsertLiveTrustScore: audit INSERT failed (INVARIANT 7):', auditError.message);
-    }
+    // NOTE: No audit INSERT here. The update_trust_and_audit() RPC (called by
+    // updateAgentTrust() for each outcome) already writes the canonical audit row.
+    // Adding a second insert here would produce duplicate Trust History entries.
 }
 
 // ── Trust Snapshot (fire-and-forget) ──────────────────────────
