@@ -8,13 +8,15 @@ import { createAgentFetch } from '../../lib/api';
 import { AGENT_API_KEY_STORAGE_KEY } from '../../hooks/useAgentApiKey';
 import { useToastContext } from '../../components/Toast';
 
-function statusBadge(status: 'trusted' | 'probation' | 'suspended'): string {
+function statusBadge(status: 'trusted' | 'probation' | 'suspended' | 'new'): string {
+  if (status === 'new') return 'bg-[#52525b]/10 text-[#52525b] border border-[#52525b]/30';
   if (status === 'trusted') return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
   if (status === 'probation') return 'bg-[#ffaa00]/10 text-[#ffaa00] border border-[#ffaa00]/30';
   return 'bg-[#ff4444]/10 text-[#ff4444] border border-[#ff4444]/30';
 }
 
-function trustColor(status: 'trusted' | 'probation' | 'suspended'): string {
+function trustColor(status: 'trusted' | 'probation' | 'suspended' | 'new'): string {
+  if (status === 'new') return '#52525b';
   if (status === 'trusted') return '#00cc66';
   if (status === 'probation') return '#ffaa00';
   return '#ff4444';
@@ -148,10 +150,14 @@ export default function Agent(): React.ReactElement {
           <div className="mb-6">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[#a1a1aa] text-xs font-semibold tracking-wide">TRUST SCORE</span>
-              <span className="text-white font-mono text-lg font-bold">{agent.trustScore.toFixed(2)} / 1.0</span>
+              {agent.trustScore !== null ? (
+                <span className="text-white font-mono text-lg font-bold">{agent.trustScore.toFixed(2)} / 1.0</span>
+              ) : (
+                <span className="text-[#52525b] text-sm font-normal">No outcomes logged yet</span>
+              )}
             </div>
             <div className="h-2 bg-[#1a1a24] rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(agent.trustScore * 100, 100))}%`, backgroundColor: barColor }} />
+              <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min((agent.trustScore ?? 0) * 100, 100))}%`, backgroundColor: barColor }} />
             </div>
           </div>
 
@@ -188,6 +194,14 @@ export default function Agent(): React.ReactElement {
 
           <div className="relative">
             <div className="absolute left-4 top-0 bottom-0 w-px bg-[#1a1a24]" />
+            {agent.trustHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="text-3xl mb-3 opacity-20">📋</div>
+                <p className="text-[#52525b] text-sm">
+                  Trust history appears here once your agent logs its first outcome.
+                </p>
+              </div>
+            ) : (
             <div className="space-y-4">
               {agent.trustHistory.map((event) => {
                 // ── Resolve display label ─────────────────────────────
@@ -226,6 +240,7 @@ export default function Agent(): React.ReactElement {
                 );
               })}
             </div>
+            )}
           </div>
 
           <button className="mt-6 text-[#b8ff00] text-sm hover:underline" onClick={() => navigate('/dashboard/settings/audit')}>

@@ -1,7 +1,7 @@
 // REQUIRES: Realtime enabled on agent_trust_scores in Supabase Dashboard
 // → Table Editor → agent_trust_scores → Realtime toggle → ON
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
 export interface TrustRow {
@@ -18,10 +18,11 @@ export function useRealtimeTrust(
     onTrustChange: (trust: TrustRow) => void,
 ): { isConnected: boolean } {
     const [isConnected, setIsConnected] = useState(false);
+    const channelId = useRef(crypto.randomUUID());
 
     useEffect(() => {
         const channel = supabase
-            .channel('realtime-trust')
+            .channel(`realtime-trust-${channelId.current}`)
             .on(
                 'postgres_changes' as any,
                 {

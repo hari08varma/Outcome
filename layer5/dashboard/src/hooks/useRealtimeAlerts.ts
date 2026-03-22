@@ -1,7 +1,7 @@
 // REQUIRES: Realtime enabled on degradation_alert_events in Supabase Dashboard
 // → Table Editor → degradation_alert_events → Realtime toggle → ON
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
 export interface AlertRow {
@@ -32,10 +32,11 @@ export function useRealtimeAlerts(
     onNewAlert: (alert: AlertRow) => void,
 ): { isConnected: boolean } {
     const [isConnected, setIsConnected] = useState(false);
+    const channelId = useRef(crypto.randomUUID());
 
     useEffect(() => {
         const channel = supabase
-            .channel('realtime-alerts')
+            .channel(`realtime-alerts-${channelId.current}`)
             .on(
                 'postgres_changes' as any,
                 {

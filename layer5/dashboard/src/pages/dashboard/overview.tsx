@@ -145,7 +145,11 @@ export default function Overview(): React.ReactElement {
             <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
               <p className="text-[#a1a1aa] text-sm">Agent Health Score</p>
               <div className="flex items-end gap-2 mt-3">
-                <span className="text-4xl font-bold" style={{ color: healthColor }}>{metrics.agentHealthScore}</span>
+                {metrics.hasData ? (
+                  <span className="text-4xl font-bold" style={{ color: healthColor }}>{metrics.agentHealthScore}</span>
+                ) : (
+                  <span className="text-4xl font-bold text-[#52525b]">—</span>
+                )}
                 <span className="text-[#52525b] text-sm mb-1">/ 100</span>
               </div>
               <p className="text-xs mt-3 text-[#a1a1aa]">{metrics.agentHealthDelta > 0 ? '+' : ''}{metrics.agentHealthDelta} vs previous</p>

@@ -4,6 +4,7 @@ import { ACCOUNT_SETUP_INCOMPLETE_MESSAGE, useCustomerContext } from './useCusto
 
 export interface OverviewMetrics {
   hasScores: boolean;
+  hasData: boolean;
   agentHealthScore: number;
   agentHealthDelta: number;
   decisionsToday: number;
@@ -39,6 +40,7 @@ function isUuid(value: string): boolean {
 export function useOverviewMetrics(): OverviewMetrics {
   const { data: ctx, loading: ctxLoading, error: ctxError } = useCustomerContext();
   const [hasScores, setHasScores] = useState(false);
+  const [hasData, setHasData] = useState(false);
   const [agentHealthScore, setAgentHealthScore] = useState(0);
   const [agentHealthDelta, setAgentHealthDelta] = useState(0);
   const [decisionsToday, setDecisionsToday] = useState(0);
@@ -78,6 +80,7 @@ export function useOverviewMetrics(): OverviewMetrics {
     setLoading(true);
     setError(null);
     setHasScores(false);
+    setHasData(false);
 
     try {
       const customerId = await ensureCustomerId();
@@ -103,6 +106,8 @@ export function useOverviewMetrics(): OverviewMetrics {
       }
 
       const trustScore = Number((trustRow?.trust_score as number | null) ?? 0);
+      const totalDecisions = Number((trustRow?.total_decisions as number | null) ?? 0);
+      setHasData(totalDecisions > 0);
 
       const todayBounds = getIsoBounds(24, 0);
       const previousBounds = getIsoBounds(48, 24);
@@ -253,6 +258,7 @@ export function useOverviewMetrics(): OverviewMetrics {
 
   return useMemo(() => ({
     hasScores,
+    hasData,
     agentHealthScore,
     agentHealthDelta,
     decisionsToday,
@@ -266,6 +272,7 @@ export function useOverviewMetrics(): OverviewMetrics {
     refetch,
   }), [
     hasScores,
+    hasData,
     agentHealthScore,
     agentHealthDelta,
     decisionsToday,

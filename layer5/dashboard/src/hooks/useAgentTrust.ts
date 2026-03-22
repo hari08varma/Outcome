@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { ACCOUNT_SETUP_INCOMPLETE_MESSAGE, useCustomerContext } from './useCustomerContext';
 
 export interface TrustHistoryItem {
+  reason: string | null;
   id: string;
   eventType: 'success' | 'failure';
   trustScoreAfter: number;
@@ -17,8 +18,9 @@ export interface AgentTrustData {
   agentName: string;
   agentType: string;
   createdAt: string;
-  trustScore: number;
-  status: 'trusted' | 'probation' | 'suspended';
+  trustScore: number | null;
+  status: 'trusted' | 'probation' | 'suspended' | 'new';
+  isNewAgent: boolean;
   consecutiveFailures: number;
   totalOutcomes: number;
   trustHistory: TrustHistoryItem[];
@@ -56,10 +58,13 @@ interface TrustAuditRow {
   performed_at?: string | null;
 }
 
-function normalizeStatus(value: string | null | undefined): 'trusted' | 'probation' | 'suspended' {
+function normalizeStatus(value: string | null | undefined): 'trusted' | 'probation' | 'suspended' | 'new' {
   const normalized = (value ?? '').toLowerCase();
   if (normalized === 'suspended' || normalized === 'probation' || normalized === 'trusted') {
     return normalized;
+  }
+  if (normalized === 'new') {
+    return 'new';
   }
   if (normalized === 'sandbox') {
     return 'probation';
@@ -82,8 +87,9 @@ export function useAgentTrust(selectedAgentId?: string): AgentTrustData {
   const [agentName, setAgentName] = useState('');
   const [agentType, setAgentType] = useState('');
   const [createdAt, setCreatedAt] = useState('');
-  const [trustScore, setTrustScore] = useState(0);
-  const [status, setStatus] = useState<'trusted' | 'probation' | 'suspended'>('trusted');
+  const [trustScore, setTrustScore] = useState<number | null>(null);
+  const [status, setStatus] = useState<'trusted' | 'probation' | 'suspended' | 'new'>('new');
+  const [isNewAgent, setIsNewAgent] = useState(true);
   const [consecutiveFailures, setConsecutiveFailures] = useState(0);
   const [totalOutcomes, setTotalOutcomes] = useState(0);
   const [trustHistory, setTrustHistory] = useState<TrustHistoryItem[]>([]);
@@ -193,17 +199,21 @@ export function useAgentTrust(selectedAgentId?: string): AgentTrustData {
         trustScoreAfter: Number(row.trust_score_after ?? row.new_score ?? 0),
         actionName: row.action_name ?? '',
         notes: row.notes ?? row.reason ?? '',
+        reason: row.reason ?? null,
         createdAt: row.performed_at ?? row.created_at ?? new Date().toISOString(),
       }));
+
+      const totalDecisions = Number(trustRow.total_outcomes ?? trustRow.total_decisions ?? 0);
 
       setAgentId(agent.agent_id);
       setAgentName(agent.agent_name ?? '');
       setAgentType(agent.agent_type ?? '');
       setCreatedAt(agent.created_at ?? '');
-      setTrustScore(Number(trustRow.trust_score ?? 0));
+      setTrustScore(trustRow.trust_score ?? null);
       setStatus(normalizeStatus(trustRow.status ?? trustRow.trust_status));
       setConsecutiveFailures(Number(trustRow.consecutive_failures ?? 0));
-      setTotalOutcomes(Number(trustRow.total_outcomes ?? trustRow.total_decisions ?? 0));
+      setTotalOutcomes(totalDecisions);
+      setIsNewAgent(totalDecisions === 0);
       setTrustHistory(mappedHistory);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load agent trust');
@@ -256,6 +266,7 @@ export function useAgentTrust(selectedAgentId?: string): AgentTrustData {
     createdAt,
     trustScore,
     status,
+    isNewAgent,
     consecutiveFailures,
     totalOutcomes,
     trustHistory,
@@ -270,6 +281,7 @@ export function useAgentTrust(selectedAgentId?: string): AgentTrustData {
     createdAt,
     trustScore,
     status,
+    isNewAgent,
     consecutiveFailures,
     totalOutcomes,
     trustHistory,

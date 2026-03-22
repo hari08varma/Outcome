@@ -134,7 +134,16 @@ async function upsertLiveTrustScore(
         .order('timestamp', { ascending: false })
         .limit(100);
 
-    if (error || !outcomes || outcomes.length === 0) return;
+    if (error || !outcomes || outcomes.length === 0) {
+        // Ensure zero-outcome agents stay in 'new' state with no score.
+        // Guards against any race condition or manual call writing a stale score.
+        await supabase
+            .from('agent_trust_scores')
+            .update({ trust_status: 'new', trust_score: null })
+            .eq('agent_id', agentId)
+            .eq('total_decisions', 0);
+        return;
+    }
 
     const total = outcomes.length;
     const successes = outcomes.filter((o) => o.success).length;
