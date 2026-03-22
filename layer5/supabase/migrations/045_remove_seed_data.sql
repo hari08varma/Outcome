@@ -1,13 +1,11 @@
--- Remove cold-start seed actions (the 8 fake actions)
--- Target seed UUIDs by known prefix (b0000000-...) to avoid deleting real production records.
-DELETE FROM dim_actions
-WHERE action_id::text LIKE 'b0000000-0000-0000-0000-%';
-
--- Remove seed institutional knowledge rows
+-- Remove seed institutional knowledge rows FIRST (FK child of dim_actions — must delete before parent).
 -- dim_institutional_knowledge has no is_synthetic column.
 -- All seed action UUIDs follow the pattern b0000000-0000-0000-0000-* (cold_start_priors.sql).
--- Pattern match handles any future seed action additions without needing to update this list.
 DELETE FROM dim_institutional_knowledge
+WHERE action_id::text LIKE 'b0000000-0000-0000-0000-%';
+
+-- Remove cold-start seed actions AFTER child rows are gone (avoids FK constraint violation).
+DELETE FROM dim_actions
 WHERE action_id::text LIKE 'b0000000-0000-0000-0000-%';
 
 -- Remove seed cold-start prior outcomes (synthetic rows)
