@@ -168,16 +168,20 @@ class LayerinfiniteClient:
     # ── Public API ────────────────────────────────────────────
     def get_scores(
         self,
-        agent_id: str,
         issue_type: str,
+        agent_id: str | None = None,
         environment: str = "production",
     ) -> GetScoresResponse:
         """
-        Fetch ranked action scores for the given agent and context.
+        Fetch ranked action scores for the given context.
+
+        The server resolves agent_id automatically from the API key.
+        Passing agent_id is optional and maintained for backward
+        compatibility only — callers that already pass it are unaffected.
 
         Args:
-            agent_id: Unique agent identifier.
             issue_type: Context type (e.g. "billing_dispute").
+            agent_id: Optional. Agent UUID. Resolved server-side if omitted.
             environment: Deployment environment (default "production").
 
         Returns:
@@ -188,16 +192,19 @@ class LayerinfiniteClient:
             LayerinfiniteRateLimitError: Too many requests.
             LayerinfiniteServerError: Server-side error.
         """
-        params = {
-            "agent_id": agent_id,
+        params: dict = {
             "issue_type": issue_type,
             "environment": environment,
         }
-        logger.debug("GET /v1/get-scores agent_id=%s issue_type=%s", agent_id, issue_type)
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+
+        logger.debug(
+            "GET /v1/get-scores issue_type=%s agent_id=%s",
+            issue_type, agent_id or "(resolved from API key)",
+        )
         response = self._request_with_retry("GET", "/v1/get-scores", params=params)
         data = response.json()
-        if "agent_id" not in data:
-            data["agent_id"] = agent_id
         return GetScoresResponse.model_validate(data)
 
     def log_outcome(
