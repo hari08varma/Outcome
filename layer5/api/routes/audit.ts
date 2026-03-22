@@ -62,11 +62,18 @@ auditRouter.get('/', async (c) => {
     if (cursor) {
         try {
             const { ts, id } = JSON.parse(Buffer.from(cursor, 'base64').toString('utf-8'));
+            // Validate before interpolation to prevent PostgREST filter injection.
+            // ts must be an ISO 8601 timestamp; id must be a UUID.
+            const ISO_TS = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})?$/;
+            const UUID   = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (typeof ts !== 'string' || typeof id !== 'string' || !ISO_TS.test(ts) || !UUID.test(id)) {
+                throw new Error('invalid cursor shape');
+            }
             // Composite row-value comparison (descending): skip rows at or before the cursor position.
             // Handles ties at page boundaries: same timestamp rows are ordered by outcome_id descending.
             query = query.or(`timestamp.lt.${ts},and(timestamp.eq.${ts},outcome_id.lt.${id})`);
         } catch {
-            // Malformed cursor — ignore and return from the beginning
+            // Malformed or invalid cursor — ignore and return from the beginning
         }
     } else if (pageStr || offsetStr) {
         // Fallback for legacy offset pagination
@@ -99,8 +106,10 @@ auditRouter.get('/', async (c) => {
     }
 
     const totalPages = Math.ceil((count ?? 0) / pageSize);
-    const hasMore = (data && data.length === pageSize);
-    const lastRow = hasMore ? data[data.length - 1] : null;
+    // hasMore is true only when we filled a full page AND the DB has more rows beyond it.
+    // Avoids false positives when total rows is an exact multiple of pageSize.
+    const hasMore = (data?.length ?? 0) === pageSize && (count ?? 0) > (data?.length ?? 0);
+    const lastRow = hasMore ? data![data!.length - 1] : null;
     const nextCursor = (lastRow?.timestamp && lastRow?.outcome_id)
         ? Buffer.from(JSON.stringify({ ts: lastRow.timestamp, id: lastRow.outcome_id })).toString('base64')
         : null;

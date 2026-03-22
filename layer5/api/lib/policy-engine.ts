@@ -48,7 +48,7 @@ export const DEFAULT_POLICY_CONFIG: CustomerPolicyConfig = {
 
 export const DEFAULT_TRUST: AgentTrustScore = {
     trust_score: 0.5,
-    trust_status: 'trusted',
+    trust_status: 'probation',  // 0.5 is in the probation band (0.3–0.6); 'trusted' was overly permissive
     consecutive_failures: 0,
 };
 
@@ -79,6 +79,38 @@ export function getPolicyDecision(
     }
 
     const topAction = rankedActions[0];
+
+    // ── Rule 1.3: New agent (no history) → force explore ──────
+    // A 'new' agent has zero outcomes. Exploiting an uninformed prior would
+    // be misleading. Force exploration to gather real signal first.
+    if (agentTrust.trust_status === 'new') {
+        const target = rankedActions.length > 0
+            ? [...rankedActions].sort((a, b) => a.total_attempts - b.total_attempts)[0]
+            : null;
+        return {
+            policy: 'explore',
+            reason: 'agent_new_no_history',
+            selectedAction: null,
+            explorationTarget: target?.action_id ?? null,
+        };
+    }
+
+    // ── Rule 1.4: Degraded agent → sandbox-like (review required)
+    // 'degraded' sits between probation and sandbox: still executes but
+    // every action requires human review until the score recovers.
+    if (agentTrust.trust_status === 'degraded') {
+        return {
+            policy: 'SANDBOX',
+            reason: 'agent_degraded',
+            selectedAction: topAction?.action_id ?? null,
+            explorationTarget: null,
+            human_review_required: true,
+            sandbox_message: 'Agent is in degraded state. ' +
+                'Actions will execute but require human review. ' +
+                `Trust score: ${agentTrust.trust_score.toFixed(3)}. ` +
+                `Threshold to exit degraded: 0.3`,
+        };
+    }
 
     // ── Rule 1.5: Sandbox agent → flag for review but execute top action
     if (agentTrust.trust_status === 'sandbox') {

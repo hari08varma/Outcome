@@ -8,17 +8,21 @@ import { createAgentFetch } from '../../lib/api';
 import { AGENT_API_KEY_STORAGE_KEY } from '../../hooks/useAgentApiKey';
 import { useToastContext } from '../../components/Toast';
 
-function statusBadge(status: 'trusted' | 'probation' | 'suspended' | 'new'): string {
-  if (status === 'new') return 'bg-[#52525b]/10 text-[#52525b] border border-[#52525b]/30';
-  if (status === 'trusted') return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
+function statusBadge(status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded'): string {
+  if (status === 'new')       return 'bg-[#52525b]/10 text-[#52525b] border border-[#52525b]/30';
+  if (status === 'trusted')   return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
   if (status === 'probation') return 'bg-[#ffaa00]/10 text-[#ffaa00] border border-[#ffaa00]/30';
+  if (status === 'sandbox')   return 'bg-[#eab308]/10 text-[#eab308] border border-[#eab308]/30';
+  if (status === 'degraded')  return 'bg-[#a855f7]/10 text-[#a855f7] border border-[#a855f7]/30';
   return 'bg-[#ff4444]/10 text-[#ff4444] border border-[#ff4444]/30';
 }
 
-function trustColor(status: 'trusted' | 'probation' | 'suspended' | 'new'): string {
-  if (status === 'new') return '#52525b';
-  if (status === 'trusted') return '#00cc66';
+function trustColor(status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded'): string {
+  if (status === 'new')       return '#52525b';
+  if (status === 'trusted')   return '#00cc66';
   if (status === 'probation') return '#ffaa00';
+  if (status === 'sandbox')   return '#eab308';
+  if (status === 'degraded')  return '#a855f7';
   return '#ff4444';
 }
 

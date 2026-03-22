@@ -15,7 +15,7 @@ interface TrustRow {
     trust_id: string;
     agent_id: string;
     trust_score: number;
-    trust_status: 'trusted' | 'probation' | 'suspended';
+    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded';
     consecutive_failures: number;
     total_decisions: number;
     correct_decisions: number;

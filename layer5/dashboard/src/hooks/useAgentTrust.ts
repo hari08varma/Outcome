@@ -19,7 +19,7 @@ export interface AgentTrustData {
   agentType: string;
   createdAt: string;
   trustScore: number | null;
-  status: 'trusted' | 'probation' | 'suspended' | 'new';
+  status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded';
   isNewAgent: boolean;
   consecutiveFailures: number;
   totalOutcomes: number;
@@ -58,18 +58,14 @@ interface TrustAuditRow {
   performed_at?: string | null;
 }
 
-function normalizeStatus(value: string | null | undefined): 'trusted' | 'probation' | 'suspended' | 'new' {
+function normalizeStatus(value: string | null | undefined): 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded' {
   const normalized = (value ?? '').toLowerCase();
-  if (normalized === 'suspended' || normalized === 'probation' || normalized === 'trusted') {
+  if (normalized === 'trusted' || normalized === 'probation' || normalized === 'sandbox' ||
+      normalized === 'suspended' || normalized === 'new' || normalized === 'degraded') {
     return normalized;
   }
-  if (normalized === 'new') {
-    return 'new';
-  }
-  if (normalized === 'sandbox') {
-    return 'probation';
-  }
-  return 'trusted';
+  // Unknown value — default to probation (conservative, not overly permissive)
+  return 'probation';
 }
 
 function normalizeEventType(value: string | null | undefined): 'success' | 'failure' {
@@ -88,7 +84,7 @@ export function useAgentTrust(selectedAgentId?: string): AgentTrustData {
   const [agentType, setAgentType] = useState('');
   const [createdAt, setCreatedAt] = useState('');
   const [trustScore, setTrustScore] = useState<number | null>(null);
-  const [status, setStatus] = useState<'trusted' | 'probation' | 'suspended' | 'new'>('new');
+  const [status, setStatus] = useState<'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded'>('new');
   const [isNewAgent, setIsNewAgent] = useState(true);
   const [consecutiveFailures, setConsecutiveFailures] = useState(0);
   const [totalOutcomes, setTotalOutcomes] = useState(0);
