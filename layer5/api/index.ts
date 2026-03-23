@@ -294,6 +294,47 @@ app.get('/health/deep', async (c) => {
         checks.materialized_view = 'error';
     }
 
+    // ── mv_episode_patterns: regression guard ──────────────
+    // Catches if the MV is rebuilt against the wrong source table (bug from migration 064).
+    // Only warns if fact_outcomes already has episode rows — fresh deploys are fine at 0.
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        const { count: outcomeCount } = await supabase
+            .from('fact_outcomes')
+            .select('*', { count: 'exact', head: true })
+            .not('episode_id', 'is', null);
+        const { count: patternCount, error: mvErr } = await supabase
+            .from('mv_episode_patterns')
+            .select('*', { count: 'exact', head: true });
+        if (mvErr) {
+            checks.mv_episode_patterns = `error: ${mvErr.message}`;
+        } else if ((outcomeCount ?? 0) > 5 && (patternCount ?? 0) === 0) {
+            checks.mv_episode_patterns = 'warn: 0 patterns but outcomes exist — run refresh_mv_episode_patterns()';
+        } else {
+            checks.mv_episode_patterns = `ok (${patternCount ?? 0} patterns)`;
+        }
+    } catch {
+        checks.mv_episode_patterns = 'error';
+    }
+
+    // ── Schema invariants (via DB function) ────────────────
+    // verify_schema_invariants() is defined in migration 065.
+    // Checks: action_sequences FK absent, event_type values valid.
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        const { data, error } = await supabase.rpc('verify_schema_invariants' as any);
+        if (error) {
+            checks.schema_invariants = 'unknown (function not found — run migration 065)';
+        } else {
+            const result = data as { pass: boolean; failures: string[] };
+            checks.schema_invariants = result.pass
+                ? 'ok'
+                : `FAIL: ${result.failures.join(', ')}`;
+        }
+    } catch {
+        checks.schema_invariants = 'unknown';
+    }
+
     // ── Overall status calculation ─────────────────────────
     const vals = Object.values(checks);
     if (vals.some(v => v.startsWith('error') || v === 'missing')) {
