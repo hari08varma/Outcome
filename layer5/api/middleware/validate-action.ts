@@ -14,6 +14,54 @@
 
 import { Context, Next } from 'hono';
 import { supabase } from '../lib/supabase.js';
+import crypto from 'node:crypto';
+
+// ── Category-based baseline priors ─────────────────────────
+// Returns a starting avg_success_rate based on action_category.
+// Used when seeding a new auto-registered action.
+function getBaselinePrior(actionCategory: string): number {
+    const priors: Record<string, number> = {
+        recovery:          0.70,
+        escalation:        0.45,
+        automation:        0.60,
+        'auto-discovered': 0.55,
+        custom:            0.55,
+    };
+    return priors[actionCategory] ?? 0.50;
+}
+
+// Fire-and-forget: seed institutional knowledge for a newly registered action.
+// Uses INSERT protected by unique constraint so re-registration never overwrites
+// real accumulated data. Never blocks action registration — errors are only logged.
+async function seedInstitutionalKnowledge(
+    actionId:       string,
+    actionCategory: string,
+    contextType:    string | null,
+): Promise<void> {
+    const baseline    = getBaselinePrior(actionCategory);
+    const contextSeed = contextType ?? 'global';
+    try {
+        const { error } = await supabase
+            .from('dim_institutional_knowledge')
+            .insert({
+                pattern_id:       crypto.randomUUID(),
+                action_id:        actionId,
+                context_type:     contextSeed,
+                avg_success_rate: baseline,
+                sample_count:     10,
+            });
+        // 23505 = unique_violation (row already exists) — correct, ignore silently
+        if (error && error.code !== '23505') {
+            console.warn('[validate-action] Knowledge seed failed (non-fatal):', {
+                action_id: actionId, context_type: contextSeed, error: error.message,
+            });
+        }
+    } catch (err: any) {
+        console.warn('[validate-action] Knowledge seed exception (non-fatal):', {
+            action_id: actionId, context_type: contextSeed, error: err.message,
+        });
+    }
+}
 
 const ACTION_CACHE_TTL_MS = 30 * 60 * 1000;  // 30 min
 
@@ -154,6 +202,15 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
             });
             return c.json({ error: 'Failed to register action' }, 500);
         }
+
+        // Seed institutional knowledge for this new action.
+        // issue_type from body determines which context gets the prior.
+        // void — fire-and-forget, never blocks registration.
+        void seedInstitutionalKnowledge(
+            newAction.action_id,
+            'auto-discovered',
+            (body.issue_type as string | undefined) ?? null,
+        );
 
         c.set('action', newAction);
         c.set('validated_action', {

@@ -247,6 +247,40 @@ async function fetchInstitutionalFallback(
     }));
 }
 
+// ── Global fallback (Tier 3) ──────────────────────────────────
+// Used when no context-specific priors exist for the given issue_type.
+// Queries context_type = 'global' — always non-empty after migration 066.
+// After this tier, ranked_actions is never empty.
+async function fetchGlobalFallback(): Promise<ScoredAction[]> {
+    const { data, error } = await supabase
+        .from('dim_institutional_knowledge')
+        .select(`
+            action_id,
+            avg_success_rate,
+            sample_count,
+            context_type,
+            dim_actions!inner(action_id, action_name, action_category)
+        `)
+        .eq('context_type', 'global')
+        .order('avg_success_rate', { ascending: false });
+
+    if (error || !data || data.length === 0) return [];
+
+    return data.map((row: any): ScoredAction => ({
+        action_id:       row.action_id,
+        action_name:     row.dim_actions?.action_name ?? row.action_id,
+        action_category: row.dim_actions?.action_category ?? 'unknown',
+        composite_score: Math.round((row.avg_success_rate ?? 0) * 10000) / 10000,
+        confidence:      0,
+        trend_delta:     null,
+        trend:           'stable',
+        total_attempts:  row.sample_count ?? 0,
+        is_cold_start:   true,
+        is_low_sample:   false,
+        recommendation:  toRecommendation(row.avg_success_rate ?? 0, false),
+    }));
+}
+
 // ── Public API ────────────────────────────────────────────────
 export async function getScores(
     customerId: string,
@@ -280,13 +314,23 @@ export async function getScores(
     let isColdStart = false;
 
     if (rawScores.length === 0 || rawScores.every(r => r.confidence < MIN_CONFIDENCE)) {
-        // Cold start — fall back to institutional knowledge
         isColdStart = true;
-        const fallback = contextType
+
+        // Tier 2: context-specific institutional priors
+        let fallback = contextType
             ? await fetchInstitutionalFallback(contextType)
             : [];
 
-        scoredActions = fallback.length > 0 ? fallback : [];
+        // Tier 3: global fallback — ranked_actions is NEVER empty after migration 066
+        if (fallback.length === 0) {
+            console.info(
+                `[scoring] No priors for context_type="${contextType ?? 'none'}". ` +
+                `Using global fallback.`
+            );
+            fallback = await fetchGlobalFallback();
+        }
+
+        scoredActions = fallback;
     } else {
         scoredActions = rawScores.map((row): ScoredAction => {
             const score = computeCompositeScore(row, contextMatch);
