@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -37,7 +38,7 @@ class LayerinfiniteClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://outcome-production.up.railway.app",
+        base_url: str = "https://api.layerinfinite.app",
         timeout: float = 10.0,
         max_retries: int = 3,
     ) -> None:
@@ -55,7 +56,7 @@ class LayerinfiniteClient:
             timeout=timeout,
             headers={
                 "X-API-Key": api_key,
-                "User-Agent": "layerinfinite-python-sdk/0.1.6",
+                "User-Agent": "layerinfinite-python-sdk/0.1.7",
                 "Accept": "application/json",
             },
         )
@@ -225,15 +226,17 @@ class LayerinfiniteClient:
             LayerinfiniteRateLimitError: Too many requests.
             LayerinfiniteServerError: Server-side error.
         """
+        if not request.session_id:
+            request = request.model_copy(update={"session_id": str(uuid.uuid4())})
+
         logger.debug(
-            "POST /v1/log-outcome agent_id=%s action_id=%s success=%s",
-            request.agent_id, request.action_id, request.success,
+            "POST /v1/log-outcome agent_id=%s action_name=%s success=%s",
+            request.agent_id, request.action_name, request.success,
         )
         response = self._request_with_retry(
             "POST",
             "/v1/log-outcome",
             json=request.model_dump(exclude_none=True),
-            headers={"Content-Type": "application/json"},
         )
         return LogOutcomeResponse.model_validate(response.json())
 
