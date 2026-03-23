@@ -351,6 +351,10 @@ async function insertCoreOutcome(
             verifier_value: body.verifier_signal?.value?.toString() ?? null,
             discrepancy_detected: verification.discrepancy_detected,
             backprop_episode_id: body.backprop_episode_id ?? null,
+            // episode_id: the SDK's sequence-grouping field.
+            // Stored as plain UUID string — no FK constraint.
+            // Distinct from backprop_episode_id which has a FK to fact_episodes.
+            episode_id: body.episode_id ?? null,
         })
         .select('outcome_id, timestamp')
         .single();
