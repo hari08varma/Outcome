@@ -86,6 +86,7 @@ import { meRouter } from './routes/auth/me.js';
 import { outcomeFeedbackRouter } from './routes/outcome-feedback.js';
 import { simulateRouter } from './routes/simulate.js';
 import contractsRoute from './routes/contracts.js';
+import discrepancyRoute from './routes/discrepancy.js';
 import pendingSignalsRoute from './routes/pending-signals.js';
 import webhookRoute from './routes/webhook.js';
 
@@ -414,6 +415,7 @@ v1.route('/simulate', simulateRouter);
 
 app.route('/v1', v1);
 app.route('/v1/contracts', contractsRoute);
+app.route('/v1/discrepancies', discrepancyRoute);
 app.route('/v1/pending-signals', pendingSignalsRoute);
 app.post('/v1/webhook/:provider', webhookRoute);
 
