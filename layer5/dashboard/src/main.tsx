@@ -15,6 +15,8 @@ import Agent from './pages/dashboard/agent';
 import Actions from './pages/dashboard/actions';
 import Alerts from './pages/dashboard/alerts';
 import Simulate from './pages/dashboard/simulate';
+import SignalsPage from './pages/dashboard/signals';
+import ContractsPage from './pages/dashboard/contracts';
 import SettingsLayout from './pages/dashboard/settings';
 import ApiKeysSettings from './pages/dashboard/settings/api-keys';
 import AgentsSettings from './pages/dashboard/settings/agents';
@@ -73,6 +75,8 @@ function App(): React.ReactElement {
             <Route path="actions" element={<Actions />} />
             <Route path="alerts" element={<Alerts />} />
             <Route path="simulate" element={<Simulate />} />
+            <Route path="signals" element={<SignalsPage />} />
+            <Route path="contracts" element={<ContractsPage />} />
             <Route path="settings" element={<SettingsLayout />}>
               <Route index element={<Navigate to="/dashboard/settings/api-keys" replace />} />
               <Route path="api-keys" element={<ApiKeysSettings />} />
