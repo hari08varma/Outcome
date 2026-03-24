@@ -113,6 +113,7 @@ def test_log_outcome_returns_typed_response():
     client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL)
     request = LogOutcomeRequest(
         agent_id="my-agent",
+        action_name="escalate_to_senior",
         action_id="act-uuid-1",
         context_id="ctx-uuid-1",
         issue_type="billing_dispute",

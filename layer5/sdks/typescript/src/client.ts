@@ -43,6 +43,14 @@ export class LayerinfiniteClient {
         this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
     }
 
+    getBaseUrl(): string {
+        return this.baseUrl;
+    }
+
+    getApiKey(): string {
+        return this.apiKey;
+    }
+
     // ── Internal: parse and raise typed errors ─────────────────
     private async raiseForStatus(response: Response): Promise<never> {
         let body: unknown;

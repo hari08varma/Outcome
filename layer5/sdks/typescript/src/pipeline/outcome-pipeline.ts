@@ -87,18 +87,15 @@ export class OutcomePipeline {
                 );
 
                 await this.client.logOutcome({
-                    outcome_id: derivedOutcome.outcomeId,
-                    action_name: derivedOutcome.actionName,
+                    agent_id: 'unknown_agent',
+                    action_id: emission.actionId,
+                    context_id: emission.actionId,
+                    issue_type: emission.actionName,
                     success: derivedOutcome.success,
                     outcome_score: derivedOutcome.outcomeScore,
+                    business_outcome: derivedOutcome.success ? 'resolved' : 'failed',
                     feedback_signal: derivedOutcome.feedbackSignal,
-                    is_pending: derivedOutcome.isPending,
-                    confidence: derivedOutcome.confidence,
-                    provider_hint: derivedOutcome.providerHint,
                     response_ms: emission.responseMs,
-                    http_success: emission.httpSuccess,
-                    db_success: emission.dbSuccess,
-                    exit_code: emission.exitCode,
                 });
 
                 if (derivedOutcome.isPending) {
