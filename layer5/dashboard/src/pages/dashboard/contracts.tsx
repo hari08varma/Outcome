@@ -30,6 +30,7 @@ type FormErrors = {
     action_name?: string;
     source?: string;
     success_condition?: string;
+    score_expression?: string;
 };
 
 const INITIAL_FORM: FormState = {
@@ -113,6 +114,7 @@ export default function ContractsPage(): React.ReactElement {
         if (!form.action_name.trim()) nextErrors.action_name = 'Action name is required';
         if (!form.source.trim()) nextErrors.source = 'Source is required';
         if (!form.success_condition.trim()) nextErrors.success_condition = 'Success condition is required';
+        if (!form.score_expression.trim()) nextErrors.score_expression = 'Score expression is required';
         return nextErrors;
     };
 
@@ -355,13 +357,14 @@ export default function ContractsPage(): React.ReactElement {
                         </div>
 
                         <div>
-                            <label className="block text-sm text-[#a1a1aa] mb-1">score_expression</label>
+                            <label className="block text-sm text-[#a1a1aa] mb-1">score_expression*</label>
                             <input
                                 value={form.score_expression}
                                 onChange={(e) => setForm((prev) => ({ ...prev, score_expression: e.target.value }))}
                                 placeholder="e.g. payload.score / 1000"
                                 className="w-full bg-[#111118] border border-[#1a1a24] rounded-lg px-3 py-2 text-white text-sm placeholder-[#52525b] focus:outline-none focus:border-[#b8ff00] transition-colors"
                             />
+                            {formErrors.score_expression && <p className="text-xs text-[#ff4444] mt-1">{formErrors.score_expression}</p>}
                         </div>
 
                         <div>
