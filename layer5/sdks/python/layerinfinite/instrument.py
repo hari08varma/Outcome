@@ -1,7 +1,7 @@
 """
 Single entry point. Call ONCE at agent startup. Never raises.
 
-    from layerinfinite_l5.instrument import instrument
+    from layerinfinite import instrument
     instrument(client)
 """
 from __future__ import annotations

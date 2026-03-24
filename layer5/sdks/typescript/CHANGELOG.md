@@ -11,6 +11,21 @@ Add these secrets to GitHub → Settings → Secrets → Actions:
 
 Without SMOKE_TEST_API_KEY, smoke tests are skipped (not failed).
 
+## [0.2.0] - 2026-03-25
+### Added
+- instrument(client) — one-line setup, patches fetch + db + child process
+- TracedResponse — auto-captures outcomes with signal_confidence scoring
+- tracing/ — causal-graph, execution-context, traced-primitive, provenance
+- pipeline/ — outcome-pipeline, outcome-deriver, pending-signal-writer
+- contracts/ — ContractClient for signal contract registration
+### Changed
+- logOutcome() now fires automatically via OutcomePipeline
+  (manual usage still fully supported — no breaking changes)
+### Migration
+No breaking changes. All v0.1.x code works without modification.
+
+---
+
 ## [0.1.6] - 2026-03-17
 
 ### Fixed

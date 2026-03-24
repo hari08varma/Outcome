@@ -42,3 +42,5 @@ from .models import (
     LogOutcomeResponse,
     ScoredAction,
 )
+from .instrument import instrument
+from .tracing.traced_response import TracedResponse

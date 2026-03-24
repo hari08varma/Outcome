@@ -1,4 +1,4 @@
-import type { LayerinfiniteConfig } from '../client.js';
+import type { LayerinfiniteConfig } from '../types.js';
 import type { SignalContract, SignalContractParams } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://api.layerinfinite.com';

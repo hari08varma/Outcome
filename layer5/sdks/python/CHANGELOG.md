@@ -11,6 +11,21 @@ Add these secrets to GitHub → Settings → Secrets → Actions:
 
 Without SMOKE_TEST_API_KEY, smoke tests are skipped (not failed).
 
+## [0.2.0] - 2026-03-25
+### Added
+- instrument(client) — one-line setup, patches httpx + requests
+- TracedResponse — auto-captures outcomes with signal_confidence scoring
+- tracing/ — causal_graph, execution_context, interceptor, traced_response
+- pipeline/ — outcome_pipeline with background daemon thread
+### Changed
+- log_outcome() now fires automatically inside TracedResponse.__aexit__()
+  (manual usage still fully supported — no breaking changes)
+- User-Agent updated to layerinfinite-python-sdk/0.2.0
+### Migration
+No breaking changes. All v0.1.x code works without modification.
+
+---
+
 ## [0.1.6] - 2026-03-17
 
 ### Fixed

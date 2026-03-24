@@ -56,7 +56,7 @@ class LayerinfiniteClient:
             timeout=timeout,
             headers={
                 "X-API-Key": api_key,
-                "User-Agent": "layerinfinite-python-sdk/0.1.7",
+                "User-Agent": "layerinfinite-python-sdk/0.2.0",
                 "Accept": "application/json",
             },
         )
