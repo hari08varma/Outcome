@@ -1,19 +1,25 @@
 import { IOInterceptor, type PoolLike } from './interceptor.js';
 import { executionStore } from './tracing/execution-context.js';
 import type { LayerinfiniteClient } from './client.js';
+import { OutcomePipeline, type OutcomePipelineOptions } from './pipeline/outcome-pipeline.js';
 
 export interface InstrumentOptions {
     pool?: PoolLike;
-    // Future options added here (Phase 4: pipeline config, etc.)
+    pipeline?: OutcomePipelineOptions;
+}
+
+export interface InstrumentResult {
+    interceptor: IOInterceptor;
+    pipeline: OutcomePipeline;
 }
 
 export function instrument(
     client: LayerinfiniteClient,
     options?: InstrumentOptions,
-): IOInterceptor {
-    void client;  // Phase 4 OutcomePipeline will use client.logOutcome()
+): InstrumentResult {
 
     const interceptor = new IOInterceptor(executionStore);
+    const pipeline = new OutcomePipeline(client, options?.pipeline);
 
     // Always instrument fetch — universal I/O layer
     interceptor.instrumentFetch();
@@ -26,8 +32,7 @@ export function instrument(
     // Wire up child process helpers (exec/spawn are available on the returned interceptor)
     interceptor.instrumentChildProcess();
 
-    // OutcomePipeline NOT started here — Phase 4's responsibility.
-    // Phase 3 only builds the interceptors. Phase 4 drains _pendingEmissions.
+    pipeline.start();
 
-    return interceptor;
+    return { interceptor, pipeline };
 }

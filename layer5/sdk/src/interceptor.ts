@@ -12,36 +12,45 @@ export interface PoolLike {
 }
 
 // ── Pipeline emission shape — Phase 4 OutcomePipeline drains these ──────────
-interface PipelineEmission {
-    actionId:              string;
-    actionName:            string;
-    graph:                 CausalGraph;
-    httpSuccess?:          boolean;
-    dbSuccess?:            boolean;
-    exitCode?:             number;
-    responseMs:            number;
-    responseForPipeline?:  Response;
-    result?:               unknown;
+export interface InterceptEmission {
+    actionId: string;
+    actionName: string;
+    graph: CausalGraph;
+    httpSuccess?: boolean;
+    dbSuccess?: boolean;
+    exitCode?: number;
+    responseMs: number;
+    responseForPipeline?: Response;
+    result?: unknown;
 }
 
 // ── Module-level emission queue — exported so Phase 4 can drain it ──────────
-export const _pendingEmissions: PipelineEmission[] = [];
+export const _pendingEmissions: InterceptEmission[] = [];
 
-export function drainEmissions(): PipelineEmission[] {
+let emissionScheduler: (() => void) | null = null;
+
+export function registerEmissionScheduler(scheduler: (() => void) | null): void {
+    emissionScheduler = scheduler;
+}
+
+export function drainEmissions(): InterceptEmission[] {
     return _pendingEmissions.splice(0, _pendingEmissions.length);
 }
 
 // ── Module-private stubs — Phase 4 replaces these with real pipeline logic ──
-async function emitToPipeline(data: PipelineEmission): Promise<void> {
+async function emitToPipeline(data: InterceptEmission): Promise<void> {
     _pendingEmissions.push(data);
+    emissionScheduler?.();
 }
 
-async function emitDbToPipeline(data: PipelineEmission): Promise<void> {
+async function emitDbToPipeline(data: InterceptEmission): Promise<void> {
     _pendingEmissions.push(data);
+    emissionScheduler?.();
 }
 
-async function emitProcessToPipeline(data: PipelineEmission): Promise<void> {
+async function emitProcessToPipeline(data: InterceptEmission): Promise<void> {
     _pendingEmissions.push(data);
+    emissionScheduler?.();
 }
 
 // ── IOInterceptor ────────────────────────────────────────────────────────────
@@ -67,13 +76,13 @@ export class IOInterceptor {
             input: RequestInfo | URL,
             init?: RequestInit,
         ): Promise<Response> {
-            const url        = typeof input === 'string' ? input
-                             : input instanceof URL      ? input.toString()
-                             : (input as Request).url;
-            const actionId   = generateActionId();
+            const url = typeof input === 'string' ? input
+                : input instanceof URL ? input.toString()
+                    : (input as Request).url;
+            const actionId = generateActionId();
             const actionName = inferActionName(url, init as { method?: string } | undefined);
-            const graph      = new CausalGraph();
-            const startMs    = Date.now();
+            const graph = new CausalGraph();
+            const startMs = Date.now();
 
             return executionStore.run({ actionId, actionName, graph }, async () => {
                 let response!: Response;
@@ -86,16 +95,16 @@ export class IOInterceptor {
                     // Record network error in graph, then re-throw (TRAP 5)
                     graph.recordFieldAccess({
                         actionId,
-                        fieldPath:  'networkError',
-                        value:      String(err),
-                        depth:      0,
+                        fieldPath: 'networkError',
+                        value: String(err),
+                        depth: 0,
                         confidence: 0.90,
                     });
                     emitToPipeline({
                         actionId, actionName, graph,
                         httpSuccess: false,
                         responseMs: Date.now() - startMs,
-                    }).catch(() => {});
+                    }).catch(() => { });
                     throw err;
                 }
 
@@ -103,7 +112,7 @@ export class IOInterceptor {
 
                 // TRAP 2: clone before wrapping — Response body is single-consume
                 const responseForPipeline = response.clone();
-                const responseForAgent    = createTracedResponse(
+                const responseForAgent = createTracedResponse(
                     response,
                     { actionId, actionName, fieldPath: '', depth: 0 },
                     graph,
@@ -111,7 +120,7 @@ export class IOInterceptor {
 
                 emitToPipeline({
                     actionId, actionName, graph, responseForPipeline, httpSuccess, responseMs,
-                }).catch(() => {});
+                }).catch(() => { });
 
                 return responseForAgent as unknown as Response;
             });
@@ -131,12 +140,12 @@ export class IOInterceptor {
         pool.query = async function layerinfiniteQuery(
             ...args: unknown[]
         ): Promise<{ rows: unknown[]; rowCount: number | null }> {
-            const queryText  = typeof args[0] === 'string' ? args[0]
-                             : (args[0] as { text?: string })?.text ?? 'db_query';
-            const actionId   = generateActionId();
+            const queryText = typeof args[0] === 'string' ? args[0]
+                : (args[0] as { text?: string })?.text ?? 'db_query';
+            const actionId = generateActionId();
             const actionName = `db/${queryText.slice(0, 40).replace(/\s+/g, '_')}`;
-            const graph      = new CausalGraph();
-            const startMs    = Date.now();
+            const graph = new CausalGraph();
+            const startMs = Date.now();
 
             return executionStore.run({ actionId, actionName, graph }, async () => {
                 let result: { rows: unknown[]; rowCount: number | null };
@@ -146,16 +155,16 @@ export class IOInterceptor {
                 } catch (err) {
                     graph.recordFieldAccess({
                         actionId,
-                        fieldPath:  'dbError',
-                        value:      String(err),
-                        depth:      0,
+                        fieldPath: 'dbError',
+                        value: String(err),
+                        depth: 0,
                         confidence: 0.90,
                     });
                     emitDbToPipeline({
                         actionId, actionName, graph,
                         dbSuccess: false,
                         responseMs: Date.now() - startMs,
-                    }).catch(() => {});
+                    }).catch(() => { });
                     throw err;  // re-throw (TRAP 5)
                 }
 
@@ -168,7 +177,7 @@ export class IOInterceptor {
 
                 emitDbToPipeline({
                     actionId, actionName, graph, result, dbSuccess: true, responseMs,
-                }).catch(() => {});
+                }).catch(() => { });
 
                 return tracedResult as unknown as typeof result;
             });
@@ -188,27 +197,27 @@ export class IOInterceptor {
         command: string,
     ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
         const execAsync = promisify(nodeExec);
-        const actionId   = generateActionId();
+        const actionId = generateActionId();
         const actionName = `exec/${command.slice(0, 40).replace(/\s+/g, '_')}`;
-        const graph      = new CausalGraph();
-        const startMs    = Date.now();
+        const graph = new CausalGraph();
+        const startMs = Date.now();
 
         return executionStore.run({ actionId, actionName, graph }, async () => {
             let exitCode = 0;
-            let stdout   = '';
-            let stderr   = '';
+            let stdout = '';
+            let stderr = '';
 
             try {
                 const out = await execAsync(command);
-                stdout    = out.stdout ?? '';
-                stderr    = out.stderr ?? '';
-                exitCode  = 0;
+                stdout = out.stdout ?? '';
+                stderr = out.stderr ?? '';
+                exitCode = 0;
             } catch (err: unknown) {
                 // TRAP 6: exec non-zero exit is an expected outcome — do NOT re-throw
-                const e  = err as { code?: number; stdout?: string; stderr?: string };
+                const e = err as { code?: number; stdout?: string; stderr?: string };
                 exitCode = e.code ?? 1;
-                stdout   = e.stdout ?? '';
-                stderr   = e.stderr ?? '';
+                stdout = e.stdout ?? '';
+                stderr = e.stderr ?? '';
             }
 
             const result = { exitCode, stdout, stderr };
@@ -221,7 +230,7 @@ export class IOInterceptor {
             emitProcessToPipeline({
                 actionId, actionName, graph, exitCode,
                 responseMs: Date.now() - startMs,
-            }).catch(() => {});
+            }).catch(() => { });
 
             return tracedResult as unknown as typeof result;
         });
@@ -231,10 +240,10 @@ export class IOInterceptor {
         cmd: string,
         args: string[],
     ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-        const actionId   = generateActionId();
+        const actionId = generateActionId();
         const actionName = `spawn/${cmd.slice(0, 40).replace(/\s+/g, '_')}`;
-        const graph      = new CausalGraph();
-        const startMs    = Date.now();
+        const graph = new CausalGraph();
+        const startMs = Date.now();
 
         return executionStore.run({ actionId, actionName, graph }, () =>
             new Promise((resolve) => {
@@ -257,7 +266,7 @@ export class IOInterceptor {
                     emitProcessToPipeline({
                         actionId, actionName, graph, exitCode,
                         responseMs: Date.now() - startMs,
-                    }).catch(() => {});
+                    }).catch(() => { });
 
                     resolve(tracedResult as unknown as typeof result);
                 });

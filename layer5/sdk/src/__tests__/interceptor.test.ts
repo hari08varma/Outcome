@@ -6,8 +6,8 @@ import { executionStore } from '../tracing/execution-context.js';
 // ── Shared mock client (satisfies LayerinfiniteClient interface) ─────────────
 const mockClient = {
     logOutcome: vi.fn().mockResolvedValue({ logged: true }),
-    getScores:  vi.fn().mockResolvedValue({ ranked_actions: [] }),
-    getApiKey:  () => 'test-key',
+    getScores: vi.fn().mockResolvedValue({ ranked_actions: [] }),
+    getApiKey: () => 'test-key',
     getBaseUrl: () => 'http://localhost',
 };
 
@@ -215,9 +215,11 @@ describe('Test 11 — instrument() returns interceptor with exec/spawn helpers',
 
         const result = instrument(mockClient);
 
-        expect(typeof result.execTracked).toBe('function');
-        expect(typeof result.spawnTracked).toBe('function');
+        expect(typeof result.interceptor.execTracked).toBe('function');
+        expect(typeof result.interceptor.spawnTracked).toBe('function');
         expect(globalThis.fetch.name).toBe('layerinfiniteFetch');
+
+        result.pipeline.stop();
     });
 });
 
@@ -228,8 +230,10 @@ describe('Test 12 — instrument() with pool option patches pool.query', () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse));
 
         const pool = { query: vi.fn() };
-        instrument(mockClient, { pool });
+        const result = instrument(mockClient, { pool });
 
         expect(pool.query.name).toBe('layerinfiniteQuery');
+
+        result.pipeline.stop();
     });
 });
