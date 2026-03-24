@@ -85,6 +85,9 @@ import { apiKeysRouter } from './routes/auth/api-keys.js';
 import { meRouter } from './routes/auth/me.js';
 import { outcomeFeedbackRouter } from './routes/outcome-feedback.js';
 import { simulateRouter } from './routes/simulate.js';
+import contractsRoute from './routes/contracts.js';
+import pendingSignalsRoute from './routes/pending-signals.js';
+import webhookRoute from './routes/webhook.js';
 
 // ── PORT: Railway injects PORT, fallback to API_PORT, then 3000 ──
 const PORT = parseInt(process.env.PORT ?? process.env.API_PORT ?? '3000', 10);
@@ -389,18 +392,18 @@ v1.route('/admin/trigger-training', triggerTrainingRoute);
 v1.route('/admin/restore-trust-snapshot', restoreTrustSnapshotRouter);
 v1.route('/admin/embedding-drift', embeddingDriftRouter);
 
-v1.use('/log-outcome',    primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
-v1.use('/log-outcome/*',  primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
-v1.use('/outcome-feedback',   primaryAuth, rateLimitMiddleware());
+v1.use('/log-outcome', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
+v1.use('/log-outcome/*', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
+v1.use('/outcome-feedback', primaryAuth, rateLimitMiddleware());
 v1.use('/outcome-feedback/*', primaryAuth, rateLimitMiddleware());
-v1.use('/get-scores',    primaryAuth, rateLimitMiddleware());
-v1.use('/get-scores/*',  primaryAuth, rateLimitMiddleware());
-v1.use('/get-patterns',  primaryAuth, rateLimitMiddleware());
-v1.use('/get-patterns/*',primaryAuth, rateLimitMiddleware());
-v1.use('/audit',         primaryAuth, rateLimitMiddleware());
-v1.use('/audit/*',       primaryAuth, rateLimitMiddleware());
-v1.use('/simulate',      primaryAuth, rateLimitMiddleware());
-v1.use('/simulate/*',    primaryAuth, rateLimitMiddleware());
+v1.use('/get-scores', primaryAuth, rateLimitMiddleware());
+v1.use('/get-scores/*', primaryAuth, rateLimitMiddleware());
+v1.use('/get-patterns', primaryAuth, rateLimitMiddleware());
+v1.use('/get-patterns/*', primaryAuth, rateLimitMiddleware());
+v1.use('/audit', primaryAuth, rateLimitMiddleware());
+v1.use('/audit/*', primaryAuth, rateLimitMiddleware());
+v1.use('/simulate', primaryAuth, rateLimitMiddleware());
+v1.use('/simulate/*', primaryAuth, rateLimitMiddleware());
 
 v1.route('/log-outcome', logOutcomeRouter);
 v1.route('/outcome-feedback', outcomeFeedbackRouter);
@@ -410,6 +413,9 @@ v1.route('/audit', auditRouter);
 v1.route('/simulate', simulateRouter);
 
 app.route('/v1', v1);
+app.route('/v1/contracts', contractsRoute);
+app.route('/v1/pending-signals', pendingSignalsRoute);
+app.post('/v1/webhook/:provider', webhookRoute);
 
 // ── 404 fallback ──────────────────────────────────────────────
 app.notFound((c) => c.json(

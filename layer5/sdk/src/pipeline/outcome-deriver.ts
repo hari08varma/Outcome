@@ -1,5 +1,16 @@
 import type { CausalGraph } from '../tracing/causal-graph.js';
 
+export interface DerivedOutcome {
+    outcomeId: string;
+    actionName: string;
+    success: boolean;
+    outcomeScore: number;
+    feedbackSignal: 'immediate' | 'delayed' | 'none';
+    isPending: boolean;
+    confidence: number;
+    providerHint: string | null;
+}
+
 export interface OutcomeLogParams {
     [key: string]: unknown;
     action_id: string;
@@ -44,5 +55,33 @@ export function deriveOutcomeParams(
             ...metadata,
             derivation_method: 'causal_graph_v1',
         },
+    };
+}
+
+function inferProviderHint(actionName: string): 'stripe' | 'sendgrid' | null {
+    const normalized = actionName.toLowerCase();
+    if (normalized.includes('stripe')) return 'stripe';
+    if (normalized.includes('sendgrid')) return 'sendgrid';
+    return null;
+}
+
+export function deriveOutcome(
+    graph: CausalGraph,
+    actionId: string,
+    actionName: string,
+): DerivedOutcome {
+    const params = deriveOutcomeParams(graph, actionId);
+    const providerHint = inferProviderHint(actionName);
+    const isPending = providerHint !== null;
+
+    return {
+        outcomeId: actionId,
+        actionName,
+        success: params.outcome_score >= 0.5,
+        outcomeScore: params.outcome_score,
+        feedbackSignal: isPending ? 'delayed' : 'immediate',
+        isPending,
+        confidence: params.confidence,
+        providerHint,
     };
 }

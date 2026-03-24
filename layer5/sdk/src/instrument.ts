@@ -2,6 +2,7 @@ import { IOInterceptor, type PoolLike } from './interceptor.js';
 import { executionStore } from './tracing/execution-context.js';
 import type { LayerinfiniteClient } from './client.js';
 import { OutcomePipeline, type OutcomePipelineOptions } from './pipeline/outcome-pipeline.js';
+import { ContractClient } from './contracts/contract-client.js';
 
 export interface InstrumentOptions {
     pool?: PoolLike;
@@ -11,6 +12,7 @@ export interface InstrumentOptions {
 export interface InstrumentResult {
     interceptor: IOInterceptor;
     pipeline: OutcomePipeline;
+    ContractClient: typeof ContractClient;
 }
 
 export function instrument(
@@ -34,5 +36,5 @@ export function instrument(
 
     pipeline.start();
 
-    return { interceptor, pipeline };
+    return { interceptor, pipeline, ContractClient };
 }
