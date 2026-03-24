@@ -4,8 +4,9 @@ import crypto from 'node:crypto';
 import { supabase } from '../lib/supabase.js';
 import { invalidateCache, getCachedScore, getScores } from '../lib/scoring.js';
 import {
-    getPolicyDecision, DEFAULT_TRUST, DEFAULT_POLICY_CONFIG, AgentTrustScore, CustomerPolicyConfig,
+    getPolicyDecision,
 } from '../lib/policy-engine.js';
+import type { AgentTrustScore, CustomerPolicyConfig } from '../lib/policy-engine.js';
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
@@ -14,6 +15,19 @@ export const logOutcomeRouter = new Hono();
 
 // ── Payload size guard (64KB) ─────────────────────────────────
 const MAX_RAW_CONTEXT_BYTES = 64 * 1024;
+
+const LOCAL_DEFAULT_TRUST: AgentTrustScore = {
+    trust_score: 0.5,
+    trust_status: 'new',
+    consecutive_failures: 0,
+};
+
+const LOCAL_DEFAULT_POLICY_CONFIG: CustomerPolicyConfig = {
+    risk_tolerance: 'balanced',
+    escalation_score: 0.20,
+    exploration_rate: 0.05,
+    min_confidence: 0.30,
+};
 
 // ── Request schema ────────────────────────────────────────────
 const LogOutcomeBody = z.object({
@@ -40,14 +54,14 @@ const LogOutcomeBody = z.object({
         .transform(val => {
             const normalized = val.trim().toLowerCase();
             const aliases: Record<string, string> = {
-                'prod':    'production',
-                'dev':     'development',
+                'prod': 'production',
+                'dev': 'development',
                 'develop': 'development',
-                'stage':   'staging',
-                'stg':     'staging',
-                'qa':      'staging',
-                'test':    'staging',
-                'uat':     'staging',
+                'stage': 'staging',
+                'stg': 'staging',
+                'qa': 'staging',
+                'test': 'staging',
+                'uat': 'staging',
             };
             if (aliases[normalized]) return aliases[normalized] as 'production' | 'staging' | 'development';
             const known = ['production', 'staging', 'development'] as const;
@@ -57,17 +71,9 @@ const LogOutcomeBody = z.object({
         }),
     customer_tier: z.enum(['free', 'pro', 'enterprise']).optional(),
 
-    // ── FIX 1: outcome_score is REQUIRED (was .optional()) ──────
-    // Removing .optional() ensures null is never stored in fact_outcomes.
-    // The materialized view mv_action_scores aggregates weighted_success_rate
-    // from this column — null rows produce rows=0 and break the entire
-    // scoring engine. Callers MUST supply a value between 0.0 and 1.0.
-    // If the verifier overrides it, that override takes precedence at
-    // runtime via verification.confidence_override — but a baseline
-    // outcome_score must always be present in the request.
     outcome_score: z.number().min(0.0).max(1.0, {
         message: 'outcome_score must be between 0.0 and 1.0',
-    }),
+    }).optional(),
 
     business_outcome: z
         .string()
@@ -142,15 +148,15 @@ async function getAgentTrust(agentId: string): Promise<AgentTrustScore> {
         .select('trust_score, trust_status, consecutive_failures')
         .eq('agent_id', agentId)
         .maybeSingle();
-    if (error || !data) return DEFAULT_TRUST;
+    if (error || !data) return LOCAL_DEFAULT_TRUST;
     const allowedStatuses: AgentTrustScore['trust_status'][] = ['trusted', 'probation', 'sandbox', 'suspended', 'new', 'degraded'];
     const normalizedStatus = allowedStatuses.includes(data.trust_status as AgentTrustScore['trust_status'])
         ? (data.trust_status as AgentTrustScore['trust_status'])
-        : DEFAULT_TRUST.trust_status;
+        : LOCAL_DEFAULT_TRUST.trust_status;
     return {
-        trust_score: typeof data.trust_score === 'number' ? data.trust_score : DEFAULT_TRUST.trust_score,
+        trust_score: typeof data.trust_score === 'number' ? data.trust_score : LOCAL_DEFAULT_TRUST.trust_score,
         trust_status: normalizedStatus,
-        consecutive_failures: typeof data.consecutive_failures === 'number' ? data.consecutive_failures : DEFAULT_TRUST.consecutive_failures,
+        consecutive_failures: typeof data.consecutive_failures === 'number' ? data.consecutive_failures : LOCAL_DEFAULT_TRUST.consecutive_failures,
     };
 }
 
@@ -161,7 +167,7 @@ async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConf
         .select('config')
         .eq('customer_id', customerId)
         .maybeSingle();
-    if (error || !data?.config) return DEFAULT_POLICY_CONFIG;
+    if (error || !data?.config) return LOCAL_DEFAULT_POLICY_CONFIG;
     const cfg = data.config as Record<string, unknown>;
     return {
         risk_tolerance: (['conservative', 'balanced', 'aggressive'].includes(cfg.risk_tolerance as string)
@@ -357,7 +363,7 @@ async function resolveContextId(body: any, customerId: string): Promise<string> 
 
 async function insertCoreOutcome(
     agentId: string, customerId: string, actionId: string, contextId: string,
-    body: any, finalSuccess: boolean, finalOutcomeScore: number, verification: any
+    body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any
 ) {
     // RULE: backprop_episode_id is INTERNAL — set by the backprop engine only.
     // NEVER map body.episode_id to this column. body.episode_id is the SDK's
@@ -379,7 +385,7 @@ async function insertCoreOutcome(
             raw_context: body.raw_context ?? {},
             is_synthetic: false,
             salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
-            outcome_score: finalOutcomeScore,     // guaranteed non-null — schema enforces it
+            outcome_score: finalOutcomeScore,
             business_outcome: body.business_outcome ?? null,
             feedback_signal: body.feedback_signal ?? 'immediate',
             verifier_source: body.verifier_signal?.source ?? null,
@@ -391,10 +397,10 @@ async function insertCoreOutcome(
             // Distinct from backprop_episode_id which has a FK to fact_episodes.
             episode_id: body.episode_id ?? null,
             // ── Phase 1: Signal columns ───────────────────────
-            signal_source:     body.signal_source     ?? 'explicit',
+            signal_source: body.signal_source ?? 'explicit',
             signal_confidence: body.causal_confidence ?? null,
-            causal_depth:      body.signal_depth      ?? null,
-            signal_pending:    false,
+            causal_depth: body.signal_depth ?? null,
+            signal_pending: false,
             signal_updated_at: null,
         })
         .select('outcome_id, timestamp')
@@ -507,9 +513,7 @@ logOutcomeRouter.post('/', async (c) => {
         // 3. Verification Layer
         const verification = await verifyOutcome(body, customerId, agentId);
         const finalSuccess = verification.verified_success;
-        // outcome_score is now required — confidence_override can still override it,
-        // but body.outcome_score is guaranteed non-null by the schema.
-        const finalOutcomeScore = verification.confidence_override ?? body.outcome_score;
+        const finalOutcomeScore = verification.confidence_override ?? body.outcome_score ?? null;
 
         // 4. Resolve References
         const actionId = await resolveActionId(c, body, customerId);
@@ -535,7 +539,7 @@ logOutcomeRouter.post('/', async (c) => {
         // 8. Policy Engine Wrap-up
         const policyResultData = await computePolicyRecommendation(customerId, contextId, agentId, body.issue_type);
         const policyResult = policyResultData?.policy ?? null;
-        const agentTrust   = policyResultData?.trust ?? DEFAULT_TRUST;
+        const agentTrust = policyResultData?.trust ?? LOCAL_DEFAULT_TRUST;
         const finalValidatedAction = c.get('validated_action') as any;
 
         const counterfactualsComputed = !!(decisionRecord?.ranked_actions);
@@ -549,10 +553,10 @@ logOutcomeRouter.post('/', async (c) => {
             timestamp: outcome.timestamp,
             message: `Outcome logged. Action "${body.action_name ?? 'unknown'}" — ${finalSuccess ? 'SUCCESS' : 'FAILURE'}`,
             // ── SDK required response fields ──────────────────
-            logged:            true,
+            logged: true,
             agent_trust_score: agentTrust.trust_score,
-            trust_status:      agentTrust.trust_status,
-            policy:            policyResult?.policy ?? 'explore',
+            trust_status: agentTrust.trust_status,
+            policy: policyResult?.policy ?? 'explore',
             recommendation: policyResult?.policy ?? null,
             next_actions: policyResult ? {
                 policy: policyResult.policy, reason: policyResult.reason,

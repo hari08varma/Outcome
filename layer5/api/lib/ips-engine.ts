@@ -13,8 +13,8 @@
 import { supabase } from './supabase.js';
 
 const TEMPERATURE = 1.0;        // softmax temperature
-const IPS_WEIGHT_MIN = 0.01;    // min IPS weight (importance weight floor)
-const IPS_WEIGHT_CAP = 100.0;   // max IPS weight (per DR-estimator spec)
+const IPS_WEIGHT_MIN = 0.0;     // min IPS weight
+const IPS_WEIGHT_CAP = 0.3;     // max IPS weight (conservative cap)
 const MIN_PROPENSITY = 0.001;   // floor to prevent division by zero
 
 export interface RankedActionEntry {
@@ -78,14 +78,12 @@ export function computeIPSEstimate(
     propensityChosen: number,
     propensityUnchosen: number
 ): { estimate: number; weight: number } {
-    // Importance weight: propensity ratio clipped to [IPS_WEIGHT_MIN, IPS_WEIGHT_CAP]
-    const weight = Math.min(
-        Math.max(propensityUnchosen / propensityChosen, IPS_WEIGHT_MIN),
-        IPS_WEIGHT_CAP
-    );
+    const ratio = propensityUnchosen / propensityChosen;
+    const unclippedEstimate = realOutcome * ratio;
+    const estimate = Math.min(Math.max(unclippedEstimate, 0.0), realOutcome);
 
-    // Unbiased IPS estimate — clamp to [0,1] since it's a score
-    const estimate = Math.min(Math.max(realOutcome * weight, 0.0), 1.0);
+    const rawWeight = propensityUnchosen * (1.0 - Math.abs(estimate - realOutcome));
+    const weight = Math.min(Math.max(rawWeight, IPS_WEIGHT_MIN), IPS_WEIGHT_CAP);
 
     return {
         estimate: Math.round(estimate * 10000) / 10000,

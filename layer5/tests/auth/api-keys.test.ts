@@ -100,9 +100,9 @@ describe('API Key Management — /v1/auth/api-keys', () => {
             );
 
             const json = await res.json() as any;
-            // layerinfinite_ (7 chars) + 32 hex chars = 39 total
-            expect(json.key).toHaveLength(39);
-            expect(json.key.slice(0, 7)).toBe('layerinfinite_');
+            // layerinfinite_ (14 chars) + 32 hex chars = 46 total
+            expect(json.key).toHaveLength(46);
+            expect(json.key.slice(0, 14)).toBe('layerinfinite_');
         });
     });
 

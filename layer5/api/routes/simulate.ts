@@ -14,12 +14,13 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { runSimulation } from '../lib/simulation/tier-selector.js';
+import { supabase } from '../lib/supabase.js';
 
 export const simulateRouter = new Hono();
 
 // ── Request validation schema ─────────────────────────────────
 const SimulateBody = z.object({
-  agent_id: z.string().optional(),   // ignored — auth middleware provides it
+  agent_id: z.string().min(1),
   context: z.record(z.string(), z.unknown()),
   proposed_sequence: z.array(z.string().min(1)).min(1).max(5),
   episode_history: z.array(z.string()).optional().default([]),
@@ -67,6 +68,7 @@ simulateRouter.post('/', async (c) => {
   }
 
   const {
+    agent_id,
     context,
     proposed_sequence,
     episode_history,
@@ -74,11 +76,25 @@ simulateRouter.post('/', async (c) => {
     max_sequence_depth,
   } = body;
 
-  const agentId    = c.get('agent_id')    as string;
   const customerId = c.get('customer_id') as string;
 
-  if (!agentId || !customerId) {
+  if (!customerId) {
     return c.json({ error: 'Missing agent context', code: 'MISSING_AGENT', agent_id: '' }, 401);
+  }
+
+  const { data: agentRow, error: agentLookupError } = await supabase
+    .from('dim_agents')
+    .select('agent_id')
+    .eq('agent_id', agent_id)
+    .eq('customer_id', customerId)
+    .maybeSingle();
+
+  if (agentLookupError) {
+    return c.json({ error: 'Agent lookup failed', code: 'AGENT_LOOKUP_ERROR', agent_id }, 500);
+  }
+
+  if (!agentRow) {
+    return c.json({ error: 'Agent not found', code: 'NOT_FOUND', agent_id }, 404);
   }
 
   // Compute context hash
@@ -87,7 +103,7 @@ simulateRouter.post('/', async (c) => {
   // Run simulation
   const result = await runSimulation({
     customerId: customerId,
-    agentId: agentId,
+    agentId: agent_id,
     context,
     contextHash,
     proposedSequence: proposed_sequence,

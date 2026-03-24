@@ -104,6 +104,9 @@ apiKeysRouter.post('/', async (c) => {
 
     // Return the full key ONCE — it is never stored or retrievable again
     return c.json({
+        key: plainKey,
+        key_id: data.agent_id,
+        name: data.agent_name,
         api_key: plainKey,
         agent_id: data.agent_id,
         agent_name: data.agent_name,
