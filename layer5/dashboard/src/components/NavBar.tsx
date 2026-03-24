@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Simulate', path: '/dashboard/simulate' },
   { label: 'Signals', path: '/dashboard/signals' },
   { label: 'Contracts', path: '/dashboard/contracts' },
+  { label: 'Discrepancies', path: '/dashboard/discrepancies', showAlertDot: true },
   { label: 'Settings', path: '/dashboard/settings', icon: <Settings size={16} /> },
 ];
 
