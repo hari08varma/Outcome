@@ -114,6 +114,25 @@ const LogOutcomeBody = z.object({
         ]).optional(),
         verified_at: z.string().datetime().optional(),
     }).optional(),
+
+    // ── Phase 1: Real Outcome Signal Integration ──────────────
+    // All four fields are optional. Callers that omit them get the
+    // existing behaviour. real_agent.py sends none of them.
+    signal_source: z.enum([
+        'causal_graph',
+        'signal_contract',
+        'http_inference',
+        'explicit',
+    ]).optional().default('explicit'),
+    // When signal_source is 'causal_graph', the Proxy interceptor
+    // inferred which action this outcome belongs to.
+    inferred_action_id: z.string().uuid().optional(),
+    // Confidence of the signal: 0.90 at causal depth 0, decays by
+    // 0.04 per depth level. NULL for explicit signals.
+    causal_confidence: z.number().min(0).max(1).optional(),
+    // How many transformation layers the traced value traversed.
+    // NULL for explicit signals. 0–8 for causal graph signals.
+    signal_depth: z.number().int().min(0).max(9).optional(),
 });
 
 // ── Helper: fetch real agent trust ──
@@ -245,6 +264,22 @@ async function verifyOutcome(body: any, customerId: string, agentId: string) {
 }
 
 async function resolveActionId(c: Context, body: any, customerId: string): Promise<string> {
+    // Phase 1: Causal Graph inferred action — use inferred_action_id directly.
+    // The Proxy interceptor already validated this by watching what the agent called.
+    if (body.signal_source === 'causal_graph' && body.inferred_action_id && !body.action_name) {
+        const { data: actionRow } = await supabase
+            .from('dim_actions')
+            .select('action_id, action_name')
+            .eq('action_id', body.inferred_action_id)
+            .eq('customer_id', customerId)
+            .maybeSingle();
+        if (actionRow) {
+            body.action_name = actionRow.action_name;
+            return actionRow.action_id;
+        }
+        // Not found — fall through to normal resolution path
+    }
+
     // Path 1: action_id provided (backward compat) — resolve to action_name
     if (!body.action_name && (body.action_id_input || body.action_id)) {
         const incomingId = body.action_id_input ?? body.action_id;
@@ -355,6 +390,12 @@ async function insertCoreOutcome(
             // Stored as plain UUID string — no FK constraint.
             // Distinct from backprop_episode_id which has a FK to fact_episodes.
             episode_id: body.episode_id ?? null,
+            // ── Phase 1: Signal columns ───────────────────────
+            signal_source:     body.signal_source     ?? 'explicit',
+            signal_confidence: body.causal_confidence ?? null,
+            causal_depth:      body.signal_depth      ?? null,
+            signal_pending:    false,
+            signal_updated_at: null,
         })
         .select('outcome_id, timestamp')
         .single();
@@ -488,6 +529,7 @@ logOutcomeRouter.post('/', async (c) => {
             contextId, issueType: body.issue_type, finalSuccess, finalOutcomeScore,
             responseMs: body.response_time_ms ?? null, episodeId: body.episode_id,
             businessOutcome: body.business_outcome, decisionId: body.decision_id, decisionRecord,
+            signalConfidence: body.causal_confidence ?? null,
         }).catch(err => console.error('[log-outcome] orchestrator failed:', { error: err.message, outcomeId: outcome.outcome_id }));
 
         // 8. Policy Engine Wrap-up

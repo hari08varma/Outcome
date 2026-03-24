@@ -95,7 +95,7 @@ getScoresRouter.get('/', async (c) => {
 
     if (!issueType && !contextId) {
         return c.json(
-            { error: 'Provide either issue_type or context_id query parameter', code: 'MISSING_PARAM', agent_id: '' },
+            { error: 'Provide either issue_type or context_id query parameter', code: 'MISSING_PARAM', agent_id: '', signal_contract: null },
             400
         );
     }
@@ -155,6 +155,7 @@ getScoresRouter.get('/', async (c) => {
                         message:        `No context found for issue_type="${issueType}". Cold-start active.`,
                         recommendation: 'Log at least one outcome to seed this context.',
                     },
+                    signal_contract: null,
                 }, 200);
             }
         }
@@ -336,11 +337,17 @@ getScoresRouter.get('/', async (c) => {
             decision_id: decisionId,
             recommended_sequence: recommendedSequence,
             sequence_context: sequenceContext,
+            // ── Phase 1: Signal contract (always null until Phase 4) ──
+            // Phase 4 will replace this with a real lookup when a Signal
+            // Contract exists for the top_action. Phase 6's instrument.py
+            // uses this to decide whether to use the contract or fall back
+            // to Causal Graph Tracking.
+            signal_contract: null,
         });
     } catch (err: any) {
         console.error('[get-scores] Error:', err.message);
         return c.json(
-            { error: 'Scoring service error', details: err.message, code: 'SCORING_ERROR' },
+            { error: 'Scoring service error', details: err.message, code: 'SCORING_ERROR', signal_contract: null },
             500
         );
     }

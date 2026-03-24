@@ -20,13 +20,15 @@ export interface OrchestratorParams {
     businessOutcome?: string;
     decisionId?: string;
     decisionRecord?: any;
+    signalConfidence?: number | null;
 }
 
 // ── Orchestrator Main Entrypoint ──
 export async function orchestrateOutcome(params: OrchestratorParams): Promise<void> {
 
     async function taskTrustUpdate() {
-        await updateAgentTrust(params.agentId, params.customerId, params.finalSuccess, params.actionName);
+        await updateAgentTrust(params.agentId, params.customerId, params.finalSuccess,
+            params.actionName, params.signalConfidence ?? null);
     }
 
     async function taskContextDrift() {
@@ -236,6 +238,7 @@ async function updateAgentTrust(
     customerId: string,
     success: boolean,
     actionName?: string,
+    signalConfidence?: number | null,
 ): Promise<void> {
     const { data: trust } = await supabase
         .from('agent_trust_scores')
@@ -264,7 +267,13 @@ async function updateAgentTrust(
     if (success) {
         newFailures = 0;
         newCorrect += 1;
-        newScore = Math.min(currentScore * 1.03, 1.0);
+        // ── Phase 1: Signal confidence weighting ──────────────
+        // High-confidence signals (e.g. Stripe webhooks, explicit SDK)
+        // contribute the full 3% growth. Low-confidence signals (e.g.
+        // LLM evaluation at 0.3) contribute proportionally less.
+        // When signalConfidence is null/1.0 → 1 + 0.03*1.0 = 1.03 (unchanged).
+        const confidence = signalConfidence ?? 1.0;
+        newScore = Math.min(currentScore * (1 + 0.03 * confidence), 1.0);
     } else {
         // ── Coordinated Failure Interlock ──────────────────────
         // Check if this failure is infrastructure-attributed before
