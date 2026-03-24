@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "layerinfinite-l5"
+version         = "0.1.0"
+description     = "Layerinfinite Layer 5 — Python instrumentation (causal graph tracking)"
+requires-python = ">=3.9"
+
+# NO new dependencies — uses httpx/requests from the host agent environment.
+# They are optional: if agent uses httpx, it's already installed.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
