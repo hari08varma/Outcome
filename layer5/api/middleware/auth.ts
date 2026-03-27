@@ -123,6 +123,16 @@ export async function authMiddleware(c: Context, next: Next): Promise<Response |
     // Check cache first
     const cached = authCache.get(hashKey(apiKey));
     if (cached && cached.expires_at > Date.now()) {
+        console.info(
+            '[auth] cache-hit tenant resolution',
+            {
+                path: c.req.path,
+                method: c.req.method,
+                agent_id: cached.agent_id,
+                customer_id: cached.customer_id,
+                agent_name: cached.agent_name,
+            }
+        );
         c.set('agent_id', cached.agent_id);
         c.set('customer_id', cached.customer_id);
         c.set('agent_name', cached.agent_name);
@@ -167,6 +177,18 @@ export async function authMiddleware(c: Context, next: Next): Promise<Response |
         customer_tier: customerTier,
         expires_at: Date.now() + AUTH_CACHE_TTL_MS,
     });
+
+    console.info(
+        '[auth] db tenant resolution',
+        {
+            path: c.req.path,
+            method: c.req.method,
+            agent_id: data.agent_id,
+            customer_id: data.customer_id,
+            agent_name: data.agent_name,
+            customer_tier: customerTier,
+        }
+    );
 
     c.set('agent_id', data.agent_id);
     c.set('customer_id', data.customer_id);
