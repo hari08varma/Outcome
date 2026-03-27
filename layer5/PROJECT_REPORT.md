@@ -1,3 +1,765 @@
+
+# Layerinfinite — Project Report
+
+### Outcome-Ranked Decision Intelligence Middleware (Unified Edition)
+**Version:** 3.2.0 | **Report Date:** March 25, 2026 | **Status:** Production-Ready (Reconciled + Sequenced)
+
+---
+
+## Executive Summary
+
+This report is a full rewrite that consolidates the previous core report and both March 24 continuation sections into one clean document.
+
+It now includes:
+- Core platform phases 1–10 in sequence
+- Repository reconciliation updates (migrations, API/lib expansion, dashboard expansion)
+- Layer5 phases 1–9 integrated sequentially (not isolated in a bottom addendum)
+- SDK status updated to **TypeScript v0.2.0** and **Python v0.2.0**
+- Duplicate and repeated sections removed
+
+Layerinfinite remains an append-only, multi-tenant, outcome-ranked intelligence middleware between AI agents and enterprise systems, with scoring, policy, trust, temporal analytics, gap detection, sequence learning (IPS), simulation, and full auth/onboarding/dashboard support.
+
+---
+
+## Unified Snapshot (Current Repository State)
+
+| Metric | Current State |
+|--------|---------------|
+| SQL migrations | **001 → 070** in `layer5/supabase/migrations` (plus root-level migration chain where applicable) |
+| Edge functions | **6** |
+| API route files | **Expanded from original baseline** (includes contracts, pending signals, webhook, discrepancy surfaces) |
+| API core libs | Expanded beyond original baseline with orchestration, drift, verifier, and backprop modules |
+| Dashboard surface | Expanded with alerts/simulate/signals/contracts/discrepancies + settings subroutes |
+| Core backend tests | Existing 16-suite core baseline retained + continuation test additions |
+| Layer5 discrepancy tests | **6 Vitest tests** |
+| Layer5 interceptor tests | **12 Vitest tests** |
+| Python instrumentation tests | **16 pytest tests** |
+| SDK versions | **TypeScript v0.2.0** + **Python v0.2.0** |
+
+---
+
+## Architecture Overview
+
+```
+
+### How the Full Product Works (End-to-End)
+
+1. An agent call starts through SDK/REST/no-code and enters the API runtime.
+2. Auth, API key checks, and rate limits validate the caller before decision logic runs.
+3. Scoring + policy rank candidate actions using historical outcomes, confidence, trend, and context match.
+4. The selected action executes in the agent/tool environment.
+5. Instrumentation captures runtime signals (response access, comparisons, IO behavior) and derives outcome confidence.
+6. OutcomePipeline pushes background `logOutcome` events without blocking the agent request path.
+7. Data lands in append-only tables; matviews, cron jobs, and detectors refresh aggregate intelligence.
+8. Trust, discrepancy, and signal workflows update operator visibility and governance.
+9. Dashboard surfaces all states (scores, trust, audit, signals, contracts, discrepancies) for human oversight.
+10. Training and simulation layers continuously improve action planning quality over time.
+
+### Major Parts and Their Jobs
+
+| Part | Job in Product |
+|------|----------------|
+| API Runtime | Enforce access/safety and execute scoring, policy, simulation, and operational endpoints. |
+| Database Layer | Store immutable outcomes, preserve tenant isolation, and provide aggregate query surfaces. |
+| Detection & Trust | Identify drift/failures, maintain trust states, and trigger operator-relevant events. |
+| Instrumentation SDKs | Auto-capture real execution evidence and remove manual outcome logging burden. |
+| Contracts & Signals | Define expected behaviors and track pending/missing/low-confidence signals. |
+| Discrepancy Pipeline | Detect mismatches between expected and observed outcomes and track resolution. |
+| Dashboard | Provide operational control plane for admins and product operators. |
+| Training + Simulation | Learn world models and forecast sequence outcomes before live execution. |
+AI Agents / SDKs / No-Code / REST
+        │
+        ▼
+API Runtime (Hono + TypeScript)
+  ├─ Auth + API keys + rate limiting
+  ├─ Scoring + policy + context matching
+  ├─ Trust + temporal analytics + gap detection
+  ├─ Sequence + IPS counterfactual learning
+  ├─ Simulation (Tier1 Wilson → Tier2 LightGBM → Tier3 MCTS)
+  ├─ Signal contracts + pending signals + discrepancy detection
+  └─ Audit + admin operations
+        │
+        ▼
+PostgreSQL / Supabase (append-only + RLS + matviews + cron)
+        │
+        ▼
+Dashboard (React + Vite): auth, onboarding, trust, audit, signals, contracts, discrepancies
+        │
+        ▼
+SDK Layer v0.2.0
+  ├─ TypeScript: tracing + interceptor + pipeline + contracts + instrument
+  └─ Python: tracing + pipeline + instrument
+```
+
+---
+
+## Core Platform Phases (1 → 10)
+
+### Phase 1 — Structured Experience Memory ✅
+- Star-schema foundation with append-only `fact_outcomes`
+- UUID + TIMESTAMPTZ conventions enforced
+- RLS tenant isolation and base indexing patterns established
+- **Job:** Durable system memory layer; every downstream decision depends on this data integrity.
+
+### Phase 2 — Outcome Aggregation ✅
+- Materialized views for action scoring and episode patterns
+- Concurrent refresh support with required unique indexes and helper RPCs
+- **Job:** Fast intelligence retrieval layer for sub-latency scoring queries.
+
+### Phase 3 — Scoring Engine + API Runtime ✅
+- Hono API with middleware chain (auth, rate-limit, action validation)
+- Composite scoring, policy decisions, context handling, and audit endpoints
+- **Job:** Real-time decision brain and secure request gateway.
+
+### Phase 4 — Temporal Memory + Trend Detection ✅
+- Trend labels and degradation/score-flip event detection
+- Operational event persistence with dedup windows
+- **Job:** Detect performance movement over time before failures become incidents.
+
+### Phase 5 — Adaptive Policy Engine ✅
+- Cold-start handling, explore/exploit controls, escalation paths
+- Confidence-aware routing and policy explainability
+- **Job:** Choose when to exploit, explore, or escalate based on risk and certainty.
+
+### Phase 6 — Trust + Ops + Dashboard Core ✅
+- Agent trust lifecycle (trusted/probation/suspended)
+- Pruning/lifecycle operations and admin reinstatement controls
+- Core dashboard pages and reusable components
+- **Job:** Operational governance, lifecycle hygiene, and human control loops.
+
+### Phase 7 — Sequence Tracking + IPS Counterfactuals ✅
+- Decision capture with ranked actions and propensities
+- Counterfactual learning from unchosen actions
+- Episode action-sequence tracking
+- **Job:** Learn from both chosen and unchosen actions to reduce policy bias.
+
+### Phase 8 — 3-Tier Simulation Engine ✅
+- Tier 1: Wilson CI baseline
+- Tier 2: LightGBM quantile inference
+- Tier 3: MCTS planning
+- `POST /v1/simulate` endpoint operational
+- **Job:** Predict likely outcomes before executing costly/risky sequences.
+
+### Phase 9 — World Model Training Pipeline ✅
+- Python training pipeline for model artifacts
+- Validation gates for quality before activation
+- JSON export aligned with runtime inference schema
+- **Job:** Produce and validate model artifacts that improve simulation quality.
+
+### Phase 10 — SDK Simulation + Decision Threading ✅
+- SDK `simulate()` coverage
+- Decision threading (`decision_id` / `decisionId`) for IPS continuity
+- Backward-compatible API evolution
+- **Job:** Expose advanced platform capabilities to developers with minimal integration overhead.
+
+---
+
+## Repository Reconciliation Integration (March 24 Rollup)
+
+The former addendum content is now integrated here rather than maintained as a separate section.
+
+### Migration Chain Expansion (049 → 063)
+- Trust `updated_at` support
+- World model metadata hardening (canary/drift/gates)
+- Retraining cron and logging infrastructure
+- Rate-limit hygiene + reaper scheduling
+- Trust snapshot lifecycle
+- Embedding versioning/drift support
+- New-agent trust default corrections
+- Backfill and tenancy safety improvements
+- Trust + audit atomic RPC
+- Failed live step reconciliation
+
+### Additional Sequential Updates (064 → 070)
+- `064_rewrite_mv_episode_patterns_from_action_sequences.sql`
+- `065_drop_event_type_constraint_add_schema_invariants.sql`
+- `067_add_signal_columns_to_fact_outcomes.sql`
+- `068_create_dim_pending_signal_registrations.sql`
+- `069_create_signal_contracts.sql`
+- `070_create_dim_discrepancy_log.sql`
+
+### API/Lib Expansion Integrated
+Additional runtime modules now reflected in the codebase include:
+- `decision-writer.ts`
+- `drift-detector.ts`
+- `outcome-orchestrator.ts`
+- `reward-backprop.ts`
+- `tenant-supabase.ts`
+- `verifier.ts`
+
+---
+
+## Layer5 Phases (1 → 9) — Fully Sequenced Integration
+
+This section replaces the old continuation fragment format and presents Layer5 work as a sequential program.
+
+### Phase 1 — Tracing Module Foundations ✅
+- Implemented causal tracing primitives in TypeScript SDK:
+  - `tracing/causal-graph`
+  - `tracing/execution-context`
+  - `tracing/traced-primitive`
+  - `tracing/traced-response`
+  - `tracing/provenance`
+- Established confidence/depth model for outcome derivation from traced comparisons.
+- **Job:** Capture causal evidence from runtime values and access paths.
+
+### Phase 2 — Tracing Module Consolidation ✅
+- Completed provenance-aware trace flow between execution context and traced values.
+- Hardened response/primitive wrapping behavior to avoid native receiver/proxy invocation pitfalls.
+- **Job:** Stabilize tracing correctness so evidence capture is reliable under real workloads.
+
+### Phase 3 — I/O Interceptor ✅
+- Added interceptor for runtime surfaces:
+  - `fetch`
+  - database query interception
+  - child-process execution interception
+- Implemented safe idempotent patching and recursion guards.
+- **Validation:** **12 Vitest tests**.
+- **Job:** Hook live IO boundaries so behavior is observed automatically, not manually reported.
+
+### Phase 4 — OutcomePipeline + Microtask Drain ✅
+- Added `OutcomePipeline` with microtask-driven emission drain.
+- Added `outcome-deriver` and pending-signal writer support paths.
+- Non-blocking background forwarding to outcome logging path.
+- **Job:** Convert traced events into durable outcomes asynchronously without slowing agent responses.
+
+### Phase 5 — Signal Contracts API + ContractClient ✅
+- API-level signal contracts and pending signal registration integrated.
+- Added contract route surface and `ContractClient` support for register/list/delete workflows.
+- **Job:** Define expected signal semantics and manage them as first-class operational contracts.
+
+### Phase 6 — Python Instrumentation SDK Integration ✅
+- Python instrumentation components merged into the same tracing/pipeline architecture pattern:
+  - tracing modules
+  - interceptor path
+  - pipeline drain path
+  - `instrument(...)` entrypoint
+- Python implementation aligned with language-native mechanisms (ContextVar + magic methods + wrappers).
+- **Job:** Extend instrumentation-first outcome capture to Python agent ecosystems.
+
+### Phase 7 — Dashboard Signals + Contracts UI ✅
+- Added dashboard pages for signal monitoring and contract management.
+- Added route and navigation integration under protected dashboard shell.
+- **Job:** Give operators visibility and control over signal health and contract configuration.
+
+### Phase 8 — Discrepancy Detection Pipeline ✅
+- Added discrepancy log schema and API endpoints:
+  - list
+  - summary
+  - detect
+  - resolve
+- Corrected detection logic to compare against actual outcome success semantics.
+- **Job:** Surface cases where reported/expected behavior diverges from real outcomes.
+
+### Phase 9 — Dashboard Discrepancies UI ✅
+- Added discrepancies dashboard page with:
+  - summary cards
+  - discrepancy table
+  - run-detection action
+  - resolve workflow
+- Wired route + nav entry into dashboard flow.
+- **Job:** Close the loop by making discrepancy triage and resolution operationally actionable.
+
+---
+
+## SDK Status (Updated to v0.2.0)
+
+### TypeScript SDK — v0.2.0 ✅
+**Package:** `@layerinfinite/sdk`
+
+Current v0.2.0 state reflects merged staging and consolidated runtime modules:
+- `tracing`
+- `pipeline`
+- `contracts`
+- `instrument`
+- `interceptor`
+
+Design direction:
+- Single setup path via `instrument(client, options?)`
+- Runtime auto-capture from traced operations instead of manual per-call logging
+- Compatibility with existing API-level decision intelligence primitives
+
+### Python SDK — v0.2.0 ✅
+**Package:** `layerinfinite-sdk`
+
+Current v0.2.0 state reflects merged staging and parity focus with tracing/pipeline flow:
+- tracing components
+- pipeline components
+- instrumentation entrypoint
+
+Design direction:
+- Pythonic tracing wrappers and background pipeline behavior
+- Operational compatibility with API auth/retry/outcome surfaces
+
+---
+
+## Key Runtime Improvement (Manual → Instrumented)
+
+### Previous pattern (manual)
+- Agent/tool code manually called `logOutcome()` after each operation.
+- Outcome capture quality depended on implementation consistency across teams.
+
+### Current pattern (instrumented)
+- One-time setup: `instrument(client)`
+- Runtime auto-captures signals through `TracedResponse` and `CausalGraph`
+- Confidence-scored outcomes flow into `OutcomePipeline` in the background
+- Reduces integration friction and missing-log risk while preserving non-blocking behavior
+
+---
+
+## Testing Status
+
+| Area | Status |
+|------|--------|
+| Core backend suite baseline | Passing (existing 16-suite baseline retained) |
+| TypeScript interceptor | **12 Vitest tests passing** |
+| Discrepancy API | **6 Vitest tests passing** |
+| Python instrumentation | **16 pytest tests passing** |
+| SDK compatibility | v0.2.0 update reflected in report and packaging metadata |
+
+---
+
+## Dashboard Surface (Integrated Final State)
+
+Primary protected routes include:
+- `/dashboard`
+- `/dashboard/agent`
+- `/dashboard/actions`
+- `/dashboard/alerts`
+- `/dashboard/simulate`
+- `/dashboard/signals`
+- `/dashboard/contracts`
+- `/dashboard/discrepancies`
+- `/dashboard/settings/api-keys`
+- `/dashboard/settings/agents`
+- `/dashboard/settings/actions`
+- `/dashboard/settings/audit`
+
+Legacy compatibility redirects remain in place for historical paths where configured.
+
+---
+
+## Deployment & Operations Notes
+
+- Core architecture and invariants remain unchanged: append-only outcomes, tenant isolation, trust/policy/scoring loop.
+- Reconciliation-era migrations and route additions are now part of the main narrative (not appended snapshots).
+- Health/deep and schema-invariant patterns improve early regression detection.
+- Signal and discrepancy surfaces are fully represented across DB + API + dashboard.
+
+---
+
+## Conclusion
+
+Layerinfinite is now documented in one coherent sequence across core platform delivery and Layer5 expansion.
+
+This rewrite removes duplicate continuation blocks and preserves the full evolution path:
+- Core phases 1–10
+- Reconciled migration/API/dashboard expansion
+- Layer5 phases 1–9 in order
+- SDK state aligned to **v0.2.0** with instrumentation-first runtime workflow
+
+The major product shift is now explicit: **from manual outcome logging to one-time instrumentation (`instrument(client)`) with automatic traced signal capture and background outcome processing.**
+
+## March 24, 2026 Continuation — Sequenced Phase Reconciliation (2 → 4 → 5 → 7 → 8)
+
+This continuation updates the report from the previous March 24 cutoff with the latest implemented and pushed changes, ordered by phase sequence.
+
+### Phase 2 Reconciliation (Materialization & Schema Invariants) — Updated ✅
+
+Phase 2 is now explicitly extended beyond the original 004/009/010 baseline with additional materialization reliability work in the API migration chain.
+
+| Migration | Status | Purpose |
+|-----------|--------|---------|
+| `064_rewrite_mv_episode_patterns_from_action_sequences.sql` | ✅ Added | Rebuilds `mv_episode_patterns` to read from `action_sequences` + `fact_outcomes` (instead of stale source path), recreates unique index for concurrent refresh compatibility. |
+| `065_drop_event_type_constraint_add_schema_invariants.sql` | ✅ Added | Removes brittle `event_type` CHECK constraint and introduces `verify_schema_invariants()` used by `/health/deep` to detect schema regressions. |
+
+Materialization reliability impact:
+- `mv_episode_patterns` now aligns with the actual write path used by sequence tracking.
+- `/health/deep` receives database-level invariants to catch recurrence of known migration regressions.
+
+### Phase 4 Reconciliation (Temporal / Detection Reliability) — Updated ✅
+
+Phase 4 remains complete and is now explicitly reconciled with the latest repository state and detector hardening continuity.
+
+| Area | Current State |
+|------|---------------|
+| Event detection base | Latency spikes, context drift, coordinated failures, and silent failures remain implemented and active in code paths documented earlier. |
+| Health/invariant integration | Added DB invariant verification surfaced through `/health/deep`, improving early detection of temporal-data regressions affecting trend/pattern signal quality. |
+| Operational continuity | Existing trend/event infrastructure remains in place while later phases (signals/discrepancy) extend observability depth without replacing Phase 4 detectors. |
+
+### Phase 5 Reconciliation (Signal Contracts & Pending Signals) — Updated ✅
+
+Phase 5 signal-oriented infrastructure is now explicitly represented in the report with the latest migration and route assets.
+
+| Artifact | Status | Details |
+|----------|--------|---------|
+| `067_add_signal_columns_to_fact_outcomes.sql` | ✅ Added | Introduces signal tracking columns (`signal_source`, `signal_confidence`, `causal_depth`, `signal_pending`, `signal_updated_at`) plus pending-signal index. |
+| `068_create_dim_pending_signal_registrations.sql` | ✅ Added | Adds pending signal registration table for async signal resolution workflows. |
+| `069_create_signal_contracts.sql` | ✅ Added | Adds signal contract table with confidence weighting and active/inactive lifecycle. |
+| `api/routes/contracts.ts` | ✅ Present | Contract CRUD route surface for tenant-scoped contract management. |
+| `api/routes/pending-signals.ts` | ✅ Present | Pending signal registration endpoint for delayed signal workflows. |
+| `api/routes/webhook.ts` | ✅ Present | Provider webhook ingestion path for Stripe/SendGrid/generic payload normalization. |
+
+Phase 5 + later-phase continuity:
+- Phase 5 signal scaffolding now feeds into later discrepancy analysis paths (Phase 8) for unresolved/low-confidence mismatch detection.
+- Dashboard signal/contract pages delivered in the continuation section consume this signal-domain surface from the product layer.
+
+### Phase 7 (Dashboard Signal UI) — Incremental Completion ✅
+
+Implemented and pushed dashboard signal/contract management surfaces with strict scoped file changes.
+
+| Change | Status | Details |
+|--------|--------|---------|
+| `dashboard/src/pages/dashboard/signals.tsx` | ✅ Added | Pending/resolved signal dashboard with 10s polling, summary cards, filters, and loading/error/empty states. |
+| `dashboard/src/pages/dashboard/contracts.tsx` | ✅ Added | Contracts list + create + delete UI with bearer-auth API calls and toast feedback. |
+| `dashboard/src/main.tsx` | ✅ Updated | Added Signals + Contracts route imports and route registrations. |
+| `dashboard/src/components/NavBar.tsx` | ✅ Updated | Added `Signals` and `Contracts` nav entries. |
+
+Follow-up production fix applied and pushed:
+
+| Fix | Status | Details |
+|-----|--------|---------|
+| `score_expression` required validation | ✅ Applied | Contracts form now enforces non-empty `score_expression` with inline error and required label (`score_expression*`). |
+
+### Phase 8 (Discrepancy Detection Pipeline) — Implemented ✅
+
+Implemented and pushed discrepancy detection pipeline with the corrected detection logic using `fact_outcomes.success` (not `signal_outcome`).
+
+| File | Status | Details |
+|------|--------|---------|
+| `api/migrations/070_create_dim_discrepancy_log.sql` | ✅ Added | Creates `dim_discrepancy_log` with idempotent DDL + indexes + verification query. `actual_outcome` comment explicitly references `fact_outcomes.success`. |
+| `api/routes/discrepancy.ts` | ✅ Added | Endpoints: `GET /`, `GET /summary`, `POST /detect`, `PATCH /:discrepancy_id/resolve` with auth + rate limiting. |
+| `api/tests/discrepancy.test.ts` | ✅ Added | 6 Vitest tests covering list/summary/detect/resolve behavior with mocked Supabase chains. |
+| `api/index.ts` | ✅ Updated (surgical) | Added `discrepancyRoute` import and `app.route('/v1/discrepancies', discrepancyRoute);` |
+
+#### Corrected Detection Logic (Applied)
+
+- **Case 2 — `outcome_mismatch`:** compares recorded `success` against expected confidence polarity:
+  - condition: `success != (signal_confidence >= 0.5)`
+- **Case 3 — `confidence_below_threshold`:** flags optimistic outcomes with critically low confidence:
+  - condition: `signal_confidence < 0.4 AND success = TRUE`
+
+### Repository Delta After Continuation
+
+| Metric | Prior Addendum | Current (after continuation) |
+|--------|-----------------|-------------------------------|
+| API route files | 15 | **16** (adds `routes/discrepancy.ts`) |
+| API migration chain (`layer5/api/migrations`) | through `063` | **through `070`** (adds 070 discrepancy log migration) |
+| Dashboard signal management routes | Not present in prior addendum | **Present** (`/dashboard/signals`, `/dashboard/contracts`) |
+
+### Push History (March 24 continuation)
+
+| Commit | Scope |
+|--------|-------|
+| `ce055e6` | Dashboard Signals + Contracts pages and route/nav wiring |
+| `d793d63` | Contracts form fix — required `score_expression` validation |
+| `0ee4483` | Phase 8 discrepancy migration, route, tests, and index route wiring |
+| `4f0cf77` | Phase 9 — Discrepancies dashboard page, route, and nav entry |
+
+---
+
+## March 24, 2026 Continuation — Phase 9: Dashboard Discrepancy UI ✅
+
+### Phase 9 (Discrepancies Dashboard) — Implemented ✅
+
+Implemented and pushed the Discrepancies UI page for the Layer5 dashboard. Exactly 3 files changed — no other Phase 1–8 files touched.
+
+| File | Change | Details |
+|------|--------|---------|
+| `layer5/dashboard/src/pages/dashboard/discrepancies.tsx` | NEW | Full Discrepancies page — summary cards, table, Run Detection, inline resolve confirm |
+| `layer5/dashboard/src/main.tsx` | Updated (2 lines) | Import + `<Route path="discrepancies" element={<DiscrepanciesPage />} />` added after contracts route |
+| `layer5/dashboard/src/components/NavBar.tsx` | Updated (1 line) | `Discrepancies` entry added between Contracts and Settings with `showAlertDot: true` |
+
+#### Discrepancies Page — Feature Detail
+
+**Summary Bar (3 cards):**
+
+| Card | Data Source |
+|------|-------------|
+| Total Unresolved | `GET /v1/discrepancies/summary → summary.total` |
+| Outcome Mismatches | `summary.by_type['outcome_mismatch'] ?? 0` |
+| Expired Signals | `summary.by_type['expired_no_signal'] ?? 0` |
+
+**Discrepancy Table columns:** Action Name | Type | Detail | Confidence | Created | Resolve
+
+**Type badge colours:**
+
+| `discrepancy_type` | Badge |
+|--------------------|-------|
+| `outcome_mismatch` | yellow (`bg-yellow-500/10 text-yellow-400`) |
+| `expired_no_signal` | red (`bg-red-500/10 text-red-400`) |
+| `confidence_below_threshold` | orange (`bg-orange-500/10 text-orange-400`) |
+| `contract_violation` | purple (`bg-purple-500/10 text-purple-400`) |
+| other/unknown | muted (`bg-[#1a1a24] text-[#a1a1aa]`) |
+
+**Confidence column:** null → `'—'` | 0.0–0.39 → red | 0.40–0.69 → yellow | 0.70–1.00 → accent green. Formatted as `(value * 100).toFixed(1) + '%'`.
+
+**Resolve flow (inline confirm — mirrors contracts.tsx delete pattern):**
+- Row shows "Resolve" button → click → inline "Resolve? Yes / Cancel" appears
+- Yes → `PATCH /v1/discrepancies/:discrepancy_id/resolve` with bearer token
+- Success: `showToast('Discrepancy resolved', 'success')` + list + summary reloaded
+- Failure: `showToast('Failed to resolve', 'critical')`
+
+**Run Detection button (top-right of table section):**
+- Style: `bg-[#b8ff00] text-black font-semibold` — consistent with primary CTA pattern
+- Click → `POST /v1/discrepancies/detect` → toast with detected count → reloads list + summary
+- Loading state: button text → `'Detecting...'`, `disabled=true`
+
+**Data fetching:**
+- Both `loadDiscrepancies()` and `loadSummary()` called in parallel: `Promise.all([...])` on mount
+- Single `loading` boolean covers both — shows 3 skeleton rows until both resolve
+- Single `error` string — shows error banner if either fails
+- No polling — manual refresh only via Run Detection
+
+**Auth pattern:** Exact copy from `contracts.tsx` — `supabase.auth.getSession()` → `Bearer ${session?.access_token}`. VITE_API_URL guard: `if (!apiBaseUrl) { setError('API URL not configured'); setLoading(false); return; }`
+
+**Toast region:** Exact copy from `contracts.tsx` — fixed top-right, dismiss on click.
+
+**NavBar integration:** `showAlertDot: true` reuses the existing `unresolvedCount` from `useAlerts` already in scope — no new data-fetch added to NavBar.
+
+#### TypeScript Validation
+
+`tsc --noEmit` passed with zero errors after changes.
+
+#### Dashboard Route Table (Updated)
+
+| Route | Component | Auth Required |
+|-------|-----------|---------------|
+| `/dashboard` | Overview | Yes |
+| `/dashboard/agent` | Agent | Yes |
+| `/dashboard/actions` | Actions | Yes |
+| `/dashboard/alerts` | Alerts | Yes |
+| `/dashboard/simulate` | Simulate | Yes |
+| `/dashboard/signals` | SignalsPage | Yes |
+| `/dashboard/contracts` | ContractsPage | Yes |
+| `/dashboard/discrepancies` | DiscrepanciesPage | Yes (**new**) |
+| `/dashboard/settings/api-keys` | ApiKeysSettings | Yes |
+| `/dashboard/settings/agents` | AgentsSettings | Yes |
+| `/dashboard/settings/actions` | ActionsSettings | Yes |
+| `/dashboard/settings/audit` | AuditPage | Yes |
+
+#### Repository Delta After Phase 9
+
+| Metric | Prior State | Current (after Phase 9) |
+|--------|-------------|--------------------------|
+| Dashboard page files (`dashboard/src/pages/**/*.tsx`) | 25 | **26** (adds `discrepancies.tsx`) |
+| Nav items | 8 (Overview → Settings) | **9** (adds Discrepancies between Contracts and Settings) |
+| Discrepancy surface | API + DB only (Phase 8) | **Full-stack** — API + DB + Dashboard |
+
+---
+
+## March 24, 2026 Continuation — Layer5 Instrumentation SDK (TypeScript + Python) ✅
+
+Two entirely new SDKs were built and pushed in the `layer5/` directory. These are distinct from the existing `sdks/python/` and `sdks/typescript/` REST client SDKs (which remain frozen and complete). The new SDKs provide **causal-graph I/O tracing** at runtime — they intercept HTTP calls, database queries, and subprocess executions to auto-derive outcome signals without agent code changes.
+
+---
+
+### Layer5 TypeScript Instrumentation SDK (`layer5/sdk/`) ✅
+
+**Package:** `@layerinfinite/sdk-core` v0.3.0 | **Location:** `layer5/sdk/` | **Format:** ESM (NodeNext) | **Test framework:** Vitest
+
+This SDK was built in 4 phases:
+
+#### Phase 1/2 — Tracing Module
+
+| File | Purpose |
+|------|---------|
+| `src/tracing/causal-graph.ts` | `CausalGraph` class — records `recordFieldAccess()`, `recordComparison()`, `deriveOutcome()` with confidence/depth decay |
+| `src/tracing/execution-context.ts` | `AsyncLocalStorage<ExecutionContext>`, `generateActionId()`, `inferActionName(url, init?)` |
+| `src/tracing/traced-primitive.ts` | `TracedPrimitive` — wraps strings/numbers via `Object(value)`; intercepts `==` comparisons via Symbol.toPrimitive |
+| `src/tracing/traced-response.ts` | `TracedResponse` — Proxy wrapper over native `Response`; intercepts field access; TRAP: `Reflect.get(target, prop, currentTarget)` — avoids Proxy-as-receiver illegal invocation on native slots |
+| `src/tracing/provenance.ts` | Provenance metadata shape for field-path depth tracking |
+| `src/tracing/__tests__/causal-graph.test.ts` | Unit tests for CausalGraph |
+
+**Key constants:** `MAX_DEPTH = 8`, `CONFIDENCE_BASE = 0.90`, `DECAY_RATE = 0.04`
+
+#### Phase 3 — I/O Interceptor (`src/interceptor.ts`)
+
+Patches three I/O surfaces at runtime:
+
+| Surface | Patch | Guard |
+|---------|-------|-------|
+| `globalThis.fetch` | Saved as `_originalFetch` BEFORE reassignment; wrapped as `layerinfiniteFetch` | `alreadyInstrumented: Set<string>` — idempotent |
+| `pg.Pool.query` | `pool.query.bind(pool)` required to preserve `this` | Per-pool set check |
+| `child_process.exec` / `spawn` | Promisified exec via `util.promisify`; exitCode is the signal (non-zero NOT re-thrown) | Module-level flag |
+
+**TRAP list enforced in implementation:**
+1. Save `_originalFetch` BEFORE reassigning `globalThis.fetch` (infinite recursion prevention)
+2. `response.clone()` for pipeline — original for agent (single-consume body)
+3. `pool.query.bind(pool)` — preserve `this` for pg
+4. `alreadyInstrumented` Set guards prevent double-wrapping
+5. fetch/db errors re-thrown after graph records them
+6. exec non-zero exit NOT re-thrown — exitCode is the signal
+7. `Reflect.get(currentTarget, prop, currentTarget)` — must use `currentTarget` as receiver for native Response getters
+
+**Exports:**
+```typescript
+export interface InterceptEmission { actionId, actionName, graph, httpSuccess?, dbSuccess?, exitCode?, responseMs, responseForPipeline?, result? }
+export const _pendingEmissions: InterceptEmission[]
+export function registerEmissionScheduler(scheduler: (() => void) | null): void
+export function drainEmissions(): InterceptEmission[]
+export class IOInterceptor { instrumentFetch(), instrumentDatabase(pool), instrumentChildProcess(), execTracked(), spawnTracked() }
+```
+
+**Tests (`src/__tests__/interceptor.test.ts`) — 12 Vitest tests:**
+
+| # | Test |
+|---|------|
+| 1 | `instrumentFetch` wraps `globalThis.fetch` with `layerinfiniteFetch` |
+| 2 | Fetch success — clones response, original readable by caller |
+| 3 | Fetch failure — re-throws, records graph |
+| 4 | `instrumentDatabase` wraps `pool.query` as `layerinfiniteQuery` |
+| 5 | DB query success — rows passed through, graph records |
+| 6 | DB query failure — re-throws after graph records |
+| 7 | `execTracked` — resolves with stdout/stderr/exitCode |
+| 8 | `execTracked` — non-zero exit code recorded, NOT re-thrown |
+| 9 | `execTracked` — `typeof stdout` is object (TracedPrimitive wrapper) |
+| 10 | `instrumentFetch` is idempotent — double call does not double-wrap |
+| 11 | `instrument()` returns `{ interceptor, pipeline }` with correct shape |
+| 12 | `instrument(client, { pool })` — pool.query renamed `layerinfiniteQuery` |
+
+#### Phase 4 — OutcomePipeline (`src/pipeline/`)
+
+| File | Purpose |
+|------|---------|
+| `pipeline/outcome-pipeline.ts` | `OutcomePipeline` — drains `_pendingEmissions` via microtask queue (queueMicrotask), calls `client.logOutcome()` per emission, `start()` / `stop()` lifecycle |
+| `pipeline/outcome-deriver.ts` | `deriveOutcomeParams()` — converts `CausalGraph + InterceptEmission` to `logOutcome` params; confidence weighted across comparisons |
+| `pipeline/pending-signal-writer.ts` | `PendingSignalWriter` — fire-and-forget writer for signals with low confidence to pending registration table |
+
+**OutcomePipeline design:**
+- Uses `registerEmissionScheduler` hook to be notified when interceptor enqueues
+- Drains via `queueMicrotask` — never blocks the agent's async call
+- Batch size configurable via `OutcomePipelineOptions.maxBatchSize` (default 10)
+- `stop()` cancels drain loop — used in tests and graceful shutdown
+
+**Tests (`src/__tests__/outcome-pipeline.test.ts`):** Covers drain loop, batch capping, `logOutcome` call shape, `stop()` idempotency, and error swallowing.
+
+#### Phase 5 — ContractClient (`src/contracts/`)
+
+| File | Purpose |
+|------|---------|
+| `contracts/contract-client.ts` | `ContractClient` — `registerSignalContract()`, `listContracts()`, `deleteContract()` via `POST/GET/DELETE /v1/contracts` |
+| `contracts/types.ts` | `SignalContract`, `SignalContractParams` TypeScript interfaces |
+
+**Design decision:** `ContractClient` is a separate class from `LayerinfiniteClient` — different caller audience (admin/setup vs agent runtime), keeps mock surface minimal for tests.
+
+#### Single Entry Point (`src/instrument.ts`)
+
+```typescript
+export function instrument(client: LayerinfiniteClient, options?: InstrumentOptions): InstrumentResult
+// Returns { interceptor: IOInterceptor, pipeline: OutcomePipeline }
+// Calls: instrumentFetch(), instrumentDatabase(pool?), instrumentChildProcess(), pipeline.start()
+```
+
+#### Build Config
+
+| File | Contents |
+|------|----------|
+| `package.json` | `"name": "@layerinfinite/sdk-core"`, `"version": "0.3.0"`, `"type": "module"`, scripts: `test` (vitest run), `typecheck` (tsc --noEmit) |
+| `tsconfig.json` | `target: ES2022`, `module: NodeNext`, `moduleResolution: NodeNext`, `lib: [ES2022, DOM]`, strict mode |
+| `vitest.config.ts` | `include: ['src/__tests__/**/*.test.ts']` — excludes old `.tmp-tracing-build-*` dirs |
+
+---
+
+### Layer5 Python Instrumentation SDK (`layer5/sdk-python/`) ✅
+
+**Package:** `layerinfinite-l5` v0.1.0 | **Location:** `layer5/sdk-python/` | **Python:** 3.9+ | **Tests:** 16 pytest
+
+Python equivalent of the TypeScript instrumentation SDK. Uses `contextvars.ContextVar` (not threading.local), `__getattr__` (not Proxy), and magic methods (not Symbol.toPrimitive).
+
+**Key Python-to-TypeScript mappings:**
+
+| TypeScript | Python |
+|-----------|--------|
+| `AsyncLocalStorage` | `contextvars.ContextVar[ExecutionContext]` |
+| `Proxy get trap` | `TracedResponse.__getattr__` |
+| `Symbol.toPrimitive` | `__eq__`, `__lt__`, `__gt__`, `__le__`, `__ge__`, `__bool__`, `__str__`, `__int__`, `__float__` |
+| `globalThis.fetch` patch | `httpx.Client.send` + `httpx.AsyncClient.send` patch |
+| Child process patch | `requests.Session.send` patch |
+
+#### Files
+
+| File | Purpose |
+|------|---------|
+| `layerinfinite_l5/tracing/causal_graph.py` | `CausalGraph`, `FieldAccess`, `Comparison` dataclasses; `derive_outcome()` — majority-True comparison logic |
+| `layerinfinite_l5/tracing/execution_context.py` | `ContextVar[ExecutionContext]`, `set_context()` returns reset token, `reset_context(token)` |
+| `layerinfinite_l5/tracing/traced_primitive.py` | `TracedPrimitive` wrapper — all comparison operators record to CausalGraph; `__str__` retires tag (Python Challenge 2 — cannot return non-str from str()) |
+| `layerinfinite_l5/tracing/traced_response.py` | `TracedResponse.__getattr__` — wraps dict fields; nested dict → TracedResponse; primitive → TracedPrimitive; depth > MAX_DEPTH → raw value (tag retired) |
+| `layerinfinite_l5/tracing/interceptor.py` | `IOInterceptor` — patches httpx (sync + async) and requests; `_make_context()` + `_wrap_response()` + `_wrap_sync/async/requests()`; ContextVar token always reset in `finally` block |
+| `layerinfinite_l5/pipeline/outcome_pipeline.py` | `OutcomePipeline` — `queue.SimpleQueue`, daemon thread (`threading.Thread(daemon=True)`); `_drain()` never crashes; HTTP status fallback when graph has no comparisons |
+| `layerinfinite_l5/instrument.py` | `instrument(client)` — fire-and-forget, NEVER raises, NEVER blocks; patches httpx + requests, starts pipeline daemon |
+| `pyproject.toml` | `dependencies = []` — no new pip deps; dev: `pytest`, `pytest-asyncio`, `httpx` |
+
+**Python Challenge 2 — Tag retirement:**
+- `__str__` MUST return plain `str` (Python enforces this)
+- Tag is retired at the coercion boundary — identical to TypeScript `depth > MAX_DEPTH` behaviour
+- `_record('coerce_str', ...)` logged so pipeline knows tag was retired at this point
+
+**OutcomePipeline — HTTP status fallback:**
+```python
+success, confidence = item.ctx.graph.derive_outcome()
+if success is None:          # no comparisons recorded
+    success = 200 <= item.http_status < 300
+    confidence = 0.5
+```
+
+#### 16 pytest Tests (`tests/test_phase6.py`)
+
+| # | Test |
+|---|------|
+| 1 | `CausalGraph.record_field_access` — stores FieldAccess correctly |
+| 2 | `derive_outcome` — empty graph returns `(None, 0.0)` |
+| 3 | `derive_outcome` — field accesses only returns `(None, 0.5)` |
+| 4 | `derive_outcome` — majority True → `success=True` |
+| 5 | `derive_outcome` — majority False → `success=False` |
+| 6 | `TracedPrimitive.__eq__` — records comparison, returns correct bool |
+| 7 | `TracedPrimitive.__gt__` — records comparison, returns correct bool |
+| 8 | `TracedPrimitive.__bool__` — records bool comparison |
+| 9 | `TracedPrimitive.__str__` — returns plain str; records `coerce_str` event; Python Challenge 2 boundary |
+| 10 | `TracedResponse.__getattr__` — wraps dict field in TracedPrimitive |
+| 11 | `TracedResponse.__getattr__` — wraps nested dict in TracedResponse |
+| 12 | `TracedResponse` — `depth=MAX_DEPTH+1` returns raw value (tag retired) |
+| 13 | `compute_confidence` — depth 0 = 0.90, depth 8 = 0.58, depth 9 = 0.0 |
+| 14 | `ExecutionContext` ContextVar — set/get/reset works correctly |
+| 15 | `IOInterceptor._wrap_response` — wraps JSON response; `.json()` returns TracedResponse |
+| 16 | `instrument(client)` — does NOT raise even when httpx/requests not installed (monkeypatches sys.modules) |
+
+---
+
+### Updated Repository Inventory (March 24, 2026 — Final)
+
+| Directory | Key Contents | Status |
+|-----------|-------------|--------|
+| `layer5/sdk/` | `@layerinfinite/sdk-core` v0.3.0 — TS instrumentation SDK (Phases 1–5) | ✅ NEW |
+| `layer5/sdk/src/tracing/` | CausalGraph, ExecutionContext, TracedPrimitive, TracedResponse, Provenance | ✅ NEW |
+| `layer5/sdk/src/interceptor.ts` | IOInterceptor — fetch, pg, child_process patches | ✅ NEW |
+| `layer5/sdk/src/pipeline/` | OutcomePipeline, OutcomeDeriver, PendingSignalWriter | ✅ NEW |
+| `layer5/sdk/src/contracts/` | ContractClient, SignalContract types | ✅ NEW |
+| `layer5/sdk/src/__tests__/` | 12 interceptor tests + outcome-pipeline tests | ✅ NEW |
+| `layer5/sdk-python/` | `layerinfinite-l5` v0.1.0 — Python instrumentation SDK | ✅ NEW |
+| `layer5/sdk-python/layerinfinite_l5/tracing/` | CausalGraph, ExecutionContext, TracedPrimitive, TracedResponse, IOInterceptor | ✅ NEW |
+| `layer5/sdk-python/layerinfinite_l5/pipeline/` | OutcomePipeline (daemon thread) | ✅ NEW |
+| `layer5/sdk-python/layerinfinite_l5/instrument.py` | `instrument()` — fire-and-forget entry point | ✅ NEW |
+| `layer5/sdk-python/tests/test_phase6.py` | 16 pytest tests | ✅ NEW |
+| `layer5/api/routes/` | 19 route files (adds contracts, pending-signals, webhook, discrepancy) | ✅ Updated |
+| `layer5/api/migrations/` | 063–070 (8 migration files) | ✅ Updated |
+| `layer5/dashboard/src/pages/dashboard/` | 8 pages incl. signals, contracts, discrepancies | ✅ Updated |
+
+### Complete Push History (March 24, 2026)
+
+| Commit | Phase | Scope |
+|--------|-------|-------|
+| `34038a4` | SDK Phase 3 | TypeScript I/O interceptor — 12 Vitest tests passing |
+| `898dc6b` | SDK Phase 4 | OutcomePipeline with microtask drain + pending signal writer |
+| `394936e` | Phase 5 | Signal contracts API, pending detection, webhook route, ContractClient |
+| `3454449` | SDK Phase 6 (Python) | Python instrumentation layer — 16 pytest tests |
+| `ce055e6` | Dashboard Phase 7 | Signals + Contracts pages and route/nav wiring |
+| `d793d63` | Dashboard fix | Contracts form — required `score_expression` validation |
+| `0ee4483` | API Phase 8 | Discrepancy migration (070), route, 6 tests, index wiring |
+| `4f0cf77` | Dashboard Phase 9 | Discrepancies page, route, nav entry |
+
+
+
 # Layerinfinite — Project Report
 
 ### Outcome-Ranked Decision Intelligence Middleware
@@ -884,84 +1646,7 @@ client.log_outcome(agent_id="a", action_name="restart", success=True, response_m
 
 **Objective:** n8n, Zapier, and Make.com connectors that non-technical founders can use without reading documentation. Every field has a helpful description. Every error message tells them exactly what to do.
 
-**Location:** `sdks/no-code/`
 
-#### n8n Community Node
-
-| Deliverable | Status | Details |
-|-------------|--------|---------|
-| `n8n/Layerinfinite.credentials.ts` | ✅ Built | `layerinfiniteApi` credential type — API key (password-masked), configurable base URL, Bearer auth |
-| `n8n/Layerinfinite.node.ts` | ✅ Built | 4 operations: Get Scores, Log Outcome, Log Feedback, Get Patterns |
-| `n8n/package.json` | ✅ Built | `n8n-nodes-layerinfinite` package with `n8n.nodes` + `n8n.credentials` registration |
-
-**n8n Operations:**
-
-| Operation | Method | Endpoint | Fields |
-|-----------|--------|----------|--------|
-| Get Scores | GET | `/v1/get-scores` | agent_id, issue_type, context (JSON), top_n |
-| Log Outcome | POST | `/v1/log-outcome` | agent_id, action_name, success, outcome_score, response_ms, session_id, context |
-| Log Feedback | POST | `/v1/outcome-feedback` | outcome_id, final_score, business_outcome, feedback_notes |
-| Get Patterns | GET | `/v1/get-patterns` | agent_id, issue_type, top_n, min_samples |
-
-**n8n Error Mapping:**
-
-| API Code | User-Friendly Message |
-|----------|-----------------------|
-| `INVALID_API_KEY` | "Your Layerinfinite API key is invalid. Check it in n8n credentials." |
-| `UNKNOWN_ACTION` | "This action is not registered in Layerinfinite. Add it at app.layerinfinite.dev/actions" |
-| `AGENT_SUSPENDED` | "This agent has been suspended due to too many failures. Check status at app.layerinfinite.dev/agents" |
-| `RATE_LIMITED` | "You've hit the rate limit. Wait a moment and try again." |
-| `ACTION_DISABLED` | "This action has been disabled. Re-enable it at app.layerinfinite.dev/actions" |
-| `MISSING_FIELD` | "A required field is missing. Check that all required fields are filled in." |
-
-#### Zapier Integration
-
-| Deliverable | Status | Details |
-|-------------|--------|---------|
-| `zapier/authentication.js` | ✅ Built | Custom auth — API key via Bearer token, tests against `/v1/get-scores` |
-| `zapier/creates/log_outcome.js` | ✅ Built | "Log Action Outcome" — 7 input fields, typed output, friendly error handler |
-| `zapier/searches/get_scores.js` | ✅ Built | "Get Action Scores" — 3 input fields, ranked actions output, auto-ID for Zapier |
-| `zapier/index.js` | ✅ Built | App entry point — wires auth, searches, creates |
-| `zapier/package.json` | ✅ Built | `zapier-platform-layerinfinite` with `zapier-platform-core` v15 |
-
-**Zapier Actions:**
-
-| Action | Type | Description |
-|--------|------|-------------|
-| Log Action Outcome | Create | Tell Layerinfinite what happened after an action |
-| Get Action Scores | Search | Ask which action to take next |
-
-#### Make.com (Integromat) Module
-
-| Deliverable | Status | Details |
-|-------------|--------|---------|
-| `make/layerinfinite-make-spec.json` | ✅ Built | Full app spec — connection + 3 modules, typed inputs/outputs, error messages |
-
-**Make.com Modules:**
-
-| Module | CRUD | Description |
-|--------|------|-------------|
-| Get Action Scores | Read | Ranked action recommendations |
-| Log Action Outcome | Create | Record what happened after an action |
-| Submit Outcome Feedback | Update | Delayed feedback on a previous outcome |
-
-**Make.com Connection:** API key auth via Bearer header, test endpoint validates key against `/v1/get-scores`.
-
-#### No-Code README
-
-| Deliverable | Status | Details |
-|-------------|--------|---------|
-| `README.md` | ✅ Built | Install instructions for all 3 connectors, one working example each, troubleshooting for Invalid API Key / Unknown Action / Agent Suspended |
-
-**Non-Technical Founder Test (all pass):**
-- ✅ Every field has a plain-English description (zero jargon)
-- ✅ Every field has a real example value as placeholder
-- ✅ Every error message tells the user exactly what to do and where to go
-- ✅ Required fields clearly marked
-- ✅ Optional fields labeled "(Optional)" in the field name
-- ✅ JSON context fields explain the format with examples
-
----
 
 ### Counterfactual Learning Foundation (Migrations 019–026 — Database Layer for Phases 7–9) ✅ COMPLETE
 
@@ -1504,3 +2189,255 @@ The project passes all **230 automated tests** across **16 test suites** coverin
 10. **TypeScript CI/CD Docs**: Added explicit `## CI/CD Setup` parameter instructions to `sdks/typescript/CHANGELOG.md`.
 
 **Current operational status:** Live database reports expected tables. Both Python (`layerinfinite-sdk`) and TypeScript (`@layerinfinite/sdk`) SDKs are successfully published and distributed via automated CI/CD pipelines natively hooked to GitHub. Connectors are ready for platform submission. Layerinfinite is a polished, fully-realized outcome-ranked intelligence system ready for enterprise application.
+
+---
+
+## March 24, 2026 Repository Reconciliation Addendum
+
+This addendum extends the report from its previous cutoff and reconciles it against the current repository state.
+
+### Snapshot (as of March 24, 2026)
+
+| Metric | Previous Reported | Current Repository State |
+|--------|-------------------|--------------------------|
+| SQL migrations in `supabase/migrations` | 47–48 referenced in report sections | **63 files** (`001` → `063`) |
+| Edge Functions in `supabase/functions` | 6 | **6** |
+| API route files (`api/routes/**/*.ts`) | 15 | **15** |
+| API core libs (`api/lib/*.ts`) | 11 referenced across sections | **13** |
+| Dashboard page files (`dashboard/src/pages/**/*.tsx`) | 8 functional pages emphasized | **25 page files** (includes nested dashboard/auth/settings routes) |
+| Layer5 test files (`layer5/tests/**/*`) | 16 backend test suites referenced | **20 files** (incl. `simulation_cold_start.test.ts`, SQL gate files, and config) |
+| TypeScript SDK test files (`sdks/typescript/tests/**/*`) | 5 files implied earlier | **8 files** (incl. integrations tests) |
+
+### Newly Added / Expanded Since Prior Cutoff
+
+#### Database & Migrations (049–063)
+
+The migration chain has expanded through `063_reconcile_failed_live_steps.sql`.
+
+| Migration | Purpose |
+|-----------|---------|
+| `049_add_trust_score_updated_at.sql` | Adds `updated_at` tracking to `agent_trust_scores`. |
+| `050_enhance_world_model_artifacts.sql` | Adds canary rollout and drift/gate metadata to world model artifacts. |
+| `051_retraining_cron.sql` | Introduces weekly retraining trigger infrastructure and cron logging table. |
+| `052_rate_limit_hygiene.sql` | Adds TTL/LRU fields and cleanup helpers for persistent rate-limit buckets. |
+| `053_rate_limit_reaper_cron.sql` | Schedules per-minute rate-limit bucket cleanup. |
+| `054_trust_snapshots.sql` | Adds trust snapshots for incident-time restore workflows. |
+| `055_trust_snapshot_cleanup_cron.sql` | Adds daily cleanup job for trust snapshots. |
+| `056_embedding_versioning.sql` | Adds embedding model/version metadata and drift support structures. |
+| `057_embedding_drift_cron.sql` | Adds cleanup cron for embedding drift reports. |
+| `058_new_agent_trust_defaults.sql` | Changes new-agent trust initialization to explicit `new` state (no misleading default trust). |
+| `059_backfill_missing_profiles.sql` | Adds idempotent profile/customer/agent backfill flow. |
+| `060_add_customer_id_to_world_model_artifacts.sql` | Introduces tenant-scoped world model isolation via `customer_id`. |
+| `061_ensure_backprop_fk_correctness.sql` | Reconciles `backprop_episode_id` FK correctness. |
+| `062_rpc_update_trust_and_audit.sql` | Adds atomic trust + audit RPC to preserve audit invariants. |
+| `063_reconcile_failed_live_steps.sql` | Reconciles failed live deploy steps and rebuild compatibility paths. |
+
+#### API Layer Expansion
+
+`api/lib` now includes additional modules beyond earlier report tables:
+
+- `decision-writer.ts`
+- `drift-detector.ts`
+- `outcome-orchestrator.ts`
+- `reward-backprop.ts`
+- `tenant-supabase.ts`
+- `verifier.ts`
+
+Admin/API surface remains 15 route files, with expanded admin capabilities including:
+
+- `admin/embedding-drift.ts`
+- `admin/reinstate-sandbox.ts`
+- `admin/restore-trust-snapshot.ts`
+- `admin/test-notification.ts`
+- `admin/trigger-training.ts`
+- `auth/me.ts`
+
+#### Dashboard Routing & Surface Area
+
+Dashboard routing now includes explicit pages for:
+
+- `dashboard/alerts`
+- `dashboard/simulate`
+- settings sub-routes for `agents`, `actions`, and `audit`
+
+Top-level redirects remain in place for legacy paths (`/outcomes`, `/trust`, `/alerts`, `/simulate`, `/audit`) to preserve compatibility.
+
+### Reconciled Current State
+
+- Core architecture remains consistent with the original design (append-only outcomes, RLS isolation, scoring/policy/trust loop, simulation stack).
+- Repository now reflects post-cutoff hardening in trust lifecycle, embedding drift/versioning, retraining operations, and tenancy-safe world model management.
+- This addendum updates inventory and implementation status to the latest checked repository snapshot without asserting fresh runtime deployment/test execution beyond file-level verification.
+
+---
+## Real Outcome signal Tracing/implementation
+## Layer5 Phases (1 → 9) — Fully Sequenced Integration
+
+This section replaces the old continuation fragment format and presents Layer5 work as a sequential program.
+
+### Phase 1 — Tracing Module Foundations ✅
+- Implemented causal tracing primitives in TypeScript SDK:
+  - `tracing/causal-graph`
+  - `tracing/execution-context`
+  - `tracing/traced-primitive`
+  - `tracing/traced-response`
+  - `tracing/provenance`
+- Established confidence/depth model for outcome derivation from traced comparisons.
+- **Job:** Capture causal evidence from runtime values and access paths.
+
+### Phase 2 — Tracing Module Consolidation ✅
+- Completed provenance-aware trace flow between execution context and traced values.
+- Hardened response/primitive wrapping behavior to avoid native receiver/proxy invocation pitfalls.
+- **Job:** Stabilize tracing correctness so evidence capture is reliable under real workloads.
+
+### Phase 3 — I/O Interceptor ✅
+- Added interceptor for runtime surfaces:
+  - `fetch`
+  - database query interception
+  - child-process execution interception
+- Implemented safe idempotent patching and recursion guards.
+- **Validation:** **12 Vitest tests**.
+- **Job:** Hook live IO boundaries so behavior is observed automatically, not manually reported.
+
+### Phase 4 — OutcomePipeline + Microtask Drain ✅
+- Added `OutcomePipeline` with microtask-driven emission drain.
+- Added `outcome-deriver` and pending-signal writer support paths.
+- Non-blocking background forwarding to outcome logging path.
+- **Job:** Convert traced events into durable outcomes asynchronously without slowing agent responses.
+
+### Phase 5 — Signal Contracts API + ContractClient ✅
+- API-level signal contracts and pending signal registration integrated.
+- Added contract route surface and `ContractClient` support for register/list/delete workflows.
+- **Job:** Define expected signal semantics and manage them as first-class operational contracts.
+
+### Phase 6 — Python Instrumentation SDK Integration ✅
+- Python instrumentation components merged into the same tracing/pipeline architecture pattern:
+  - tracing modules
+  - interceptor path
+  - pipeline drain path
+  - `instrument(...)` entrypoint
+- Python implementation aligned with language-native mechanisms (ContextVar + magic methods + wrappers).
+- **Job:** Extend instrumentation-first outcome capture to Python agent ecosystems.
+
+### Phase 7 — Dashboard Signals + Contracts UI ✅
+- Added dashboard pages for signal monitoring and contract management.
+- Added route and navigation integration under protected dashboard shell.
+- **Job:** Give operators visibility and control over signal health and contract configuration.
+
+### Phase 8 — Discrepancy Detection Pipeline ✅
+- Added discrepancy log schema and API endpoints:
+  - list
+  - summary
+  - detect
+  - resolve
+- Corrected detection logic to compare against actual outcome success semantics.
+- **Job:** Surface cases where reported/expected behavior diverges from real outcomes.
+
+### Phase 9 — Dashboard Discrepancies UI ✅
+- Added discrepancies dashboard page with:
+  - summary cards
+  - discrepancy table
+  - run-detection action
+  - resolve workflow
+- Wired route + nav entry into dashboard flow.
+- **Job:** Close the loop by making discrepancy triage and resolution operationally actionable.
+
+---
+
+## SDK Status (Updated to v0.2.0)
+
+### TypeScript SDK — v0.2.0 ✅
+**Package:** `@layerinfinite/sdk`
+
+Current v0.2.0 state reflects merged staging and consolidated runtime modules:
+- `tracing`
+- `pipeline`
+- `contracts`
+- `instrument`
+- `interceptor`
+
+Design direction:
+- Single setup path via `instrument(client, options?)`
+- Runtime auto-capture from traced operations instead of manual per-call logging
+- Compatibility with existing API-level decision intelligence primitives
+
+### Python SDK — v0.2.0 ✅
+**Package:** `layerinfinite-sdk`
+
+Current v0.2.0 state reflects merged staging and parity focus with tracing/pipeline flow:
+- tracing components
+- pipeline components
+- instrumentation entrypoint
+
+Design direction:
+- Pythonic tracing wrappers and background pipeline behavior
+- Operational compatibility with API auth/retry/outcome surfaces
+
+---
+
+## Key Runtime Improvement (Manual → Instrumented)
+
+### Previous pattern (manual)
+- Agent/tool code manually called `logOutcome()` after each operation.
+- Outcome capture quality depended on implementation consistency across teams.
+
+### Current pattern (instrumented)
+- One-time setup: `instrument(client)`
+- Runtime auto-captures signals through `TracedResponse` and `CausalGraph`
+- Confidence-scored outcomes flow into `OutcomePipeline` in the background
+- Reduces integration friction and missing-log risk while preserving non-blocking behavior
+
+---
+
+## Testing Status
+
+| Area | Status |
+|------|--------|
+| Core backend suite baseline | Passing (existing 16-suite baseline retained) |
+| TypeScript interceptor | **12 Vitest tests passing** |
+| Discrepancy API | **6 Vitest tests passing** |
+| Python instrumentation | **16 pytest tests passing** |
+| SDK compatibility | v0.2.0 update reflected in report and packaging metadata |
+
+---
+
+## Dashboard Surface (Integrated Final State)
+
+Primary protected routes include:
+- `/dashboard`
+- `/dashboard/agent`
+- `/dashboard/actions`
+- `/dashboard/alerts`
+- `/dashboard/simulate`
+- `/dashboard/signals`
+- `/dashboard/contracts`
+- `/dashboard/discrepancies`
+- `/dashboard/settings/api-keys`
+- `/dashboard/settings/agents`
+- `/dashboard/settings/actions`
+- `/dashboard/settings/audit`
+
+Legacy compatibility redirects remain in place for historical paths where configured.
+
+---
+
+## Deployment & Operations Notes
+
+- Core architecture and invariants remain unchanged: append-only outcomes, tenant isolation, trust/policy/scoring loop.
+- Reconciliation-era migrations and route additions are now part of the main narrative (not appended snapshots).
+- Health/deep and schema-invariant patterns improve early regression detection.
+- Signal and discrepancy surfaces are fully represented across DB + API + dashboard.
+
+---
+
+## Conclusion
+
+Layerinfinite is now documented in one coherent sequence across core platform delivery and Layer5 expansion.
+
+This rewrite removes duplicate continuation blocks and preserves the full evolution path:
+- Core phases 1–10
+- Reconciled migration/API/dashboard expansion
+- Layer5 phases 1–9 in order
+- SDK state aligned to **v0.2.0** with instrumentation-first runtime workflow
+
+The major product shift is now explicit: **from manual outcome logging to one-time instrumentation (`instrument(client)`) with automatic traced signal capture and background outcome processing.**
+

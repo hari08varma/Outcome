@@ -10,6 +10,7 @@ import type { AgentTrustScore, CustomerPolicyConfig } from '../lib/policy-engine
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
+import { inferTask } from '../lib/recommendation/task-infer.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -139,6 +140,13 @@ const LogOutcomeBody = z.object({
     // How many transformation layers the traced value traversed.
     // NULL for explicit signals. 0–8 for causal graph signals.
     signal_depth: z.number().int().min(0).max(9).optional(),
+
+    // ── Decision Recommendation Engine ───────────────────────
+    // Optional semantic label for what the agent was trying to do.
+    // Examples: "payment_failed", "ticket_escalation", "refund_request"
+    // If absent: auto-inferred from issue_type via inferTask().
+    // TASK RESOLUTION RULE: provided value ALWAYS wins over inferred.
+    task_name: z.string().min(1).max(255).optional(),
 });
 
 // ── Helper: fetch real agent trust ──
@@ -402,6 +410,9 @@ async function insertCoreOutcome(
             causal_depth: body.signal_depth ?? null,
             signal_pending: false,
             signal_updated_at: null,
+            // ── Decision Recommendation Engine ───────────────────────
+            // Task resolution rule: developer-provided wins, else infer.
+            task_name: body._resolved_task_name ?? null,
         })
         .select('outcome_id, timestamp')
         .single();
@@ -495,6 +506,13 @@ logOutcomeRouter.post('/', async (c) => {
         // 1. Parsing & Sanitization
         const body = await parseAndSanitizeRequest(c);
 
+        // ── Task resolution (Decision Recommendation Engine) ──────
+        // Apply BEFORE idempotency check so the task_name is part of the record.
+        // RULE: developer-provided task_name always wins.
+        //       If absent, auto-infer from issue_type.
+        (body as any)._resolved_task_name = body.task_name?.trim()
+            ?? inferTask(body.issue_type);
+
         // 2. Idempotency Check
         const originalOutcome = await handleIdempotency(body.idempotency_key);
         if (originalOutcome) {
@@ -535,6 +553,13 @@ logOutcomeRouter.post('/', async (c) => {
             businessOutcome: body.business_outcome, decisionId: body.decision_id, decisionRecord,
             signalConfidence: body.causal_confidence ?? null,
         }).catch(err => console.error('[log-outcome] orchestrator failed:', { error: err.message, outcomeId: outcome.outcome_id }));
+
+        // ── Refresh task aggregation (debounced in the store) ─────
+        // Fires async — never blocks the response.
+        // mv_task_action_performance stays fresh within ~30s of each write.
+        refreshTaskAggregation(customerId).catch(() => {
+            // Silent — aggregation refresh failure must NEVER affect outcome logging
+        });
 
         // 8. Policy Engine Wrap-up
         const policyResultData = await computePolicyRecommendation(customerId, contextId, agentId, body.issue_type);
@@ -594,3 +619,31 @@ logOutcomeRouter.post('/', async (c) => {
         return c.json({ error: 'Internal server error', details: err.message }, 500);
     }
 });
+
+// ── Debounced refresh for mv_task_action_performance ──────
+// Prevents hammering the DB on high-volume outcome logging.
+// Only one refresh fires per 30s window per customer.
+const _refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+async function refreshTaskAggregation(customerId: string): Promise<void> {
+    // Clear any pending refresh for this customer
+    const existing = _refreshTimers.get(customerId);
+    if (existing) clearTimeout(existing);
+
+    // Schedule refresh after 30s debounce
+    return new Promise((resolve) => {
+        const timer = setTimeout(async () => {
+            _refreshTimers.delete(customerId);
+            try {
+                await supabase.rpc('refresh_task_action_performance');
+            } catch (err: any) {
+                console.warn(
+                    '[log-outcome] task aggregation refresh failed:',
+                    err.message
+                );
+            }
+            resolve();
+        }, 30_000);
+        _refreshTimers.set(customerId, timer);
+    });
+}
