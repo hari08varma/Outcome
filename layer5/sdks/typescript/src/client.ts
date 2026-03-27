@@ -30,10 +30,10 @@ const DEFAULT_MAX_RETRIES = 3;
 export interface RecommendationResponse {
     task: string;
     state:
-        | 'no_data'
-        | 'early_signal'
-        | 'close'
-        | 'stable';
+    | 'no_data'
+    | 'early_signal'
+    | 'close'
+    | 'stable';
     problem: string | null;
     recommendation: string | null;
     expected_improvement: {
