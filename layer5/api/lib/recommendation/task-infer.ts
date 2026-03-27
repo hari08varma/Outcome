@@ -51,6 +51,21 @@ const ISSUE_TYPE_TO_TASK: Record<string, string> = {
   'integration_failed':      'onboarding',
 };
 
+const VALID_TASK_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
+
+export function validateTaskName(raw: string | null | undefined): string {
+  if (!raw) return 'unknown_task';
+  // Normalize: lowercase, trim, replace spaces+hyphens with underscores
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-]+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/^_+|_+$/g, '');
+  if (!normalized || !VALID_TASK_PATTERN.test(normalized)) return 'unknown_task';
+  return normalized;
+}
+
 /**
  * Infers a task_name from issue_type when the developer did not provide one.
  *
@@ -80,10 +95,6 @@ export function inferTask(issueType: string): string {
     }
   }
 
-  // 3. Fallback: slugify issue_type
-  return normalized
-    .replace(/[\s\-]+/g, '_')   // spaces and hyphens → underscore
-    .replace(/[^a-z0-9_]/g, '') // strip non-alphanumeric except underscore
-    .replace(/^_+|_+$/g, '')    // trim leading/trailing underscores
-    || 'unknown_task';
+  // 3. Fallback: slugify issue_type and validate
+  return validateTaskName(normalized);
 }

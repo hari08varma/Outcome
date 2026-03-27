@@ -10,7 +10,7 @@ import type { AgentTrustScore, CustomerPolicyConfig } from '../lib/policy-engine
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
-import { inferTask } from '../lib/recommendation/task-infer.js';
+import { inferTask, validateTaskName } from '../lib/recommendation/task-infer.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -342,31 +342,40 @@ async function resolveActionId(c: Context, body: any, customerId: string): Promi
 // which is expected and correct — the composite unique index on
 // (customer_id, issue_type, environment) prevents duplicates.
 async function resolveContextId(body: any, customerId: string): Promise<string> {
-    const { data: existingCtx } = await supabase
+    const { data: ctx, error } = await supabase
         .from('dim_contexts')
+        .upsert(
+            {
+                customer_id: customerId,
+                issue_type: body.issue_type,
+                environment: body.environment,
+                customer_tier: body.customer_tier ?? null,
+            },
+            {
+                onConflict: 'customer_id,issue_type,environment',
+                ignoreDuplicates: false,
+            }
+        )
         .select('context_id')
-        .eq('customer_id', customerId)       // ← FIX: scope by customer
-        .eq('issue_type', body.issue_type)
-        .eq('environment', body.environment)
         .maybeSingle();
 
-    if (existingCtx?.context_id) return existingCtx.context_id;
-
-    const { data: newCtx, error: ctxErr } = await supabase
-        .from('dim_contexts')
-        .insert({
-            customer_id: customerId,           // ← FIX: always store customer
-            issue_type: body.issue_type,
-            environment: body.environment,
-            customer_tier: body.customer_tier ?? null,
-        })
-        .select('context_id')
-        .single();
-
-    if (ctxErr || !newCtx?.context_id) {
-        throw new Error(`CONTEXT_ERROR:${ctxErr?.message || 'Missing context_id'}`);
+    if (error) {
+        console.error('[log-outcome] resolveContextId upsert error:', error.message);
+        throw new Error(`CONTEXT_ERROR:${error.message}`);
     }
-    return newCtx.context_id;
+    if (!ctx?.context_id) {
+        // Edge case: upsert returned no row — try plain SELECT as fallback
+        const { data: existing } = await supabase
+            .from('dim_contexts')
+            .select('context_id')
+            .eq('customer_id', customerId)
+            .eq('issue_type', body.issue_type)
+            .eq('environment', body.environment)
+            .maybeSingle();
+        if (existing?.context_id) return existing.context_id;
+        throw new Error('CONTEXT_ERROR:No context_id returned after upsert');
+    }
+    return ctx.context_id;
 }
 
 async function insertCoreOutcome(
@@ -510,8 +519,20 @@ logOutcomeRouter.post('/', async (c) => {
         // Apply BEFORE idempotency check so the task_name is part of the record.
         // RULE: developer-provided task_name always wins.
         //       If absent, auto-infer from issue_type.
-        (body as any)._resolved_task_name = body.task_name?.trim()
-            ?? inferTask(body.issue_type);
+        // RULE: developer-provided task_name wins; empty string treated as absent.
+        // validateTaskName normalizes, strips garbage, and guarantees non-empty output.
+        const rawTask = body.task_name?.trim() || null;
+        (body as any)._resolved_task_name = validateTaskName(
+            rawTask ?? inferTask(body.issue_type)
+        );
+        // Logging for ingestion traceability (#9)
+        console.info('[log-outcome] task_resolved', {
+            provided: body.task_name ?? null,
+            inferred_from: rawTask ? null : body.issue_type,
+            resolved: (body as any)._resolved_task_name,
+            customer_id: customerId,
+            agent_id: agentId,
+        });
 
         // 2. Idempotency Check
         const originalOutcome = await handleIdempotency(body.idempotency_key);
@@ -620,30 +641,38 @@ logOutcomeRouter.post('/', async (c) => {
     }
 });
 
-// ── Debounced refresh for mv_task_action_performance ──────
-// Prevents hammering the DB on high-volume outcome logging.
-// Only one refresh fires per 30s window per customer.
 const _refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+// Debounce duration: controlled by env var.
+// Default 15s for production (safe under load), 2s for development.
+const REFRESH_DEBOUNCE_MS = process.env.NODE_ENV === 'production'
+    ? Number(process.env.MV_REFRESH_DEBOUNCE_MS ?? 15_000)
+    : 2_000;
+
 async function refreshTaskAggregation(customerId: string): Promise<void> {
-    // Clear any pending refresh for this customer
     const existing = _refreshTimers.get(customerId);
     if (existing) clearTimeout(existing);
 
-    // Schedule refresh after 30s debounce
     return new Promise((resolve) => {
         const timer = setTimeout(async () => {
             _refreshTimers.delete(customerId);
             try {
-                await supabase.rpc('refresh_task_action_performance');
+                const { error } = await supabase.rpc('refresh_task_action_performance');
+                if (error) {
+                    // Log but never throw — refresh failure must not affect logging
+                    console.warn('[log-outcome] MV refresh RPC failed:', {
+                        customer_id: customerId,
+                        error: error.message,
+                        hint: 'Data is stale - check mv_tap_unique_idx exists in Supabase',
+                    });
+                } else {
+                    console.info('[log-outcome] MV refresh OK', { customer_id: customerId });
+                }
             } catch (err: any) {
-                console.warn(
-                    '[log-outcome] task aggregation refresh failed:',
-                    err.message
-                );
+                console.warn('[log-outcome] MV refresh threw:', err.message);
             }
             resolve();
-        }, 30_000);
+        }, REFRESH_DEBOUNCE_MS);
         _refreshTimers.set(customerId, timer);
     });
 }
