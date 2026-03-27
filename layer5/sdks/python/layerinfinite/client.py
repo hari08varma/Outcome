@@ -240,6 +240,62 @@ class LayerinfiniteClient:
         )
         return LogOutcomeResponse.model_validate(response.json())
 
+    def get_recommendations(self, task: str) -> dict:
+        """
+        Get a decision recommendation for a given task.
+        Tells you what to change in your AI agent and the expected impact.
+
+        Args:
+            task: Task name e.g. "payment_failed", "ticket_escalation"
+
+        Returns:
+            dict with keys:
+              task, state, problem, recommendation,
+              expected_improvement, reason, confidence,
+              sample_size, agent_id, customer_id, generated_at
+
+            state is one of:
+              'no_data'      - not enough outcomes yet
+              'early_signal' - preliminary signal, low confidence
+              'close'        - both actions perform similarly
+              'stable'       - full recommendation ready
+
+        Example:
+            rec = client.get_recommendations("payment_failed")
+            if rec["state"] == "stable":
+                print(rec["recommendation"])
+                # Replace retry_transaction with switch_provider
+        """
+        import urllib.parse
+
+        encoded_task = urllib.parse.quote(task)
+        response = self._request_with_retry(
+            'GET',
+            f'/v1/recommendations?task={encoded_task}',
+        )
+        data = response.json()
+
+        print(f'\n[layerinfinite] Recommendation for "{task}":')
+        print(f'  State:      {data.get("state")}')
+        if data.get('problem'):
+            print(f'  Problem:    {data["problem"]}')
+        if data.get('recommendation'):
+            print(f'  Fix:        {data["recommendation"]}')
+        if data.get('expected_improvement'):
+            imp = data['expected_improvement']
+            print(
+                f'  Impact:     {imp["baseline"]} → {imp["improved"]}'
+                f' ({imp["delta"]})'
+            )
+        if data.get('reason'):
+            print(f'  Reason:     {data["reason"]}')
+        conf = data.get('confidence')
+        if conf is not None:
+            print(f'  Confidence: {round(conf * 100)}%')
+        print('')
+
+        return data
+
     def health(self) -> dict:
         """
         Check the API health endpoint (no auth required).

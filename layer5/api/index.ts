@@ -89,6 +89,7 @@ import contractsRoute from './routes/contracts.js';
 import discrepancyRoute from './routes/discrepancy.js';
 import pendingSignalsRoute from './routes/pending-signals.js';
 import webhookRoute from './routes/webhook.js';
+import { getRecommendationsRouter } from './routes/get-recommendations.js';
 
 // ── PORT: Railway injects PORT, fallback to API_PORT, then 3000 ──
 const PORT = parseInt(process.env.PORT ?? process.env.API_PORT ?? '3000', 10);
@@ -181,6 +182,7 @@ app.get('/', (c) => c.json({
         'POST /v1/log-outcome': 'Append outcome to fact_outcomes',
         'GET  /v1/get-scores': 'Get ranked action scores',
         'GET  /v1/get-patterns': 'Get action sequence patterns',
+        'GET  /v1/recommendations': 'Get decision recommendation for a task',
         'GET /v1/me': 'Verify API key identity — returns agent_id + customer_id',
         'GET  /v1/audit': 'Immutable audit trail',
         'POST /v1/admin/register-action': 'Register an action (admin)',
@@ -399,6 +401,8 @@ v1.use('/outcome-feedback', primaryAuth, rateLimitMiddleware());
 v1.use('/outcome-feedback/*', primaryAuth, rateLimitMiddleware());
 v1.use('/get-scores', primaryAuth, rateLimitMiddleware());
 v1.use('/get-scores/*', primaryAuth, rateLimitMiddleware());
+v1.use('/recommendations', primaryAuth, rateLimitMiddleware());
+v1.use('/recommendations/*', primaryAuth, rateLimitMiddleware());
 v1.use('/get-patterns', primaryAuth, rateLimitMiddleware());
 v1.use('/get-patterns/*', primaryAuth, rateLimitMiddleware());
 v1.use('/audit', primaryAuth, rateLimitMiddleware());
@@ -409,6 +413,7 @@ v1.use('/simulate/*', primaryAuth, rateLimitMiddleware());
 v1.route('/log-outcome', logOutcomeRouter);
 v1.route('/outcome-feedback', outcomeFeedbackRouter);
 v1.route('/get-scores', getScoresRouter);
+v1.route('/recommendations', getRecommendationsRouter);
 v1.route('/get-patterns', getPatternsRouter);
 v1.route('/audit', auditRouter);
 v1.route('/simulate', simulateRouter);

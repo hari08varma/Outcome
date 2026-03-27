@@ -19,6 +19,40 @@ const DEFAULT_BASE_URL = 'https://outcome-production.up.railway.app';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 
+/**
+ * Response shape for GET /v1/recommendations
+ * state drives what fields are populated:
+ *   no_data      → only reason is populated
+ *   early_signal → problem + recommendation + reason + confidence
+ *   close        → reason + sample_size only
+ *   stable       → all fields populated
+ */
+export interface RecommendationResponse {
+    task: string;
+    state:
+        | 'no_data'
+        | 'early_signal'
+        | 'close'
+        | 'stable';
+    problem: string | null;
+    recommendation: string | null;
+    expected_improvement: {
+        baseline: string;
+        improved: string;
+        delta: string;
+    } | null;
+    reason: string;
+    confidence: number | null;
+    sample_size: {
+        best: number;
+        worst: number;
+        min: number;
+    } | null;
+    agent_id: string | null;
+    customer_id: string;
+    generated_at: string;
+}
+
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -185,6 +219,60 @@ export class LayerinfiniteClient {
             code => code === 429 || code >= 500,
         );
         return response.json() as Promise<LogOutcomeResponse>;
+    }
+
+    /**
+     * Get a decision recommendation for a given task.
+     * Tells you what to change in your AI agent and the expected improvement.
+     *
+     * @param task - Task name (e.g. "payment_failed", "ticket_escalation")
+     * @returns RecommendationResponse
+     *
+     * @example
+     * const rec = await client.getRecommendations('payment_failed');
+     * if (rec.state === 'stable') {
+     *   console.log(rec.recommendation);
+     * }
+     */
+    async getRecommendations(task: string): Promise<RecommendationResponse> {
+        const url = `${this.baseUrl}/v1/recommendations?task=${encodeURIComponent(task)}`;
+        const response = await this.fetchWithRetry(
+            url,
+            {
+                method: 'GET',
+                headers: {
+                    'X-API-Key': this.apiKey,
+                    'Accept': 'application/json',
+                },
+            },
+            code => code === 429 || code >= 500,
+        );
+
+        const data = await response.json() as RecommendationResponse;
+
+        console.log(`\n[layerinfinite] Recommendation for "${task}":`);
+        console.log(`  State:      ${data.state}`);
+        if (data.problem) {
+            console.log(`  Problem:    ${data.problem}`);
+        }
+        if (data.recommendation) {
+            console.log(`  Fix:        ${data.recommendation}`);
+        }
+        if (data.expected_improvement) {
+            const i = data.expected_improvement;
+            console.log(
+                `  Impact:     ${i.baseline} → ${i.improved} (${i.delta})`
+            );
+        }
+        if (data.reason) {
+            console.log(`  Reason:     ${data.reason}`);
+        }
+        if (data.confidence !== null && data.confidence !== undefined) {
+            console.log(`  Confidence: ${Math.round(data.confidence * 100)}%`);
+        }
+        console.log('');
+
+        return data;
     }
 
     /**
