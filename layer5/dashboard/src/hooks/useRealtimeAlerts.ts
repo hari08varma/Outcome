@@ -39,18 +39,14 @@ export function useRealtimeAlerts(
     useEffect(() => {
         const channel = supabase
             .channel(`realtime-alerts-${channelId.current}`)
-            .on(
-                'postgres_changes' as any,
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'degradation_alert_events',
-                },
-                (payload: any) => {
-                    onNewAlertRef.current(payload.new as AlertRow);
+            .on<AlertRow>(
+                'postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'degradation_alert_events' },
+                (payload) => {
+                    onNewAlertRef.current(payload.new);
                 },
             )
-            .subscribe((status: string) => {
+            .subscribe((status) => {
                 setIsConnected(status === 'SUBSCRIBED');
             });
 

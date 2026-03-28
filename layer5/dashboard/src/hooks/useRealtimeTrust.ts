@@ -25,35 +25,21 @@ export function useRealtimeTrust(
     useEffect(() => {
         const channel = supabase
             .channel(`realtime-trust-${channelId.current}`)
-            .on(
-                'postgres_changes' as any,
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'agent_trust_scores',
-                },
-                (payload: any) => {
-                    onTrustChangeRef.current(payload.new as TrustRow);
-                },
+            .on<TrustRow>(
+                'postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'agent_trust_scores' },
+                (payload) => { onTrustChangeRef.current(payload.new); },
             )
-            .on(
-                'postgres_changes' as any,
-                {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'agent_trust_scores',
-                },
-                (payload: any) => {
-                    onTrustChangeRef.current(payload.new as TrustRow);
-                },
+            .on<TrustRow>(
+                'postgres_changes',
+                { event: 'UPDATE', schema: 'public', table: 'agent_trust_scores' },
+                (payload) => { onTrustChangeRef.current(payload.new); },
             )
-            .subscribe((status: string) => {
+            .subscribe((status) => {
                 setIsConnected(status === 'SUBSCRIBED');
             });
 
-        return () => {
-            void supabase.removeChannel(channel);
-        };
+        return () => { void supabase.removeChannel(channel); };
     }, []); // subscribe once
 
     return { isConnected };

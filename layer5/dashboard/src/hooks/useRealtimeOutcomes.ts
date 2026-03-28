@@ -29,38 +29,27 @@ export function useRealtimeOutcomes(
             ? `realtime-outcomes-${agentId}`
             : 'realtime-outcomes';
 
-        const opts: Record<string, any> = {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'fact_outcomes',
-        };
-
-        // Try server-side filter if agentId is provided
-        if (agentId) {
-            opts.filter = `agent_id=eq.${agentId}`;
-        }
+        const filter = agentId
+            ? { event: 'INSERT' as const, schema: 'public', table: 'fact_outcomes', filter: `agent_id=eq.${agentId}` }
+            : { event: 'INSERT' as const, schema: 'public', table: 'fact_outcomes' };
 
         const channel = supabase
             .channel(channelName)
-            .on(
-                'postgres_changes' as any,
-                opts,
-                (payload: any) => {
-                    const row = payload.new as OutcomeRow;
-                    // Client-side filter as fallback
-                    if (agentId && fallbackRef.current && row.agent_id !== agentId) {
-                        return;
-                    }
+            .on<OutcomeRow>(
+                'postgres_changes',
+                filter,
+                (payload) => {
+                    const row = payload.new;
+                    // Client-side fallback filter
+                    if (agentId && fallbackRef.current && row.agent_id !== agentId) return;
                     onNewOutcomeRef.current(row);
                 },
             )
-            .subscribe((status: string) => {
+            .subscribe((status) => {
                 setIsConnected(status === 'SUBSCRIBED');
             });
 
-        return () => {
-            void supabase.removeChannel(channel);
-        };
+        return () => { void supabase.removeChannel(channel); };
     }, [agentId]); // re-subscribe if agentId changes
 
     return { isConnected };
