@@ -24,8 +24,8 @@ type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high';
 type UiHint = 'wait' | 'monitor' | 'act_now';
 
 interface ConfidenceMeta {
-    value: number | null;
-    percent: number | null;
+    value: number;
+    percent: number;
     label: ConfidenceLabel;
     ui_hint: UiHint;
 }
@@ -34,6 +34,9 @@ interface ExpectedImprovement {
     baseline: string;
     improved: string;
     delta: string;
+    delta_raw: number;
+    based_on_samples: number;
+    caution: string | null;
 }
 
 interface SampleSize {
@@ -44,18 +47,38 @@ interface SampleSize {
 
 interface RecommendationResponse {
     task: string;
-    state: RecommendationState;
+    state: string;
+    ui_label: string;
+    explanation: string;
+    decision: {
+        action_required: boolean;
+        suggested_action: 'collect_more_data' | 'monitor' | 'replace';
+        level: 'none' | 'low' | 'medium' | 'high';
+        ui_hint: 'wait' | 'monitor' | 'act_now';
+    };
+    insight: {
+        best_action: string | null;
+        best_rate: number | null;
+        worst_action: string | null;
+        worst_rate: number | null;
+        delta: number | null;
+        sample_size: { best: number; worst: number } | null;
+    };
+    confidence: number;
+    confidence_meta: {
+        value: number;
+        percent: number;
+        label: 'none' | 'low' | 'medium' | 'high';
+        ui_hint: 'wait' | 'monitor' | 'act_now';
+    };
+    message: string;
+    reason: string;
     problem: string | null;
     recommendation: string | null;
-    suggested_action: 'collect_more_data' | 'monitor' | 'replace';
-    action_required: boolean;
-    ui_hint: UiHint;
     risk_context: string | null;
     expected_improvement: ExpectedImprovement | null;
-    reason: string;
-    confidence: number | null;
-    confidence_meta: ConfidenceMeta;
     sample_size: SampleSize | null;
+    validation_hint: string | null;
     agent_id: string | null;
     agent_scope: 'agent_scoped' | 'customer_blended';
     customer_id: string;
@@ -144,7 +167,7 @@ function stateBadge(state: RecommendationState): React.ReactElement {
 }
 
 function ConfidenceBar({ meta }: { meta: ConfidenceMeta | null }): React.ReactElement {
-    if (!meta || meta.percent === null) {
+    if (!meta) {
         return <span className="text-[#a1a1aa] text-sm">No estimate</span>;
     }
 
@@ -186,7 +209,7 @@ function LoadingSkeleton(): React.ReactElement {
 }
 
 function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElement {
-    const { state } = data;
+    const state = data.state as RecommendationState;
     const confidenceMeta = data.confidence_meta ?? null;
     const confidenceCfg = CONFIDENCE_CONFIG[confidenceMeta?.label ?? 'none'];
 
@@ -196,13 +219,13 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                 'border-[#1a1a24]';
 
     const recommendationTone =
-        data.ui_hint === 'act_now' ? 'text-[#b8ff00]' :
-            data.ui_hint === 'monitor' ? 'text-yellow-400' :
+        data.decision.ui_hint === 'act_now' ? 'text-[#b8ff00]' :
+            data.decision.ui_hint === 'monitor' ? 'text-yellow-400' :
                 'text-[#a1a1aa]';
 
     const recommendationTitle =
-        data.ui_hint === 'act_now' ? 'Recommended Action' :
-            data.ui_hint === 'monitor' ? 'Recommended Action (Monitor)' :
+        data.decision.ui_hint === 'act_now' ? 'Recommended Action' :
+            data.decision.ui_hint === 'monitor' ? 'Recommended Action (Monitor)' :
                 'Recommended Action (Wait)';
 
     return (
@@ -225,6 +248,7 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                         </span>
                     )}
                 </div>
+                <p className="text-xs text-[#a1a1aa] mt-1">{data.explanation}</p>
                 <span className="text-xs text-[#a1a1aa]">
                     Updated {new Date(data.generated_at).toLocaleString()}
                 </span>
@@ -278,13 +302,10 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     <p className="text-sm text-[#a1a1aa] leading-relaxed">{data.reason}</p>
                 </div>
 
-                {(state === 'no_data' || state === 'close' || !data.action_required) && (
-                    <div className="rounded-lg bg-[#1a1a24] px-4 py-3 text-sm text-[#a1a1aa]">
-                        {data.ui_hint === 'act_now'
-                            ? 'Confidence is high enough to proceed with the recommended replacement.'
-                            : data.ui_hint === 'monitor'
-                                ? 'Monitor this recommendation before making an irreversible switch.'
-                                : 'Do nothing yet. Keep logging outcomes via log_outcome until stronger evidence is available.'}
+                {!data.decision.action_required && (
+                    <div className="mt-3 flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a34] rounded-lg px-3 py-2 text-xs text-[#a1a1aa]">
+                        <span className="mt-0.5 shrink-0">[wait]</span>
+                        <span>{data.message}</span>
                     </div>
                 )}
             </div>
@@ -293,10 +314,45 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                 <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
                     <p className="text-xs text-[#a1a1aa] mb-3">Confidence</p>
                     <ConfidenceBar meta={confidenceMeta} />
-                    {confidenceMeta?.percent !== null && (
+                    {confidenceMeta && (
                         <p className="text-xs text-[#a1a1aa] mt-2">
                             Confidence tier: <span className={confidenceCfg.textClass}>{confidenceCfg.label}</span>
                         </p>
+                    )}
+
+                    {data.insight.best_action && (
+                        <div className="mt-4 bg-[#111118] border border-[#1a1a24] rounded-lg p-3">
+                            <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-2">
+                                Current Signal
+                            </p>
+                            <div className="flex items-center justify-between text-sm">
+                                <div>
+                                    <p className="text-white font-medium">{data.insight.best_action}</p>
+                                    <p className="text-xs text-[#a1a1aa]">
+                                        {data.insight.best_rate !== null
+                                            ? `${(data.insight.best_rate * 100).toFixed(1)}% success`
+                                            : '-'}
+                                        {data.insight.sample_size
+                                            ? ` · ${data.insight.sample_size.best} outcomes`
+                                            : ''}
+                                    </p>
+                                </div>
+                                {data.insight.delta !== null && (
+                                    <div className="text-right">
+                                        <p className="text-[#b8ff00] font-bold">
+                                            +{(data.insight.delta * 100).toFixed(1)}%
+                                        </p>
+                                        <p className="text-xs text-[#a1a1aa]">vs {data.insight.worst_action}</p>
+                                    </div>
+                                )}
+                            </div>
+                            {data.expected_improvement?.caution && (
+                                <p className="text-xs text-[#ffaa00] mt-2 flex items-center gap-1">
+                                    <span>!</span>
+                                    <span>{data.expected_improvement.caution}</span>
+                                </p>
+                            )}
+                        </div>
                     )}
                 </div>
 
