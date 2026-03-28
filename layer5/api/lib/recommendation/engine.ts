@@ -3,6 +3,8 @@ import { supabase } from '../supabase.js';
 export const MIN_SAMPLES = 10;
 export const MIN_SAMPLES_STABLE = 20;
 export const MIN_SAMPLES_HIGH_CONFIDENCE = 50;
+export const TRUST_GATE_STATUSES: string[] = ['suspended'];
+export const TRUST_GATE_MIN_SCORE = 0.10;
 
 export type RecommendationState =
     | 'no_data'
@@ -48,6 +50,9 @@ export interface RecommendationResult {
             needed: number;
         }>;
     };
+    _trust_gate_blocked?: boolean;
+    _trust_status?: string;
+    _silent_failure_warning?: boolean;
     agent_id: string | null;
     generated_at: string;
 }
@@ -70,12 +75,72 @@ function confidenceFromSamplesAndLift(
     return Math.max(0, Number((sampleWeight * lift).toFixed(4)));
 }
 
+async function getAgentTrustStatus(
+    agentId: string,
+): Promise<{ trust_status: string; trust_score: number | null } | null> {
+    if (!agentId) return null;
+    const { data, error } = await supabase
+        .from('agent_trust_scores')
+        .select('trust_status, trust_score')
+        .eq('agent_id', agentId)
+        .maybeSingle();
+    if (error || !data) return null;
+    return {
+        trust_status: String(data.trust_status ?? 'new'),
+        trust_score: typeof data.trust_score === 'number'
+            ? data.trust_score
+            : null,
+    };
+}
+
+async function hasSilentFailureAlert(
+    customerId: string,
+    taskName: string,
+): Promise<boolean> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count, error } = await supabase
+        .from('degradation_alert_events')
+        .select('alert_id', { count: 'exact', head: true })
+        .eq('customer_id', customerId)
+        .eq('alert_type', 'degradation')
+        .gte('detected_at', since);
+    if (error) return false;
+    return (count ?? 0) > 0;
+}
+
 export async function getRecommendation(
     customerId: string,
     taskName: string,
     agentId?: string | null,
 ): Promise<RecommendationResult> {
     const generatedAt = new Date().toISOString();
+
+    // Suspended / critically low-trust agents must not emit recommendations.
+    if (agentId) {
+        const trustState = await getAgentTrustStatus(agentId);
+        if (trustState) {
+            const isBlocked =
+                TRUST_GATE_STATUSES.includes(trustState.trust_status) ||
+                (trustState.trust_score !== null &&
+                    trustState.trust_score < TRUST_GATE_MIN_SCORE);
+            if (isBlocked) {
+                return {
+                    task: taskName,
+                    state: 'no_data',
+                    best_action: null,
+                    worst_action: null,
+                    confidence: null,
+                    improvement: null,
+                    min_sample_count: 0,
+                    all_actions: [],
+                    agent_id: agentId,
+                    generated_at: generatedAt,
+                    _trust_gate_blocked: true,
+                    _trust_status: trustState.trust_status,
+                } as any;
+            }
+        }
+    }
 
     function makeResult(
         state: RecommendationState,
@@ -185,6 +250,7 @@ export async function getRecommendation(
                         : null,
                     actions_needing_more: needMore,
                 },
+                _silent_failure_warning: false,
                 generated_at: generatedAt,
                 agent_id: agentId ?? null,
             };
@@ -195,11 +261,18 @@ export async function getRecommendation(
         );
         const best = sorted[0]!;
         const worst = sorted[sorted.length - 1]!;
+        const silentFailureActive = await hasSilentFailureAlert(
+            customerId,
+            taskName,
+        );
 
         const minSamples = Math.min(best.total_count, worst.total_count);
 
         if (minSamples < MIN_SAMPLES) {
-            return makeResult('no_data', actions, best, worst);
+            return {
+                ...makeResult('no_data', actions, best, worst),
+                _silent_failure_warning: false,
+            };
         }
 
         if (minSamples < MIN_SAMPLES_STABLE) {
@@ -212,6 +285,7 @@ export async function getRecommendation(
                 ...makeResult('early_signal', actions, best, worst),
                 confidence: rawConfidence,
                 min_sample_count: minSamples,
+                _silent_failure_warning: silentFailureActive,
             };
         }
 
@@ -220,6 +294,7 @@ export async function getRecommendation(
             return {
                 ...makeResult('close', actions, best, worst),
                 min_sample_count: minSamples,
+                _silent_failure_warning: false,
             };
         }
 
@@ -231,6 +306,7 @@ export async function getRecommendation(
             return {
                 ...makeResult('close', actions, best, worst),
                 min_sample_count: minSamples,
+                _silent_failure_warning: false,
             };
         }
 
@@ -246,6 +322,7 @@ export async function getRecommendation(
                 ...makeResult('early_signal', actions, best, worst),
                 confidence: rawConfidence,
                 min_sample_count: minSamples,
+                _silent_failure_warning: silentFailureActive,
             };
         }
 
@@ -263,6 +340,7 @@ export async function getRecommendation(
             },
             min_sample_count: minSamples,
             all_actions: actions,
+            _silent_failure_warning: silentFailureActive,
             agent_id: agentId ?? null,
             generated_at: generatedAt,
         };

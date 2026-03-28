@@ -10,6 +10,7 @@ export interface BackpropResult {
     steps_adjusted: number;
     episode_id: string;
     final_outcome: number;
+    mv_refresh_triggered: boolean;
 }
 
 export async function backpropagateReward(input: BackpropInput): Promise<BackpropResult> {
@@ -23,7 +24,12 @@ export async function backpropagateReward(input: BackpropInput): Promise<Backpro
             .order('timestamp', { ascending: true });
 
         if (error || !steps || steps.length === 0) {
-            return { steps_adjusted: 0, episode_id: input.episode_id, final_outcome: input.final_outcome };
+            return {
+                steps_adjusted: 0,
+                episode_id: input.episode_id,
+                final_outcome: input.final_outcome,
+                mv_refresh_triggered: false,
+            };
         }
 
         let stepsAdjusted = 0;
@@ -59,14 +65,43 @@ export async function backpropagateReward(input: BackpropInput): Promise<Backpro
             }
         }
 
+        let mvRefreshTriggered = false;
+        if (stepsAdjusted > 0) {
+            try {
+                const { error: refreshErr } = await supabase
+                    .rpc('refresh_task_action_performance');
+                if (refreshErr) {
+                    console.warn(
+                        '[backprop] MV refresh failed after backprop:',
+                        refreshErr.message,
+                        `episode_id=${input.episode_id}`
+                    );
+                } else {
+                    mvRefreshTriggered = true;
+                    console.info(
+                        '[backprop] MV refresh triggered after backprop',
+                        { episode_id: input.episode_id, steps_adjusted: stepsAdjusted }
+                    );
+                }
+            } catch (refreshErr: any) {
+                console.warn('[backprop] MV refresh threw:', refreshErr.message);
+            }
+        }
+
         return {
             steps_adjusted: stepsAdjusted,
             episode_id: input.episode_id,
-            final_outcome: input.final_outcome
+            final_outcome: input.final_outcome,
+            mv_refresh_triggered: mvRefreshTriggered,
         };
 
     } catch (err) {
         console.error('[BackpropReward] Exception:', err);
-        return { steps_adjusted: 0, episode_id: input.episode_id, final_outcome: input.final_outcome };
+        return {
+            steps_adjusted: 0,
+            episode_id: input.episode_id,
+            final_outcome: input.final_outcome,
+            mv_refresh_triggered: false,
+        };
     }
 }

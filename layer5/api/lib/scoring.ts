@@ -38,7 +38,7 @@ const W_RECENCY = 0.10;  // freshness bonus
 // NOTE: These are NOT used in updateAgentTrust() (outcome-orchestrator.ts),
 // which uses exponential smoothing independently.
 export const PRIOR_ALPHA = 1.0;  // Laplace prior successes (neutral = 1)
-export const PRIOR_BETA  = 1.0;  // Laplace prior failures  (neutral = 1)
+export const PRIOR_BETA = 1.0;  // Laplace prior failures  (neutral = 1)
 
 // ── Thresholds ───────────────────────────────────────────────
 const MIN_CONFIDENCE = 0.30;  // below this → cold-start fallback
@@ -141,12 +141,51 @@ export interface ScoringResult {
     served_from_cache: boolean;
 }
 
+async function fetchIPSSignal(actionId: string, customerId: string): Promise<number | null> {
+    // Step 1: scope decisions to the tenant via agent ownership.
+    const { data: decisions, error: decisionsError } = await supabase
+        .from('fact_decisions')
+        .select('id, dim_agents!inner(customer_id)')
+        .eq('dim_agents.customer_id', customerId)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+    if (decisionsError) {
+        console.warn('[scoring] IPS decision scope lookup failed:', decisionsError.message);
+        return null;
+    }
+
+    const decisionIds = (decisions ?? []).map((d: any) => d.id).filter(Boolean);
+    if (decisionIds.length === 0) return null;
+
+    // Step 2: collect recent counterfactuals for this unchosen action.
+    const { data, error } = await supabase
+        .from('fact_outcome_counterfactuals')
+        .select('counterfactual_est, ips_weight, created_at')
+        .eq('unchosen_action_id', actionId)
+        .in('decision_id', decisionIds)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+    if (error || !data || data.length === 0) {
+        if (error) {
+            console.warn('[scoring] IPS counterfactual lookup failed:', error.message);
+        }
+        return null;
+    }
+
+    const avgEstimate = data.reduce((sum, r: any) => sum + (r.counterfactual_est ?? 0), 0) / data.length;
+    const avgWeight = data.reduce((sum, r: any) => sum + (r.ips_weight ?? 0), 0) / data.length;
+
+    return avgEstimate * avgWeight;
+}
+
 // ── 5-Factor scoring formula ─────────────────────────────────
 /**
  * @param contextMatch — cosine similarity from context-embed.ts.
  *   null means exact match (fallback) → treated as 1.0.
  */
-export function computeCompositeScore(row: ActionScore, contextMatch: number | null = null): number {
+export async function computeCompositeScore(row: ActionScore, contextMatch: number | null = null): Promise<number> {
     // Factor 1: Weighted success rate (primary)
     // Applied Bayesian smoothing (Laplace / Beta distribution prior):
     const rawSuccessRate = row.weighted_success_rate ?? row.raw_success_rate ?? 0;
@@ -176,13 +215,28 @@ export function computeCompositeScore(row: ActionScore, contextMatch: number | n
     // Context match factor: null → 1.0 (exact match assumed)
     const f_context = contextMatch ?? 1.0;
 
-    return (
+    const baseScore = (
         W_SUCCESS * f_success +
         W_CONF * f_conf +
         W_TREND * f_trend +
         W_SALIENCE * f_salience +
         W_RECENCY * f_recency
-    ) * f_context;  // scale by context similarity
+    );
+
+    const sampleCount = row.total_attempts ?? 0;
+    if (sampleCount >= 20) {
+        return baseScore * f_context;
+    }
+
+    const ipsSignal = await fetchIPSSignal(row.action_id, row.customer_id);
+    if (ipsSignal === null) {
+        return baseScore * f_context;
+    }
+
+    const blendWeight = Math.min(0.10, ((20 - sampleCount) / 20) * 0.10);
+    const blended = baseScore * (1 - blendWeight) + ipsSignal * blendWeight;
+
+    return blended * f_context;  // scale by context similarity
 }
 
 function toRecommendation(score: number, isEscalate: boolean): ScoredAction['recommendation'] {
@@ -267,17 +321,17 @@ async function fetchGlobalFallback(): Promise<ScoredAction[]> {
     if (error || !data || data.length === 0) return [];
 
     return data.map((row: any): ScoredAction => ({
-        action_id:       row.action_id,
-        action_name:     row.dim_actions?.action_name ?? row.action_id,
+        action_id: row.action_id,
+        action_name: row.dim_actions?.action_name ?? row.action_id,
         action_category: row.dim_actions?.action_category ?? 'unknown',
         composite_score: Math.round((row.avg_success_rate ?? 0) * 10000) / 10000,
-        confidence:      0,
-        trend_delta:     null,
-        trend:           'stable',
-        total_attempts:  row.sample_count ?? 0,
-        is_cold_start:   true,
-        is_low_sample:   false,
-        recommendation:  toRecommendation(row.avg_success_rate ?? 0, false),
+        confidence: 0,
+        trend_delta: null,
+        trend: 'stable',
+        total_attempts: row.sample_count ?? 0,
+        is_cold_start: true,
+        is_low_sample: false,
+        recommendation: toRecommendation(row.avg_success_rate ?? 0, false),
     }));
 }
 
@@ -332,8 +386,8 @@ export async function getScores(
 
         scoredActions = fallback;
     } else {
-        scoredActions = rawScores.map((row): ScoredAction => {
-            const score = computeCompositeScore(row, contextMatch);
+        scoredActions = (await Promise.all(rawScores.map(async (row): Promise<ScoredAction> => {
+            const score = await computeCompositeScore(row, contextMatch);
             return {
                 action_id: row.action_id,
                 action_name: row.action_name,
@@ -347,7 +401,7 @@ export async function getScores(
                 is_low_sample: row.total_attempts < 3,
                 recommendation: toRecommendation(score, false),
             };
-        }).sort((a, b) => b.composite_score - a.composite_score);
+        }))).sort((a, b) => b.composite_score - a.composite_score);
     }
 
     // Store in cache

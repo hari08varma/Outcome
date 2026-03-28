@@ -290,6 +290,7 @@ export function buildActionableOutput(
     };
 
     if (r.state === 'no_data') {
+        const trustBlocked = (r as any)._trust_gate_blocked === true;
         const totalOutcomes = r.all_actions.reduce(
             (sum, a) => sum + a.total_count,
             0
@@ -303,10 +304,18 @@ export function buildActionableOutput(
                 ui_hint: confidenceMeta.ui_hint,
             },
             problem: null,
-            recommendation: 'Do not change behavior yet. Continue collecting outcomes.',
-            risk_context: 'Evidence is insufficient. Acting now may cause regressions without measurable upside.',
+            recommendation: trustBlocked
+                ? 'Agent is suspended. Restore trust before acting.'
+                : 'Do not change behavior yet. Continue collecting outcomes.',
+            risk_context: trustBlocked
+                ? 'This agent has critically low trust. Acting on its history may cause regressions.'
+                : 'Evidence is insufficient. Acting now may cause regressions without measurable upside.',
             expected_improvement: null,
-            reason: templateNoData(r.task, totalOutcomes, r._qualification_context),
+            reason: trustBlocked
+                ? `Recommendations are suspended for this agent ` +
+                `(trust_status: ${(r as any)._trust_status ?? 'suspended'}). ` +
+                `Trust must be restored before recommendations resume.`
+                : templateNoData(r.task, totalOutcomes, r._qualification_context),
             confidence: 0,
             insight: buildInsight(r),
             message: buildMessage('no_data', false, confidenceMeta, null, null),
@@ -366,7 +375,9 @@ export function buildActionableOutput(
             recommendation: (
                 `Monitor ${b.action_name} vs ${w.action_name} before a full replacement.`
             ),
-            risk_context: 'Signal direction is promising but uncertainty remains high; immediate full replacement may be premature.',
+            risk_context: (r as any)._silent_failure_warning
+                ? 'Silent failures detected in the last 24h: some outcomes marked success=true had low outcome scores. Signal direction is promising but uncertainty remains high.'
+                : 'Signal direction is promising but uncertainty remains high; immediate full replacement may be premature.',
             expected_improvement: null,
             reason: templateEarlySignal(r),
             confidence: r.confidence ?? 0,
@@ -408,9 +419,13 @@ export function buildActionableOutput(
         recommendation: shouldAct
             ? `Replace ${w.action_name} with ${b.action_name}`
             : `Pilot ${b.action_name} while monitoring before a full replacement of ${w.action_name}`,
-        risk_context: shouldAct
-            ? null
-            : 'Improvement exists, but confidence is not yet high enough for an immediate irreversible switch.',
+        risk_context: (r as any)._silent_failure_warning
+            ? (shouldAct
+                ? 'Silent failures detected in the last 24h. Verify outcome_score quality before fully committing to this switch.'
+                : 'Silent failures detected in the last 24h. Confidence is insufficient AND outcome quality is degraded.')
+            : (shouldAct
+                ? null
+                : 'Improvement exists, but confidence is not yet high enough for an immediate irreversible switch.'),
         expected_improvement: {
             baseline: pct(imp.baseline_rate),
             improved: pct(imp.improved_rate),
