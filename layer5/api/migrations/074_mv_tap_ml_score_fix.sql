@@ -1,7 +1,7 @@
 -- ════════════════════════════════════════════════════════════
 -- Migration 074: Fix ml_score source in mv_task_action_performance
 -- Replaces LEFT JOIN agent_trust_scores (wrong) with
--- LEFT JOIN mv_action_scores (correct — has composite ML scores).
+-- LEFT JOIN mv_action_scores (correct — uses latest weighted ML score signal).
 -- This wires the 5-factor ML engine output into recommendations.
 -- ════════════════════════════════════════════════════════════
 
@@ -25,19 +25,19 @@ SELECT
         / NULLIF(COUNT(*), 0),
         4
     )                                                           AS success_rate,
-    -- ← FIXED: pull composite ML score from mv_action_scores
+    -- ← FIXED: pull weighted ML score signal from mv_action_scores
     -- Uses the most recent context_id match for this customer+action pair.
     -- NULL when no ML score exists yet (cold-start) — engine falls back
     -- to success_rate via rankingScore() which is the correct behaviour.
     (
-        SELECT mas.composite_score
+        SELECT mas.weighted_success_rate
         FROM mv_action_scores mas
         WHERE mas.customer_id = fo.customer_id
           AND mas.action_id   = da.action_id
         ORDER BY mas.view_refreshed_at DESC NULLS LAST
         LIMIT 1
     )                                                           AS ml_score,
-    MAX(fo.created_at)                                          AS last_seen_at
+    MAX(fo.timestamp)                                           AS last_seen_at
 FROM fact_outcomes fo
 JOIN dim_actions da
     ON da.action_id = fo.action_id
@@ -82,7 +82,7 @@ WHERE customer_id = 'df0c88a7-a9aa-4543-a6d5-84ae6847dea6'
 ORDER BY task_name, action_name;
 
 -- 2. Confirm mv_action_scores has data to join from
-SELECT action_id, composite_score, view_refreshed_at
+SELECT action_id, weighted_success_rate, view_refreshed_at
 FROM mv_action_scores
 WHERE customer_id = 'df0c88a7-a9aa-4543-a6d5-84ae6847dea6'
 LIMIT 10;
