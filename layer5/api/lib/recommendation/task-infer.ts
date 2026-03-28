@@ -16,39 +16,39 @@
 // Add new mappings here as new issue types are discovered.
 const ISSUE_TYPE_TO_TASK: Record<string, string> = {
   // Payment & billing
-  'billing_dispute':         'payment_failed',
-  'payment_failure':         'payment_failed',
-  'payment_failed':          'payment_failed',
-  'charge_failed':           'payment_failed',
-  'refund_request':          'refund_processing',
-  'refund_failed':           'refund_processing',
-  'subscription_cancel':     'subscription_management',
-  'subscription_failed':     'subscription_management',
-  'invoice_dispute':         'payment_failed',
+  'billing_dispute': 'payment_failed',
+  'payment_failure': 'payment_failed',
+  'payment_failed': 'payment_failed',
+  'charge_failed': 'payment_failed',
+  'refund_request': 'refund_processing',
+  'refund_failed': 'refund_processing',
+  'subscription_cancel': 'subscription_management',
+  'subscription_failed': 'subscription_management',
+  'invoice_dispute': 'payment_failed',
 
   // Support & escalation
-  'ticket_open':             'ticket_resolution',
-  'ticket_escalation':       'ticket_resolution',
-  'support_request':         'ticket_resolution',
-  'complaint':               'ticket_resolution',
-  'angry_customer':          'ticket_resolution',
+  'ticket_open': 'ticket_resolution',
+  'ticket_escalation': 'ticket_resolution',
+  'support_request': 'ticket_resolution',
+  'complaint': 'ticket_resolution',
+  'angry_customer': 'ticket_resolution',
 
   // Auth & access
-  'login_failed':            'auth_recovery',
-  'account_locked':          'auth_recovery',
-  'password_reset':          'auth_recovery',
-  'access_denied':           'auth_recovery',
+  'login_failed': 'auth_recovery',
+  'account_locked': 'auth_recovery',
+  'password_reset': 'auth_recovery',
+  'access_denied': 'auth_recovery',
 
   // Order & fulfilment
-  'order_failed':            'order_recovery',
-  'delivery_failed':         'order_recovery',
-  'order_cancelled':         'order_recovery',
-  'item_missing':            'order_recovery',
+  'order_failed': 'order_recovery',
+  'delivery_failed': 'order_recovery',
+  'order_cancelled': 'order_recovery',
+  'item_missing': 'order_recovery',
 
   // Onboarding
-  'onboarding_stuck':        'onboarding',
-  'setup_failed':            'onboarding',
-  'integration_failed':      'onboarding',
+  'onboarding_stuck': 'onboarding',
+  'setup_failed': 'onboarding',
+  'integration_failed': 'onboarding',
 };
 
 const VALID_TASK_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;

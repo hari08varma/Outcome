@@ -40,8 +40,8 @@ SELECT
   )                                                   AS success_rate,
   -- ml_score: latest composite_score from scoring engine
   -- NULL when no score exists yet (cold start for this action)
-  MAX(mas.composite_score)                            AS ml_score,
-  MAX(fo.created_at)                                  AS last_seen_at
+  MAX(mas.weighted_success_rate)                      AS ml_score,
+  MAX(fo.timestamp)                                   AS last_seen_at
 FROM fact_outcomes fo
 JOIN dim_actions da
   ON da.action_id = fo.action_id
