@@ -18,10 +18,13 @@ type SuggestedAction = 'collect_more_data' | 'monitor' | 'replace';
 export interface ConfidenceMeta {
     value: number;
     percent: number;
-    label: ConfidenceLabel;
 }
 
-function toConfidenceMeta(confidence: number | null): ConfidenceMeta {
+type InternalConfidenceMeta = ConfidenceMeta & {
+    label: ConfidenceLabel;
+};
+
+function toConfidenceMeta(confidence: number | null): InternalConfidenceMeta {
     if (confidence === null) {
         return {
             value: 0,
@@ -210,7 +213,7 @@ function buildInsight(r: RecommendationResult): ActionableOutput['insight'] {
 function buildMessage(
     state: RecommendationState,
     actionRequired: boolean,
-    confidenceMeta: ConfidenceMeta,
+    confidenceMeta: InternalConfidenceMeta,
     best: string | null,
     worst: string | null,
 ): string {
@@ -244,7 +247,7 @@ function buildProgress(minSampleCount: number): ActionableOutput['progress'] {
 
 function buildReason(
     r: RecommendationResult,
-    confidenceMeta: ConfidenceMeta,
+    confidenceMeta: InternalConfidenceMeta,
 ): ActionableOutput['reason'] {
     if (r.state === 'no_data') {
         const trustBlocked = (r as any)._trust_gate_blocked === true;
@@ -306,7 +309,10 @@ export function buildActionableOutput(
         state: r.state,
         ui_label: stateMeta.ui_label,
         explanation: stateMeta.explanation,
-        confidence_meta: confidenceMeta,
+        confidence_meta: {
+            value: confidenceMeta.value,
+            percent: confidenceMeta.percent,
+        },
         progress: buildProgress(r.min_sample_count),
         generated_at: r.generated_at,
     };
