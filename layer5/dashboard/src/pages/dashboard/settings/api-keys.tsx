@@ -195,11 +195,19 @@ export default function ApiKeysSettings(): React.ReactElement {
     await navigator.clipboard.writeText(revealedKey);
     try {
       saveApiKey(revealedKey);
+      // Notify same-window listeners (storage event only fires cross-tab by default)
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: AGENT_API_KEY_STORAGE_KEY,
+          newValue: revealedKey,
+          storageArea: window.localStorage,
+        })
+      );
     } catch {
       // Private browsing — silently skip
     }
     setCopiedKey(true);
-    showToast('API key copied to clipboard.', 'success', 3000);
+    showToast('API key copied and saved. Recommendations page is now active.', 'success', 3000);
   };
 
   const closeCreateFlow = (): void => {
@@ -444,6 +452,14 @@ export default function ApiKeysSettings(): React.ReactElement {
                 if (revealedKey) {
                   try {
                     saveApiKey(revealedKey);
+                    // Notify same-window listeners
+                    window.dispatchEvent(
+                      new StorageEvent('storage', {
+                        key: AGENT_API_KEY_STORAGE_KEY,
+                        newValue: revealedKey,
+                        storageArea: window.localStorage,
+                      })
+                    );
                   } catch {
                     // Private browsing — silently skip
                   }

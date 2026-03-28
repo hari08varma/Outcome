@@ -19,7 +19,7 @@
  * ══════════════════════════════════════════════════════════════
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 // Matches the output of generateApiKey() in api/routes/auth/api-keys.ts:
 //   `layerinfinite_${hex}` where hex is 16 random bytes → 32 lowercase hex chars.
@@ -66,9 +66,20 @@ function readAndValidateKey(): { key: string | null; error: string | null } {
 export function useAgentApiKey(): AgentApiKeyResult {
   const [tick, setTick] = useState(0);
 
-  // Recompute on every tick (triggered by refresh())
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const { key, error } = readAndValidateKey();
+  // ← KEY FIX: useMemo(fn, [tick]) ensures readAndValidateKey()
+  // re-runs every time refresh() is called or tick changes.
+  // Without this, React reuses the stale result from the first render.
+  const { key, error } = useMemo(() => readAndValidateKey(), [tick]);
+
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === AGENT_API_KEY_STORAGE_KEY) {
+        setTick((v) => v + 1);
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, []);
 
   const refresh = useCallback(() => {
     setTick((v) => v + 1);
@@ -83,9 +94,6 @@ export function useAgentApiKey(): AgentApiKeyResult {
     // Redirect to onboarding step 2 so the user can regenerate their key
     window.location.href = '/onboarding?step=2&reason=expired';
   }, []);
-
-  // Suppress unused variable warning from tick — it's only used to trigger re-render
-  void tick;
 
   return {
     apiKey: key,
