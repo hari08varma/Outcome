@@ -38,6 +38,17 @@ function rankingScore(a: ActionPerformance): number {
     return a.ml_score !== null ? a.ml_score : a.success_rate;
 }
 
+function confidenceFromSamplesAndLift(
+    bestCount: number,
+    worstCount: number,
+    lift: number,
+): number {
+    // Use harmonic mean so confidence is penalized when one arm is under-sampled.
+    const harmonicSamples = (2 * bestCount * worstCount) / (bestCount + worstCount);
+    const sampleWeight = Math.min(1, harmonicSamples / 50);
+    return Math.max(0, Number((sampleWeight * lift).toFixed(4)));
+}
+
 export async function getRecommendation(
     customerId: string,
     taskName: string,
@@ -125,12 +136,14 @@ export async function getRecommendation(
         }
 
         if (minSamples < 20) {
-            const rawConfidence =
-                Math.min(1, best.total_count / 50) *
-                (best.success_rate - worst.success_rate);
+            const rawConfidence = confidenceFromSamplesAndLift(
+                best.total_count,
+                worst.total_count,
+                best.success_rate - worst.success_rate,
+            );
             return {
                 ...makeResult('early_signal', actions, best, worst),
-                confidence: Math.max(0, Number(rawConfidence.toFixed(4))),
+                confidence: rawConfidence,
                 min_sample_count: minSamples,
             };
         }
@@ -154,16 +167,27 @@ export async function getRecommendation(
             };
         }
 
-        const rawConfidence =
-            Math.min(1, best.total_count / 50) *
-            (best.success_rate - worst.success_rate);
+        const rawConfidence = confidenceFromSamplesAndLift(
+            best.total_count,
+            worst.total_count,
+            best.success_rate - worst.success_rate,
+        );
+
+        // Guardrail: avoid presenting low-confidence outputs as stable decisions.
+        if (rawConfidence < 0.2) {
+            return {
+                ...makeResult('early_signal', actions, best, worst),
+                confidence: rawConfidence,
+                min_sample_count: minSamples,
+            };
+        }
 
         return {
             task: taskName,
             state: 'stable',
             best_action: best,
             worst_action: worst,
-            confidence: Math.max(0, Number(rawConfidence.toFixed(4))),
+            confidence: rawConfidence,
             improvement: {
                 baseline_rate: Number(worst.success_rate.toFixed(4)),
                 improved_rate: Number(best.success_rate.toFixed(4)),

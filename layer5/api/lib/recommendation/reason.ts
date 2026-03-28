@@ -11,28 +11,85 @@ function confPct(confidence: number): string {
     return `${Math.round(confidence * 100)}%`;
 }
 
+type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high';
+type UiHint = 'wait' | 'monitor' | 'act_now';
+type SuggestedAction = 'collect_more_data' | 'monitor' | 'replace';
+
+export interface ConfidenceMeta {
+    value: number | null;
+    percent: number | null;
+    label: ConfidenceLabel;
+    ui_hint: UiHint;
+}
+
+function toConfidenceMeta(confidence: number | null): ConfidenceMeta {
+    if (confidence === null) {
+        return {
+            value: null,
+            percent: null,
+            label: 'none',
+            ui_hint: 'wait',
+        };
+    }
+
+    const rounded = Math.max(0, Math.min(1, confidence));
+    if (rounded < 0.2) {
+        return {
+            value: rounded,
+            percent: Math.round(rounded * 100),
+            label: 'low',
+            ui_hint: 'monitor',
+        };
+    }
+    if (rounded < 0.6) {
+        return {
+            value: rounded,
+            percent: Math.round(rounded * 100),
+            label: 'medium',
+            ui_hint: 'monitor',
+        };
+    }
+    return {
+        value: rounded,
+        percent: Math.round(rounded * 100),
+        label: 'high',
+        ui_hint: 'act_now',
+    };
+}
+
 function templateStable(r: RecommendationResult): string {
     const b = r.best_action!;
     const w = r.worst_action!;
     const delta = r.improvement!.absolute_delta;
+    const confidenceText = r.confidence !== null
+        ? confPct(r.confidence)
+        : 'unknown';
+    const uncertaintyNote = (r.confidence ?? 0) < 0.6
+        ? ' There is still uncertainty, so a phased rollout with monitoring is safer than a hard cutover.'
+        : '';
     return (
         `${w.action_name} succeeds ${pct(w.success_rate)} of the time ` +
         `for "${r.task}" (${w.total_count} outcomes). ` +
         `${b.action_name} succeeds ${pct(b.success_rate)} ` +
         `(${b.total_count} outcomes). ` +
-        `Switching is expected to improve success by +${pct(delta)}.`
+        `Switching is expected to improve success by +${pct(delta)} ` +
+        `with ${confidenceText} confidence.` +
+        uncertaintyNote
     );
 }
 
 function templateEarlySignal(r: RecommendationResult): string {
     const b = r.best_action!;
     const w = r.worst_action!;
+    const confidenceText = r.confidence !== null
+        ? confPct(r.confidence)
+        : 'unknown';
     return (
         `Early data (${b.total_count} outcomes) suggests ` +
         `${b.action_name} outperforms ${w.action_name} ` +
         `for "${r.task}" ` +
         `(${pct(b.success_rate)} vs ${pct(w.success_rate)}). ` +
-        `Confidence is low - monitor before acting.`
+        `Current confidence is ${confidenceText}; treat this as provisional and monitor before acting.`
     );
 }
 
@@ -44,7 +101,7 @@ function templateClose(r: RecommendationResult): string {
         `for "${r.task}" ` +
         `(${pct(b.success_rate)} vs ${pct(w.success_rate)}, ` +
         `${b.total_count} and ${w.total_count} outcomes). ` +
-        `No strong recommendation yet - continue collecting data.`
+        `No strong recommendation yet - continue collecting data and monitor for a clearer separation.`
     );
 }
 
@@ -69,6 +126,10 @@ export interface ActionableOutput {
     state: RecommendationState;
     problem: string | null;
     recommendation: string | null;
+    suggested_action: SuggestedAction;
+    action_required: boolean;
+    ui_hint: UiHint;
+    risk_context: string | null;
     expected_improvement: {
         baseline: string;
         improved: string;
@@ -76,6 +137,7 @@ export interface ActionableOutput {
     } | null;
     reason: string;
     confidence: number | null;
+    confidence_meta: ConfidenceMeta;
     sample_size: {
         best: number;
         worst: number;
@@ -87,9 +149,13 @@ export interface ActionableOutput {
 export function buildActionableOutput(
     r: RecommendationResult,
 ): ActionableOutput {
+    const confidenceMeta = toConfidenceMeta(r.confidence);
+
     const base = {
         task: r.task,
         state: r.state,
+        confidence_meta: confidenceMeta,
+        ui_hint: confidenceMeta.ui_hint,
         generated_at: r.generated_at,
     };
 
@@ -101,7 +167,11 @@ export function buildActionableOutput(
         return {
             ...base,
             problem: null,
-            recommendation: null,
+            recommendation: 'Do not change behavior yet. Continue collecting outcomes.',
+            suggested_action: 'collect_more_data',
+            action_required: false,
+            ui_hint: 'wait',
+            risk_context: 'Evidence is insufficient. Acting now may cause regressions without measurable upside.',
             expected_improvement: null,
             reason: templateNoData(r.task, totalOutcomes),
             confidence: null,
@@ -113,7 +183,11 @@ export function buildActionableOutput(
         return {
             ...base,
             problem: null,
-            recommendation: null,
+            recommendation: 'Do not switch actions yet. Monitor both actions while collecting more data.',
+            suggested_action: 'monitor',
+            action_required: false,
+            ui_hint: 'monitor',
+            risk_context: 'Observed performance is too close; switching now risks churn with little expected gain.',
             expected_improvement: null,
             reason: templateClose(r),
             confidence: null,
@@ -136,9 +210,12 @@ export function buildActionableOutput(
                 `${w.total_count} outcomes - early data)`
             ),
             recommendation: (
-                `Consider replacing ${w.action_name} ` +
-                `with ${b.action_name}`
+                `Monitor ${b.action_name} vs ${w.action_name} before a full replacement.`
             ),
+            suggested_action: 'monitor',
+            action_required: false,
+            ui_hint: 'monitor',
+            risk_context: 'Signal direction is promising but uncertainty remains high; immediate full replacement may be premature.',
             expected_improvement: null,
             reason: templateEarlySignal(r),
             confidence: r.confidence,
@@ -153,6 +230,7 @@ export function buildActionableOutput(
     const b = r.best_action!;
     const w = r.worst_action!;
     const imp = r.improvement!;
+    const shouldAct = confidenceMeta.ui_hint === 'act_now';
 
     return {
         ...base,
@@ -161,7 +239,15 @@ export function buildActionableOutput(
             `(${pct(imp.baseline_rate)} success rate, ` +
             `${w.total_count} outcomes)`
         ),
-        recommendation: `Replace ${w.action_name} with ${b.action_name}`,
+        recommendation: shouldAct
+            ? `Replace ${w.action_name} with ${b.action_name}`
+            : `Pilot ${b.action_name} while monitoring before a full replacement of ${w.action_name}`,
+        suggested_action: shouldAct ? 'replace' : 'monitor',
+        action_required: shouldAct,
+        ui_hint: shouldAct ? 'act_now' : 'monitor',
+        risk_context: shouldAct
+            ? null
+            : 'Improvement exists, but confidence is not yet high enough for an immediate irreversible switch.',
         expected_improvement: {
             baseline: pct(imp.baseline_rate),
             improved: pct(imp.improved_rate),

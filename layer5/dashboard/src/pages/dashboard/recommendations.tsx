@@ -20,6 +20,16 @@ type RecommendationState =
     | 'close'
     | 'stable';
 
+type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high';
+type UiHint = 'wait' | 'monitor' | 'act_now';
+
+interface ConfidenceMeta {
+    value: number | null;
+    percent: number | null;
+    label: ConfidenceLabel;
+    ui_hint: UiHint;
+}
+
 interface ExpectedImprovement {
     baseline: string;
     improved: string;
@@ -37,15 +47,55 @@ interface RecommendationResponse {
     state: RecommendationState;
     problem: string | null;
     recommendation: string | null;
+    suggested_action: 'collect_more_data' | 'monitor' | 'replace';
+    action_required: boolean;
+    ui_hint: UiHint;
+    risk_context: string | null;
     expected_improvement: ExpectedImprovement | null;
     reason: string;
     confidence: number | null;
+    confidence_meta: ConfidenceMeta;
     sample_size: SampleSize | null;
     agent_id: string | null;
     agent_scope: 'agent_scoped' | 'customer_blended';
     customer_id: string;
     generated_at: string;
 }
+
+const CONFIDENCE_CONFIG: Record<
+    ConfidenceLabel,
+    {
+        label: string;
+        textClass: string;
+        chipClass: string;
+        barColor: string;
+    }
+> = {
+    high: {
+        label: 'High Confidence',
+        textClass: 'text-[#b8ff00]',
+        chipClass: 'bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30',
+        barColor: '#b8ff00',
+    },
+    medium: {
+        label: 'Medium Confidence',
+        textClass: 'text-yellow-400',
+        chipClass: 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30',
+        barColor: '#facc15',
+    },
+    low: {
+        label: 'Low Confidence',
+        textClass: 'text-[#ff4444]',
+        chipClass: 'bg-red-500/10 text-[#ff4444] border border-red-500/30',
+        barColor: '#ff4444',
+    },
+    none: {
+        label: 'No Confidence Estimate',
+        textClass: 'text-[#a1a1aa]',
+        chipClass: 'bg-[#1a1a24] text-[#a1a1aa] border border-[#1a1a24]',
+        barColor: '#52525b',
+    },
+};
 
 const QUICK_TASKS = [
     'payment_failed',
@@ -93,26 +143,22 @@ function stateBadge(state: RecommendationState): React.ReactElement {
     );
 }
 
-function ConfidenceBar({ confidence }: { confidence: number | null }): React.ReactElement {
-    if (confidence === null) {
-        return <span className="text-[#a1a1aa] text-sm">-</span>;
+function ConfidenceBar({ meta }: { meta: ConfidenceMeta | null }): React.ReactElement {
+    if (!meta || meta.percent === null) {
+        return <span className="text-[#a1a1aa] text-sm">No estimate</span>;
     }
 
-    const pct = Math.round(confidence * 100);
-    const color =
-        pct >= 70 ? '#b8ff00' :
-            pct >= 40 ? '#facc15' :
-                '#ff4444';
+    const cfg = CONFIDENCE_CONFIG[meta.label];
 
     return (
         <div className="flex items-center gap-3">
             <div className="flex-1 bg-[#1a1a24] rounded-full h-2 overflow-hidden">
                 <div
                     className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${pct}%`, backgroundColor: color }}
+                    style={{ width: `${meta.percent}%`, backgroundColor: cfg.barColor }}
                 />
             </div>
-            <span className="text-sm font-medium" style={{ color }}>{pct}%</span>
+            <span className={`text-sm font-medium ${cfg.textClass}`}>{meta.percent}%</span>
         </div>
     );
 }
@@ -141,11 +187,23 @@ function LoadingSkeleton(): React.ReactElement {
 
 function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElement {
     const { state } = data;
+    const confidenceMeta = data.confidence_meta ?? null;
+    const confidenceCfg = CONFIDENCE_CONFIG[confidenceMeta?.label ?? 'none'];
 
     const borderAccent =
         state === 'stable' ? 'border-[#b8ff00]/40' :
             state === 'early_signal' ? 'border-yellow-500/40' :
                 'border-[#1a1a24]';
+
+    const recommendationTone =
+        data.ui_hint === 'act_now' ? 'text-[#b8ff00]' :
+            data.ui_hint === 'monitor' ? 'text-yellow-400' :
+                'text-[#a1a1aa]';
+
+    const recommendationTitle =
+        data.ui_hint === 'act_now' ? 'Recommended Action' :
+            data.ui_hint === 'monitor' ? 'Recommended Action (Monitor)' :
+                'Recommended Action (Wait)';
 
     return (
         <div className="space-y-6">
@@ -153,6 +211,9 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                 <div className="flex items-center gap-3">
                     <span className="text-lg font-semibold text-white font-mono">{data.task}</span>
                     {stateBadge(state)}
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${confidenceCfg.chipClass}`}>
+                        {confidenceCfg.label}
+                    </span>
                     {data.agent_scope === 'customer_blended' && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30">
                             All Agents
@@ -182,11 +243,18 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
 
                 {data.recommendation && (
                     <div>
-                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">Recommended Fix</p>
-                        <p className={`text-sm font-semibold flex items-center gap-2 ${state === 'stable' ? 'text-[#b8ff00]' : 'text-yellow-400'}`}>
+                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">{recommendationTitle}</p>
+                        <p className={`text-sm font-semibold flex items-center gap-2 ${recommendationTone}`}>
                             <ArrowRight size={15} className="shrink-0" />
                             {data.recommendation}
                         </p>
+                    </div>
+                )}
+
+                {data.risk_context && (
+                    <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-[#ffb4b4]">
+                        <p className="text-xs font-medium uppercase tracking-wider text-[#ff6b6b] mb-1">Risk Context</p>
+                        <p>{data.risk_context}</p>
                     </div>
                 )}
 
@@ -210,11 +278,13 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     <p className="text-sm text-[#a1a1aa] leading-relaxed">{data.reason}</p>
                 </div>
 
-                {(state === 'no_data' || state === 'close') && (
+                {(state === 'no_data' || state === 'close' || !data.action_required) && (
                     <div className="rounded-lg bg-[#1a1a24] px-4 py-3 text-sm text-[#a1a1aa]">
-                        {state === 'no_data'
-                            ? 'Keep logging outcomes via log_outcome - recommendations unlock once 10+ outcomes exist across 2+ distinct actions.'
-                            : 'Both actions are performing similarly. Continue collecting data to see if a clear winner emerges.'}
+                        {data.ui_hint === 'act_now'
+                            ? 'Confidence is high enough to proceed with the recommended replacement.'
+                            : data.ui_hint === 'monitor'
+                                ? 'Monitor this recommendation before making an irreversible switch.'
+                                : 'Do nothing yet. Keep logging outcomes via log_outcome until stronger evidence is available.'}
                     </div>
                 )}
             </div>
@@ -222,7 +292,12 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
                     <p className="text-xs text-[#a1a1aa] mb-3">Confidence</p>
-                    <ConfidenceBar confidence={data.confidence} />
+                    <ConfidenceBar meta={confidenceMeta} />
+                    {confidenceMeta?.percent !== null && (
+                        <p className="text-xs text-[#a1a1aa] mt-2">
+                            Confidence tier: <span className={confidenceCfg.textClass}>{confidenceCfg.label}</span>
+                        </p>
+                    )}
                 </div>
 
                 <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
@@ -406,11 +481,10 @@ export default function RecommendationsPage(): React.ReactElement {
                     <div className="flex flex-wrap gap-2 items-center">
                         <button
                             onClick={() => setSelectedAgentId(null)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                selectedAgentId === null
-                                    ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                    : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
-                            }`}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${selectedAgentId === null
+                                ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
+                                : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
+                                }`}
                         >
                             All Agents
                         </button>
@@ -421,11 +495,10 @@ export default function RecommendationsPage(): React.ReactElement {
                                 <button
                                     key={agent.agent_id}
                                     onClick={() => setSelectedAgentId(agent.agent_id)}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${
-                                        selectedAgentId === agent.agent_id
-                                            ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                            : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
-                                    }`}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${selectedAgentId === agent.agent_id
+                                        ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
+                                        : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
+                                        }`}
                                 >
                                     {agent.agent_name}
                                 </button>
@@ -457,8 +530,8 @@ export default function RecommendationsPage(): React.ReactElement {
                                 setActiveTask(task);
                             }}
                             className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${activeTask === task
-                                    ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                    : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
+                                ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
+                                : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
                                 }`}
                         >
                             {task}
