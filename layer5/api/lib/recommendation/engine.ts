@@ -30,6 +30,7 @@ export interface RecommendationResult {
     } | null;
     min_sample_count: number;
     all_actions: ActionPerformance[];
+    agent_id: string | null;
     generated_at: string;
 }
 
@@ -40,6 +41,7 @@ function rankingScore(a: ActionPerformance): number {
 export async function getRecommendation(
     customerId: string,
     taskName: string,
+    agentId?: string | null,
 ): Promise<RecommendationResult> {
     const generatedAt = new Date().toISOString();
 
@@ -60,12 +62,14 @@ export async function getRecommendation(
                 ? Math.min(best.total_count, worst.total_count)
                 : (best?.total_count ?? 0),
             all_actions: actions,
+            agent_id: agentId ?? null,
             generated_at: generatedAt,
         };
     }
 
     try {
-        const { data, error } = await supabase
+        // Build query — scope to agent when provided, else customer-wide
+        let query = supabase
             .from('mv_task_action_performance')
             .select(
                 'action_id, action_name, total_count, success_count, ' +
@@ -73,6 +77,12 @@ export async function getRecommendation(
             )
             .eq('customer_id', customerId)
             .eq('task_name', taskName);
+
+        if (agentId) {
+            query = query.eq('agent_id', agentId);
+        }
+
+        const { data, error } = await query;
 
         if (error) {
             console.error(
@@ -162,6 +172,7 @@ export async function getRecommendation(
             },
             min_sample_count: minSamples,
             all_actions: actions,
+            agent_id: agentId ?? null,
             generated_at: generatedAt,
         };
     } catch (err: any) {

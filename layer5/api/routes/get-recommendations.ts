@@ -16,6 +16,10 @@ getRecommendationsRouter.get('/', async (c) => {
     }
 
     const rawTask = c.req.query('task');
+    // Optional agent_id filter — scopes recommendation to a single agent
+    // When absent, returns customer-wide blended view (backward compatible)
+    const rawAgentId = c.req.query('agent_id') ?? null;
+    const scopedAgentId = rawAgentId?.trim() || null;
 
     if (!rawTask || rawTask.trim() === '') {
         return c.json(
@@ -46,13 +50,16 @@ getRecommendationsRouter.get('/', async (c) => {
     }
 
     try {
-        const result = await getRecommendation(customerId, taskName);
+        const result = await getRecommendation(customerId, taskName, scopedAgentId);
         const output = buildActionableOutput(result);
 
         return c.json(
             {
                 ...output,
-                agent_id: agentId ?? null,
+                agent_id: result.agent_id,
+                agent_scope: scopedAgentId
+                    ? 'agent_scoped'
+                    : 'customer_blended',
                 customer_id: customerId,
             },
             200

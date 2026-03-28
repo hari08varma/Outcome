@@ -12,6 +12,7 @@ import {
 import { createAgentFetch } from '../../lib/api';
 import { API_BASE } from '../../lib/config';
 import { useAgentApiKey } from '../../hooks/useAgentApiKey';
+import { supabase } from '../../supabaseClient';
 
 type RecommendationState =
     | 'no_data'
@@ -41,6 +42,7 @@ interface RecommendationResponse {
     confidence: number | null;
     sample_size: SampleSize | null;
     agent_id: string | null;
+    agent_scope: 'agent_scoped' | 'customer_blended';
     customer_id: string;
     generated_at: string;
 }
@@ -151,6 +153,16 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                 <div className="flex items-center gap-3">
                     <span className="text-lg font-semibold text-white font-mono">{data.task}</span>
                     {stateBadge(state)}
+                    {data.agent_scope === 'customer_blended' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30">
+                            All Agents
+                        </span>
+                    )}
+                    {data.agent_scope === 'agent_scoped' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/30">
+                            Agent Scoped
+                        </span>
+                    )}
                 </div>
                 <span className="text-xs text-[#a1a1aa]">
                     Updated {new Date(data.generated_at).toLocaleString()}
@@ -250,7 +262,31 @@ export default function RecommendationsPage(): React.ReactElement {
     const [data, setData] = useState<RecommendationResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Agent list for scoping recommendations
+    const [agents, setAgents] = useState<Array<{ agent_id: string; agent_name: string }>>([]);
+    const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+    const [agentsLoading, setAgentsLoading] = useState(false);
     const fetchRef = useRef<(() => Promise<void>) | null>(null);
+
+    useEffect(() => {
+        if (!isValid) return;
+        void (async () => {
+            setAgentsLoading(true);
+            try {
+                const { data } = await supabase
+                    .from('dim_agents')
+                    .select('agent_id, agent_name')
+                    .order('agent_name', { ascending: true });
+                setAgents(data ?? []);
+                // Auto-select first agent if only one exists
+                if (data && data.length === 1) {
+                    setSelectedAgentId(data[0]!.agent_id);
+                }
+            } finally {
+                setAgentsLoading(false);
+            }
+        })();
+    }, [isValid]);
 
     const fetchRecommendation = useCallback(
         async (task: string, showLoading = true): Promise<void> => {
@@ -261,7 +297,12 @@ export default function RecommendationsPage(): React.ReactElement {
 
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const res = await agentFetch(`${API_BASE}/v1/recommendations?task=${encodeURIComponent(task)}`);
+                const agentParam = selectedAgentId
+                    ? `&agent_id=${encodeURIComponent(selectedAgentId)}`
+                    : '';
+                const res = await agentFetch(
+                    `${API_BASE}/v1/recommendations?task=${encodeURIComponent(task)}${agentParam}`
+                );
 
                 if (!res.ok) {
                     const body = await res.json().catch(() => ({}));
@@ -277,7 +318,7 @@ export default function RecommendationsPage(): React.ReactElement {
                 setLoading(false);
             }
         },
-        [apiKey, isValid, handleAuthFailure],
+        [apiKey, isValid, handleAuthFailure, selectedAgentId],
     );
 
     useEffect(() => {
@@ -294,7 +335,7 @@ export default function RecommendationsPage(): React.ReactElement {
             window.clearInterval(interval);
             fetchRef.current = null;
         };
-    }, [activeTask, isValid, fetchRecommendation]);
+    }, [activeTask, isValid, fetchRecommendation, selectedAgentId]);
 
     const handleSubmit = (e: React.FormEvent): void => {
         e.preventDefault();
@@ -354,6 +395,54 @@ export default function RecommendationsPage(): React.ReactElement {
                 <div className="bg-red-500/10 border border-red-500/30 text-[#ff4444] rounded-xl px-4 py-3 text-sm flex items-center gap-2">
                     <AlertTriangle size={16} />
                     <span>{error}</span>
+                </div>
+            )}
+
+            {agents.length > 1 && (
+                <div>
+                    <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-3">
+                        Agent Scope
+                    </p>
+                    <div className="flex flex-wrap gap-2 items-center">
+                        <button
+                            onClick={() => setSelectedAgentId(null)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                selectedAgentId === null
+                                    ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
+                                    : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
+                            }`}
+                        >
+                            All Agents
+                        </button>
+                        {agentsLoading ? (
+                            <span className="text-xs text-[#a1a1aa]">Loading agents…</span>
+                        ) : (
+                            agents.map((agent) => (
+                                <button
+                                    key={agent.agent_id}
+                                    onClick={() => setSelectedAgentId(agent.agent_id)}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${
+                                        selectedAgentId === agent.agent_id
+                                            ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
+                                            : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
+                                    }`}
+                                >
+                                    {agent.agent_name}
+                                </button>
+                            ))
+                        )}
+                    </div>
+                    {selectedAgentId && (
+                        <p className="text-xs text-[#a1a1aa] mt-2">
+                            Showing recommendations scoped to this agent only.
+                            <button
+                                className="ml-2 text-[#b8ff00] hover:underline"
+                                onClick={() => setSelectedAgentId(null)}
+                            >
+                                Clear
+                            </button>
+                        </p>
+                    )}
                 </div>
             )}
 
