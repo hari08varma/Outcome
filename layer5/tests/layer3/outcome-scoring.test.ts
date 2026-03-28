@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 // ── Mock supabase (hoisted — factory must not reference outer vars) ──
 vi.mock('../../api/lib/supabase.js', () => {
     const chain: any = {};
-    const methods = ['select', 'eq', 'order', 'insert', 'update', 'maybeSingle', 'single'];
+    const methods = ['select', 'eq', 'order', 'insert', 'update', 'upsert', 'maybeSingle', 'single'];
     for (const m of methods) {
         chain[m] = vi.fn().mockReturnValue(chain);
     }
@@ -74,7 +74,7 @@ function getChain() {
 /** Build a fresh chain mock for one supabase.from() call */
 function buildChain() {
     const c: any = {};
-    for (const m of ['select', 'eq', 'order', 'insert', 'update', 'maybeSingle', 'single']) {
+    for (const m of ['select', 'eq', 'order', 'insert', 'update', 'upsert', 'maybeSingle', 'single']) {
         c[m] = vi.fn().mockReturnValue(c);
     }
     return c;

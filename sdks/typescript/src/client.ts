@@ -49,6 +49,7 @@ import type {
 } from './types.js';
 
 declare const Deno: { env: { get(key: string): string | undefined } } | undefined;
+declare const process: { env?: Record<string, string | undefined> } | undefined;
 
 const SDK_VERSION = '0.1.0';
 const DEFAULT_BASE_URL = 'https://api.layer5.dev';
