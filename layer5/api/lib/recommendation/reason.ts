@@ -312,6 +312,7 @@ export function buildActionableOutput(
         confidence_meta: {
             value: confidenceMeta.value,
             percent: confidenceMeta.percent,
+            label: confidenceMeta.label,
         },
         progress: buildProgress(r.min_sample_count),
         generated_at: r.generated_at,
