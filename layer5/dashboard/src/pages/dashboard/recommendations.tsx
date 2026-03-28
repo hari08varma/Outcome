@@ -124,14 +124,6 @@ const CONFIDENCE_CONFIG: Record<
     },
 };
 
-const QUICK_TASKS = [
-    'payment_failed',
-    'ticket_resolution',
-    'auth_recovery',
-    'order_recovery',
-    'onboarding',
-    'refund_processing',
-] as const;
 
 function stateBadge(state: RecommendationState): React.ReactElement {
     const map: Record<
@@ -412,6 +404,9 @@ export default function RecommendationsPage(): React.ReactElement {
     const [agents, setAgents] = useState<Array<{ agent_id: string; agent_name: string }>>([]);
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
     const [agentsLoading, setAgentsLoading] = useState(false);
+    // Dynamic task list — scoped to selected agent (or all agents if null)
+    const [agentTasks, setAgentTasks] = useState<string[]>([]);
+    const [agentTasksLoading, setAgentTasksLoading] = useState(false);
     const fetchRef = useRef<(() => Promise<void>) | null>(null);
 
     useEffect(() => {
@@ -433,6 +428,31 @@ export default function RecommendationsPage(): React.ReactElement {
             }
         })();
     }, [isValid]);
+
+    // Fetch distinct task_names from the MV scoped to the selected agent.
+    // RLS on mv_task_action_performance enforces customer_id via JWT automatically.
+    useEffect(() => {
+        if (!isValid) return;
+        void (async () => {
+            setAgentTasksLoading(true);
+            try {
+                let q = supabase
+                    .from('mv_task_action_performance')
+                    .select('task_name')
+                    .neq('agent_id', '__unattributed__');
+                if (selectedAgentId) {
+                    q = q.eq('agent_id', selectedAgentId);
+                }
+                const { data: taskRows } = await q;
+                const tasks = [
+                    ...new Set((taskRows ?? []).map((r: any) => r.task_name as string)),
+                ].sort();
+                setAgentTasks(tasks);
+            } finally {
+                setAgentTasksLoading(false);
+            }
+        })();
+    }, [isValid, selectedAgentId]);
 
     const fetchRecommendation = useCallback(
         async (task: string, showLoading = true): Promise<void> => {
@@ -591,24 +611,45 @@ export default function RecommendationsPage(): React.ReactElement {
             )}
 
             <div>
-                <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-3">Quick Select</p>
-                <div className="flex flex-wrap gap-2">
-                    {QUICK_TASKS.map((task) => (
-                        <button
-                            key={task}
-                            onClick={() => {
-                                setTaskInput(task);
-                                setActiveTask(task);
-                            }}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${activeTask === task
-                                ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
-                                }`}
-                        >
-                            {task}
-                        </button>
-                    ))}
-                </div>
+                <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-3">
+                    Quick Select
+                    {selectedAgentId && agentTasks.length > 0 && (
+                        <span className="ml-2 text-[#52525b] normal-case font-normal">
+                            — tasks logged by this agent
+                        </span>
+                    )}
+                </p>
+                {agentTasksLoading ? (
+                    <div className="flex gap-2">
+                        {[0, 1, 2].map((i) => (
+                            <div key={i} className="h-7 w-24 bg-[#1a1a24] rounded-lg animate-pulse" />
+                        ))}
+                    </div>
+                ) : agentTasks.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                        {agentTasks.map((task) => (
+                            <button
+                                key={task}
+                                onClick={() => {
+                                    setTaskInput(task);
+                                    setActiveTask(task);
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${activeTask === task
+                                    ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
+                                    : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
+                                    }`}
+                            >
+                                {task}
+                            </button>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="text-xs text-[#52525b]">
+                        {selectedAgentId
+                            ? 'No tasks logged for this agent yet.'
+                            : 'No tasks found. Log outcomes to see tasks here.'}
+                    </p>
+                )}
             </div>
 
             <form onSubmit={handleSubmit} className="flex items-center gap-3">

@@ -175,7 +175,12 @@ export async function getRecommendation(
             .eq('task_name', taskName);
 
         if (agentId) {
+            // Agent-scoped: only show outcomes for this specific agent
             query = query.eq('agent_id', agentId);
+        } else {
+            // Customer-blended (All Agents): exclude unattributed sentinel rows
+            // to avoid double-counting outcomes that had no agent_id on ingestion
+            query = query.neq('agent_id', '__unattributed__');
         }
 
         const { data, error } = await query;
