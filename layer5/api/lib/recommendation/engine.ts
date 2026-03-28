@@ -53,7 +53,10 @@ export interface RecommendationResult {
 }
 
 function rankingScore(a: ActionPerformance): number {
-    return a.ml_score !== null ? a.ml_score : a.success_rate;
+    if (a.ml_score !== null && a.ml_score !== undefined) {
+        return a.ml_score;   // ML composite score from mv_action_scores
+    }
+    return a.success_rate;   // cold-start fallback
 }
 
 function confidenceFromSamplesAndLift(
@@ -130,7 +133,9 @@ export async function getRecommendation(
                 total_count: Number(row['total_count']),
                 success_count: Number(row['success_count']),
                 success_rate: Number(row['success_rate']),
-                ml_score: mlScoreRaw !== null && mlScoreRaw !== undefined
+                ml_score: mlScoreRaw !== null
+                    && mlScoreRaw !== undefined
+                    && mlScoreRaw !== 'null'
                     ? Number(mlScoreRaw)
                     : null,
                 last_seen_at: String(row['last_seen_at'] ?? ''),
