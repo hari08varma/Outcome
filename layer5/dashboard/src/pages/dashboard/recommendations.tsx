@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     AlertTriangle,
     ArrowRight,
-    BarChart2,
     CheckCircle,
     RefreshCw,
     TrendingUp,
@@ -17,17 +16,14 @@ import { supabase } from '../../supabaseClient';
 type RecommendationState =
     | 'no_data'
     | 'early_signal'
-    | 'close'
     | 'stable';
 
-type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high';
-type UiHint = 'wait' | 'monitor' | 'act_now';
+type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
 
 interface ConfidenceMeta {
     value: number;
     percent: number;
     label: ConfidenceLabel;
-    ui_hint: UiHint;
 }
 
 interface ExpectedImprovement {
@@ -51,10 +47,8 @@ interface RecommendationResponse {
     ui_label: string;
     explanation: string;
     decision: {
+        type: 'collect_more_data' | 'monitor' | 'replace';
         action_required: boolean;
-        suggested_action: 'collect_more_data' | 'monitor' | 'replace';
-        level: 'none' | 'low' | 'medium' | 'high';
-        ui_hint: 'wait' | 'monitor' | 'act_now';
     };
     insight: {
         best_action: string | null;
@@ -65,16 +59,20 @@ interface RecommendationResponse {
         sample_size: { best: number; worst: number } | null;
     };
     confidence: number;
-    confidence_meta: {
-        value: number;
-        percent: number;
-        label: 'none' | 'low' | 'medium' | 'high';
-        ui_hint: 'wait' | 'monitor' | 'act_now';
+    confidence_label: ConfidenceLabel;
+    progress: {
+        current_samples: number;
+        target_samples: number;
+        percent_complete: number;
     };
+    confidence_meta: ConfidenceMeta;
     message: string;
-    reason: string;
+    reason: {
+        summary: string;
+        evidence: string;
+        confidence_note: string;
+    };
     problem: string | null;
-    recommendation: string | null;
     risk_context: string | null;
     expected_improvement: ExpectedImprovement | null;
     sample_size: SampleSize | null;
@@ -94,6 +92,12 @@ const CONFIDENCE_CONFIG: Record<
         barColor: string;
     }
 > = {
+    very_high: {
+        label: 'Very High Confidence',
+        textClass: 'text-[#b8ff00]',
+        chipClass: 'bg-[#b8ff00]/20 text-[#b8ff00] border border-[#b8ff00]/50',
+        barColor: '#b8ff00',
+    },
     high: {
         label: 'High Confidence',
         textClass: 'text-[#b8ff00]',
@@ -143,11 +147,6 @@ function stateBadge(state: RecommendationState): React.ReactElement {
             label: 'Early Signal',
             cls: 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30',
             icon: <Zap size={12} />,
-        },
-        close: {
-            label: 'Too Close',
-            cls: 'bg-[#a1a1aa]/10 text-[#a1a1aa] border border-[#a1a1aa]/20',
-            icon: <BarChart2 size={12} />,
         },
         no_data: {
             label: 'No Data',
@@ -219,13 +218,13 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                 'border-[#1a1a24]';
 
     const recommendationTone =
-        data.decision.ui_hint === 'act_now' ? 'text-[#b8ff00]' :
-            data.decision.ui_hint === 'monitor' ? 'text-yellow-400' :
+        data.decision.type === 'replace' ? 'text-[#b8ff00]' :
+            data.decision.type === 'monitor' ? 'text-yellow-400' :
                 'text-[#a1a1aa]';
 
     const recommendationTitle =
-        data.decision.ui_hint === 'act_now' ? 'Recommended Action' :
-            data.decision.ui_hint === 'monitor' ? 'Recommended Action (Monitor)' :
+        data.decision.type === 'replace' ? 'Recommended Action' :
+            data.decision.type === 'monitor' ? 'Recommended Action (Monitor)' :
                 'Recommended Action (Wait)';
 
     return (
@@ -265,12 +264,14 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     </div>
                 )}
 
-                {data.recommendation && (
+                {data.message && (
                     <div>
-                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">{recommendationTitle}</p>
+                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">
+                            {recommendationTitle}
+                        </p>
                         <p className={`text-sm font-semibold flex items-center gap-2 ${recommendationTone}`}>
                             <ArrowRight size={15} className="shrink-0" />
-                            {data.recommendation}
+                            {data.message}
                         </p>
                     </div>
                 )}
@@ -299,21 +300,35 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
 
                 <div>
                     <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">Why</p>
-                    <p className="text-sm text-[#a1a1aa] leading-relaxed">{data.reason}</p>
-                </div>
-
-                {!data.decision.action_required && (
-                    <div className="mt-3 flex items-start gap-2 bg-[#1a1a24] border border-[#2a2a34] rounded-lg px-3 py-2 text-xs text-[#a1a1aa]">
-                        <span className="mt-0.5 shrink-0">[wait]</span>
-                        <span>{data.message}</span>
+                    <div className="space-y-1">
+                        <p className="text-sm text-white font-medium">{data.reason.summary}</p>
+                        <p className="text-sm text-[#a1a1aa]">{data.reason.evidence}</p>
+                        <p className="text-xs text-[#a1a1aa] italic">{data.reason.confidence_note}</p>
                     </div>
-                )}
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
                     <p className="text-xs text-[#a1a1aa] mb-3">Confidence</p>
                     <ConfidenceBar meta={confidenceMeta} />
+                    {data.progress && (
+                        <div className="mt-4">
+                            <div className="flex items-center justify-between text-xs text-[#a1a1aa] mb-1">
+                                <span>Data progress</span>
+                                <span>{data.progress.current_samples} / {data.progress.target_samples}</span>
+                            </div>
+                            <div className="bg-[#1a1a24] rounded-full h-1.5 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full bg-[#b8ff00]/60 transition-all duration-500"
+                                    style={{ width: `${data.progress.percent_complete}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-[#a1a1aa] mt-1">
+                                {data.progress.percent_complete}% toward stable signal
+                            </p>
+                        </div>
+                    )}
                     {confidenceMeta && (
                         <p className="text-xs text-[#a1a1aa] mt-2">
                             Confidence tier: <span className={confidenceCfg.textClass}>{confidenceCfg.label}</span>
