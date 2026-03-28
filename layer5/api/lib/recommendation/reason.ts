@@ -347,11 +347,21 @@ export function buildActionableOutput(
                 type: 'monitor',
                 action_required: false,
             },
-            problem: (
-                `${w.action_name} is underperforming ` +
-                `(${pct(w.success_rate)} success rate, ` +
-                `${w.total_count} outcomes - early data)`
-            ),
+            problem: (() => {
+                const delta = b.success_rate - w.success_rate;
+                if (delta < 0.08) {
+                    return (
+                        `${b.action_name} and ${w.action_name} perform similarly ` +
+                        `(${pct(b.success_rate)} vs ${pct(w.success_rate)}, ` +
+                        `${b.total_count} and ${w.total_count} outcomes - monitoring)`
+                    );
+                }
+                return (
+                    `${w.action_name} is underperforming ` +
+                    `(${pct(w.success_rate)} success rate, ` +
+                    `${w.total_count} outcomes - early data)`
+                );
+            })(),
             risk_context: (r as any)._silent_failure_warning
                 ? 'Silent failures detected in the last 24h: some outcomes marked success=true had low outcome scores. Signal direction is promising but uncertainty remains high.'
                 : 'Signal direction is promising but uncertainty remains high; immediate full replacement may be premature.',
@@ -360,13 +370,23 @@ export function buildActionableOutput(
             confidence: r.confidence ?? 0,
             confidence_label: confidenceLabel,
             insight: buildInsight(r),
-            message: buildMessage(
-                'early_signal',
-                false,
-                confidenceMeta,
-                r.best_action?.action_name ?? null,
-                r.worst_action?.action_name ?? null,
-            ),
+            message: (() => {
+                const delta = b.success_rate - w.success_rate;
+                if (delta < 0.08) {
+                    return (
+                        `${b.action_name} and ${w.action_name} are performing ` +
+                        `similarly (${pct(b.success_rate)} vs ${pct(w.success_rate)}). ` +
+                        `Continue collecting data before making a switch.`
+                    );
+                }
+                return buildMessage(
+                    'early_signal',
+                    false,
+                    confidenceMeta,
+                    r.best_action?.action_name ?? null,
+                    r.worst_action?.action_name ?? null,
+                );
+            })(),
             validation_hint: null,
             sample_size: {
                 best: b.total_count,
