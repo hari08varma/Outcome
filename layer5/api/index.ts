@@ -137,34 +137,54 @@ app.use('*', prettyJSON());
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS ?? '10000', 10);
 
 app.use('*', async (c, next) => {
-    if (c.req.path === '/health' || c.req.path === '/health/deep' || c.req.path === '/') {
+    if (
+        c.req.path === '/health' ||
+        c.req.path === '/health/deep' ||
+        c.req.path === '/'
+    ) {
         return next();
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        const onAbort = () => reject(new Error('TIMEOUT'));
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+        // { once: true } automatically removes the listener after it fires.
+        // This prevents listener accumulation on the happy path.
+    });
+
+    timeoutId = setTimeout(
+        () => controller.abort(),
+        REQUEST_TIMEOUT_MS
+    );
+
     const start = Date.now();
 
     try {
-        await Promise.race([
-            next(),
-            new Promise((_, reject) => {
-                controller.signal.addEventListener('abort',
-                    () => reject(new Error('TIMEOUT')));
-            })
-        ]);
+        await Promise.race([next(), timeoutPromise]);
     } catch (e: any) {
         if (e?.message === 'TIMEOUT') {
             const elapsed = Date.now() - start;
-            console.warn(`[layerinfinite] Request timeout on ${c.req.path} after ${elapsed}ms`);
+            console.warn(
+                `[layerinfinite] Request timeout on ${c.req.path} ` +
+                `after ${elapsed}ms`
+            );
             return c.json(
-                { error: 'Request timeout', code: 'GATEWAY_TIMEOUT', timeout_ms: REQUEST_TIMEOUT_MS },
+                {
+                    error: 'Request timeout',
+                    code: 'GATEWAY_TIMEOUT',
+                    timeout_ms: REQUEST_TIMEOUT_MS,
+                },
                 504
             );
         }
         throw e;
     } finally {
-        clearTimeout(timeoutId);
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        // AbortController itself is GC'd after this scope ends.
+        // No manual cleanup needed — { once: true } handles listener removal.
     }
 });
 
@@ -183,6 +203,10 @@ app.get('/', (c) => c.json({
         'GET  /v1/get-scores': 'Get ranked action scores',
         'GET  /v1/get-patterns': 'Get action sequence patterns',
         'GET  /v1/recommendations': 'Get decision recommendation for a task',
+        'GET  /v1/contracts': 'Signal contracts',
+        'GET  /v1/discrepancies': 'Signal discrepancies',
+        'GET  /v1/pending-signals': 'Pending signal queue',
+        'POST /v1/webhook/:provider': 'Webhook ingestion',
         'GET /v1/me': 'Verify API key identity — returns agent_id + customer_id',
         'GET  /v1/audit': 'Immutable audit trail',
         'POST /v1/admin/register-action': 'Register an action (admin)',
@@ -223,7 +247,20 @@ app.get('/health', async (c) => {
         checks.materialized_view = 'error';
     }
 
-    if (Object.values(checks).some(v => v === 'error')) {
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        const { error: tapErr } = await supabase
+            .from('mv_task_action_performance')
+            .select('customer_id')
+            .limit(1);
+        checks.mv_task_action_performance = tapErr
+            ? `error: ${tapErr.message}`
+            : 'ok';
+    } catch {
+        checks.mv_task_action_performance = 'error';
+    }
+
+    if (Object.values(checks).some(v => v === 'error' || v.startsWith('error'))) {
         overallStatus = 'degraded';
     } else if (Object.values(checks).some(v => v === 'stale')) {
         overallStatus = 'degraded';
@@ -300,6 +337,19 @@ app.get('/health/deep', async (c) => {
         checks.materialized_view = 'error';
     }
 
+    try {
+        const { supabase } = await import('./lib/supabase.js');
+        const { error: tapErr } = await supabase
+            .from('mv_task_action_performance')
+            .select('customer_id')
+            .limit(1);
+        checks.mv_task_action_performance = tapErr
+            ? `error: ${tapErr.message}`
+            : 'ok';
+    } catch {
+        checks.mv_task_action_performance = 'error';
+    }
+
     // ── mv_episode_patterns: regression guard ──────────────
     // Catches if the MV is rebuilt against the wrong source table (bug from migration 064).
     // Only warns if fact_outcomes already has episode rows — fresh deploys are fine at 0.
@@ -343,10 +393,18 @@ app.get('/health/deep', async (c) => {
 
     // ── Overall status calculation ─────────────────────────
     const vals = Object.values(checks);
-    if (vals.some(v => v.startsWith('error') || v === 'missing')) {
+    if (vals.some(v =>
+        v.startsWith('error') ||
+        v === 'missing' ||
+        v.startsWith('FAIL')
+    )) {
         overallStatus = 'degraded';
-    } else if (vals.some(v => v === 'stale' || v === 'unknown')) {
-        overallStatus = 'degraded';
+    } else if (vals.some(v =>
+        v === 'stale' ||
+        v === 'unknown' ||
+        v.startsWith('warn:')
+    )) {
+        overallStatus = 'warn';
     }
 
     return c.json({
@@ -354,7 +412,7 @@ app.get('/health/deep', async (c) => {
         timestamp: new Date().toISOString(),
         checks,
         version: '1.0.0',
-    }, overallStatus === 'ok' ? 200 : 200); // always 200, let callers read 'status'
+    }, overallStatus === 'ok' ? 200 : 503);
 });
 
 // ── Internal: scoring cache refresh ───────────────────────────
@@ -365,6 +423,7 @@ app.post('/internal/refresh-score-cache', async (c) => {
         return c.json({ error: 'Unauthorized' }, 401);
     }
     const { invalidateCache } = await import('./lib/scoring.js');
+    // clears entire in-memory score cache
     invalidateCache();
     return c.json({ ok: true, message: 'Score cache cleared' });
 });
@@ -409,6 +468,13 @@ v1.use('/audit', primaryAuth, rateLimitMiddleware());
 v1.use('/audit/*', primaryAuth, rateLimitMiddleware());
 v1.use('/simulate', primaryAuth, rateLimitMiddleware());
 v1.use('/simulate/*', primaryAuth, rateLimitMiddleware());
+v1.use('/contracts', primaryAuth, rateLimitMiddleware());
+v1.use('/contracts/*', primaryAuth, rateLimitMiddleware());
+v1.use('/discrepancies', primaryAuth, rateLimitMiddleware());
+v1.use('/discrepancies/*', primaryAuth, rateLimitMiddleware());
+v1.use('/pending-signals', primaryAuth, rateLimitMiddleware());
+v1.use('/pending-signals/*', primaryAuth, rateLimitMiddleware());
+v1.use('/webhook/*', primaryAuth, rateLimitMiddleware());
 
 v1.route('/log-outcome', logOutcomeRouter);
 v1.route('/outcome-feedback', outcomeFeedbackRouter);
@@ -417,12 +483,12 @@ v1.route('/recommendations', getRecommendationsRouter);
 v1.route('/get-patterns', getPatternsRouter);
 v1.route('/audit', auditRouter);
 v1.route('/simulate', simulateRouter);
+v1.route('/contracts', contractsRoute);
+v1.route('/discrepancies', discrepancyRoute);
+v1.route('/pending-signals', pendingSignalsRoute);
+v1.post('/webhook/:provider', webhookRoute);
 
 app.route('/v1', v1);
-app.route('/v1/contracts', contractsRoute);
-app.route('/v1/discrepancies', discrepancyRoute);
-app.route('/v1/pending-signals', pendingSignalsRoute);
-app.post('/v1/webhook/:provider', webhookRoute);
 
 // ── 404 fallback ──────────────────────────────────────────────
 app.notFound((c) => c.json(
