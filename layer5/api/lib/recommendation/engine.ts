@@ -1,5 +1,9 @@
 import { supabase } from '../supabase.js';
 
+export const MIN_SAMPLES = 10;
+export const MIN_SAMPLES_STABLE = 20;
+export const MIN_SAMPLES_HIGH_CONFIDENCE = 50;
+
 export type RecommendationState =
     | 'no_data'
     | 'early_signal'
@@ -30,6 +34,20 @@ export interface RecommendationResult {
     } | null;
     min_sample_count: number;
     all_actions: ActionPerformance[];
+    _qualification_context?: {
+        qualified_count: number;
+        unqualified_count: number;
+        leading_action: {
+            name: string;
+            total: number;
+            rate: number;
+        } | null;
+        actions_needing_more: Array<{
+            action_name: string;
+            current: number;
+            needed: number;
+        }>;
+    };
     agent_id: string | null;
     generated_at: string;
 }
@@ -45,7 +63,7 @@ function confidenceFromSamplesAndLift(
 ): number {
     // Use harmonic mean so confidence is penalized when one arm is under-sampled.
     const harmonicSamples = (2 * bestCount * worstCount) / (bestCount + worstCount);
-    const sampleWeight = Math.min(1, harmonicSamples / 50);
+    const sampleWeight = Math.min(1, harmonicSamples / MIN_SAMPLES_HIGH_CONFIDENCE);
     return Math.max(0, Number((sampleWeight * lift).toFixed(4)));
 }
 
@@ -123,7 +141,51 @@ export async function getRecommendation(
             return makeResult('no_data', actions);
         }
 
-        const sorted = [...actions].sort(
+        // QUALIFIED PAIR FIX: only compare actions with sufficient sample size.
+        // Prevents a 2-outcome action from silencing a 62-outcome clear winner.
+        const qualifiedActions = actions.filter((a) => a.total_count >= MIN_SAMPLES);
+
+        if (qualifiedActions.length < 2) {
+            const leader = [...actions].sort(
+                (a, b) => rankingScore(b) - rankingScore(a)
+            )[0] ?? null;
+
+            const unqualifiedCount = actions.length - qualifiedActions.length;
+            const needMore = actions
+                .filter((a) => a.total_count < MIN_SAMPLES)
+                .map((a) => ({
+                    action_name: a.action_name,
+                    current: a.total_count,
+                    needed: MIN_SAMPLES - a.total_count,
+                }));
+
+            return {
+                task: taskName,
+                state: 'no_data',
+                best_action: qualifiedActions[0] ?? null,
+                worst_action: null,
+                confidence: null,
+                improvement: null,
+                min_sample_count: leader?.total_count ?? 0,
+                all_actions: actions,
+                _qualification_context: {
+                    qualified_count: qualifiedActions.length,
+                    unqualified_count: unqualifiedCount,
+                    leading_action: leader
+                        ? {
+                            name: leader.action_name,
+                            total: leader.total_count,
+                            rate: leader.success_rate,
+                        }
+                        : null,
+                    actions_needing_more: needMore,
+                },
+                generated_at: generatedAt,
+                agent_id: agentId ?? null,
+            };
+        }
+
+        const sorted = [...qualifiedActions].sort(
             (a, b) => rankingScore(b) - rankingScore(a)
         );
         const best = sorted[0]!;
@@ -131,11 +193,11 @@ export async function getRecommendation(
 
         const minSamples = Math.min(best.total_count, worst.total_count);
 
-        if (minSamples < 10) {
+        if (minSamples < MIN_SAMPLES) {
             return makeResult('no_data', actions, best, worst);
         }
 
-        if (minSamples < 20) {
+        if (minSamples < MIN_SAMPLES_STABLE) {
             const rawConfidence = confidenceFromSamplesAndLift(
                 best.total_count,
                 worst.total_count,

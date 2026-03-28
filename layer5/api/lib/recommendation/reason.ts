@@ -2,6 +2,7 @@ import type {
     RecommendationResult,
     RecommendationState,
 } from './engine.js';
+import { MIN_SAMPLES } from './engine.js';
 
 function pct(rate: number): string {
     return `${(rate * 100).toFixed(1)}%`;
@@ -105,19 +106,48 @@ function templateClose(r: RecommendationResult): string {
     );
 }
 
-function templateNoData(taskName: string, totalOutcomes: number): string {
+function templateNoData(
+    taskName: string,
+    totalOutcomes: number,
+    ctx?: RecommendationResult['_qualification_context'],
+): string {
     if (totalOutcomes === 0) {
         return (
             `No outcome data found for task "${taskName}". ` +
-            `Ensure task_name is included when calling log_outcome, ` +
-            `or that issue_type maps correctly to this task.`
+            `Ensure task_name is included when calling log_outcome.`
         );
     }
+
+    // Has a qualified leader but needs a second qualified action
+    if (ctx && ctx.qualified_count === 1 && ctx.leading_action) {
+        const l = ctx.leading_action;
+        const needing = ctx.actions_needing_more
+            .map((a) => `${a.action_name} needs ${a.needed} more outcome${a.needed === 1 ? '' : 's'}`)
+            .join('; ');
+        return (
+            `"${l.name}" is the leading action for "${taskName}" ` +
+            `(${l.total} outcomes, ${(l.rate * 100).toFixed(1)}% success rate). ` +
+            `A second qualified action is needed to generate a recommendation. ` +
+            (needing ? `Progress: ${needing}.` : `Log more outcomes for other actions.`)
+        );
+    }
+
+    // Generic: multiple actions but none qualified
+    if (ctx && ctx.actions_needing_more.length > 0) {
+        const needing = ctx.actions_needing_more
+            .map((a) => `${a.action_name} (${a.current}/${MIN_SAMPLES})`)
+            .join(', ');
+        return (
+            `Collecting data for "${taskName}". ` +
+            `Actions need ${MIN_SAMPLES}+ outcomes each: ${needing}.`
+        );
+    }
+
     return (
         `Collecting data for "${taskName}" ` +
         `(${totalOutcomes} outcome${totalOutcomes === 1 ? '' : 's'} ` +
         `logged so far, ` +
-        `need 10+ per action across 2+ distinct actions).`
+        `need ${MIN_SAMPLES}+ per action across 2+ distinct actions).`
     );
 }
 
@@ -173,7 +203,7 @@ export function buildActionableOutput(
             ui_hint: 'wait',
             risk_context: 'Evidence is insufficient. Acting now may cause regressions without measurable upside.',
             expected_improvement: null,
-            reason: templateNoData(r.task, totalOutcomes),
+            reason: templateNoData(r.task, totalOutcomes, r._qualification_context),
             confidence: null,
             sample_size: null,
         };
