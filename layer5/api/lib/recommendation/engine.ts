@@ -9,7 +9,6 @@ export const TRUST_GATE_MIN_SCORE = 0.10;
 export type RecommendationState =
     | 'no_data'
     | 'early_signal'
-    | 'close'
     | 'stable';
 
 export interface ActionPerformance {
@@ -291,8 +290,14 @@ export async function getRecommendation(
 
         const absoluteDelta = best.success_rate - worst.success_rate;
         if (absoluteDelta < 0.08) {
+            const closeConfidence = confidenceFromSamplesAndLift(
+                best.total_count,
+                worst.total_count,
+                absoluteDelta,
+            );
             return {
-                ...makeResult('close', actions, best, worst),
+                ...makeResult('early_signal', actions, best, worst),
+                confidence: closeConfidence,
                 min_sample_count: minSamples,
                 _silent_failure_warning: false,
             };
@@ -303,8 +308,14 @@ export async function getRecommendation(
             : 1.0;
 
         if (relativeDelta < 0.15) {
+            const closeConfidence2 = confidenceFromSamplesAndLift(
+                best.total_count,
+                worst.total_count,
+                absoluteDelta,
+            );
             return {
-                ...makeResult('close', actions, best, worst),
+                ...makeResult('early_signal', actions, best, worst),
+                confidence: closeConfidence2,
                 min_sample_count: minSamples,
                 _silent_failure_warning: false,
             };

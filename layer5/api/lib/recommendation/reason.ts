@@ -2,7 +2,7 @@ import type {
     RecommendationResult,
     RecommendationState,
 } from './engine.js';
-import { MIN_SAMPLES } from './engine.js';
+import { MIN_SAMPLES, MIN_SAMPLES_HIGH_CONFIDENCE } from './engine.js';
 
 function pct(rate: number): string {
     return `${(rate * 100).toFixed(1)}%`;
@@ -12,15 +12,13 @@ function confPct(confidence: number): string {
     return `${Math.round(confidence * 100)}%`;
 }
 
-type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high';
-type UiHint = 'wait' | 'monitor' | 'act_now';
+type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
 type SuggestedAction = 'collect_more_data' | 'monitor' | 'replace';
 
 export interface ConfidenceMeta {
     value: number;
     percent: number;
     label: ConfidenceLabel;
-    ui_hint: UiHint;
 }
 
 function toConfidenceMeta(confidence: number | null): ConfidenceMeta {
@@ -29,7 +27,6 @@ function toConfidenceMeta(confidence: number | null): ConfidenceMeta {
             value: 0,
             percent: 0,
             label: 'none',
-            ui_hint: 'wait',
         };
     }
 
@@ -39,67 +36,27 @@ function toConfidenceMeta(confidence: number | null): ConfidenceMeta {
             value: rounded,
             percent: Math.round(rounded * 100),
             label: 'low',
-            ui_hint: 'monitor',
         };
     }
-    if (rounded < 0.6) {
+    if (rounded < 0.5) {
         return {
             value: rounded,
             percent: Math.round(rounded * 100),
             label: 'medium',
-            ui_hint: 'monitor',
+        };
+    }
+    if (rounded < 0.8) {
+        return {
+            value: rounded,
+            percent: Math.round(rounded * 100),
+            label: 'high',
         };
     }
     return {
         value: rounded,
         percent: Math.round(rounded * 100),
-        label: 'high',
-        ui_hint: 'act_now',
+        label: 'very_high',
     };
-}
-
-function templateStable(r: RecommendationResult): string {
-    const b = r.best_action!;
-    const w = r.worst_action!;
-    const delta = r.improvement!.absolute_delta;
-    const confidenceText = r.confidence !== null
-        ? confPct(r.confidence)
-        : 'unknown';
-    return (
-        `${w.action_name} succeeds ${pct(w.success_rate)} of the time ` +
-        `for "${r.task}" (${w.total_count} outcomes). ` +
-        `${b.action_name} succeeds ${pct(b.success_rate)} ` +
-        `(${b.total_count} outcomes). ` +
-        `Switching is expected to improve success by +${pct(delta)} ` +
-        `with ${confidenceText} confidence.`
-    );
-}
-
-function templateEarlySignal(r: RecommendationResult): string {
-    const b = r.best_action!;
-    const w = r.worst_action!;
-    const confidenceText = r.confidence !== null
-        ? confPct(r.confidence)
-        : 'unknown';
-    return (
-        `Early data (${b.total_count} outcomes) suggests ` +
-        `${b.action_name} outperforms ${w.action_name} ` +
-        `for "${r.task}" ` +
-        `(${pct(b.success_rate)} vs ${pct(w.success_rate)}). ` +
-        `Current confidence is ${confidenceText}; treat this as provisional and monitor before acting.`
-    );
-}
-
-function templateClose(r: RecommendationResult): string {
-    const b = r.best_action!;
-    const w = r.worst_action!;
-    return (
-        `${b.action_name} and ${w.action_name} perform similarly ` +
-        `for "${r.task}" ` +
-        `(${pct(b.success_rate)} vs ${pct(w.success_rate)}, ` +
-        `${b.total_count} and ${w.total_count} outcomes). ` +
-        `No strong recommendation yet - continue collecting data and monitor for a clearer separation.`
-    );
 }
 
 function templateNoData(
@@ -152,10 +109,6 @@ const STATE_META: Record<RecommendationState, { ui_label: string; explanation: s
         ui_label: 'Collecting Data',
         explanation: 'Not enough outcomes yet to compare actions.',
     },
-    close: {
-        ui_label: 'Too Close to Call',
-        explanation: 'Actions perform similarly - no clear winner yet.',
-    },
     early_signal: {
         ui_label: 'Early Signal',
         explanation: 'A difference exists but confidence is low. Monitor before acting.',
@@ -175,10 +128,8 @@ export interface ActionableOutput {
 
     // Decision block
     decision: {
+        type: SuggestedAction;
         action_required: boolean;
-        suggested_action: SuggestedAction;
-        level: ConfidenceLabel;
-        ui_hint: UiHint;
     };
 
     // Insight block
@@ -191,15 +142,25 @@ export interface ActionableOutput {
         sample_size: { best: number; worst: number } | null;
     };
 
+    progress: {
+        current_samples: number;
+        target_samples: number;
+        percent_complete: number;
+    };
+
     // Confidence block
     confidence: number;
+    confidence_label: ConfidenceLabel;
     confidence_meta: ConfidenceMeta;
 
     // Human text
     message: string;
-    reason: string;
+    reason: {
+        summary: string;
+        evidence: string;
+        confidence_note: string;
+    };
     problem: string | null;
-    recommendation: string | null;
     risk_context: string | null;
 
     // Improvement (stable only)
@@ -257,10 +218,6 @@ function buildMessage(
         return 'We are observing this task. No action recommended yet. ' +
             'Log more outcomes to unlock a recommendation.';
     }
-    if (state === 'close') {
-        return 'Both actions are performing too similarly to call a winner. ' +
-            'Continue running both and check back when more data is collected.';
-    }
     if (state === 'early_signal') {
         return `Early signal: ${best ?? 'best action'} appears ahead of ` +
             `${worst ?? 'current action'}, but confidence is too low to act. ` +
@@ -274,10 +231,74 @@ function buildMessage(
         `This recommendation has ${confidenceMeta.percent}% confidence.`;
 }
 
+function buildProgress(minSampleCount: number): ActionableOutput['progress'] {
+    const current = minSampleCount;
+    const target = MIN_SAMPLES_HIGH_CONFIDENCE;
+    const pctComplete = Math.min(100, Math.round((current / target) * 100));
+    return {
+        current_samples: current,
+        target_samples: target,
+        percent_complete: pctComplete,
+    };
+}
+
+function buildReason(
+    r: RecommendationResult,
+    confidenceMeta: ConfidenceMeta,
+): ActionableOutput['reason'] {
+    if (r.state === 'no_data') {
+        const trustBlocked = (r as any)._trust_gate_blocked === true;
+        const totalOutcomes = r.all_actions.reduce(
+            (sum, a) => sum + a.total_count,
+            0,
+        );
+        const reasonText = trustBlocked
+            ? `Agent suspended (trust_status: ${(r as any)._trust_status ?? 'suspended'})`
+            : templateNoData(r.task, totalOutcomes, r._qualification_context);
+        return {
+            summary: trustBlocked
+                ? 'Agent is suspended'
+                : `Collecting data for "${r.task}"`,
+            evidence: totalOutcomes > 0
+                ? `${totalOutcomes} total outcome${totalOutcomes === 1 ? '' : 's'} logged`
+                : 'No outcomes logged yet',
+            confidence_note: reasonText,
+        };
+    }
+
+    const b = r.best_action!;
+    const w = r.worst_action!;
+    const confText = `${confidenceMeta.percent}% confidence`;
+    const uncertainNote = confidenceMeta.label === 'low' || confidenceMeta.label === 'none'
+        ? ' — result may change with more data'
+        : confidenceMeta.label === 'very_high'
+            ? ' — high confidence, signal is stable'
+            : '';
+
+    if (r.state === 'early_signal') {
+        const delta = b.success_rate - w.success_rate;
+        return {
+            summary: delta < 0.08
+                ? `${b.action_name} and ${w.action_name} perform similarly`
+                : `${b.action_name} outperforms ${w.action_name}`,
+            evidence: `${pct(b.success_rate)} vs ${pct(w.success_rate)} (${b.total_count} and ${w.total_count} runs)`,
+            confidence_note: `${confText}${uncertainNote}`,
+        };
+    }
+
+    const imp = r.improvement!;
+    return {
+        summary: `${b.action_name} outperforms ${w.action_name}`,
+        evidence: `${pct(imp.improved_rate)} vs ${pct(imp.baseline_rate)} (+${pct(imp.absolute_delta)}, ${r.min_sample_count} runs each)`,
+        confidence_note: `${confText}${uncertainNote}`,
+    };
+}
+
 export function buildActionableOutput(
     r: RecommendationResult,
 ): ActionableOutput {
     const confidenceMeta = toConfidenceMeta(r.confidence);
+    const confidenceLabel = confidenceMeta.label;
     const stateMeta = STATE_META[r.state];
 
     const base = {
@@ -286,6 +307,7 @@ export function buildActionableOutput(
         ui_label: stateMeta.ui_label,
         explanation: stateMeta.explanation,
         confidence_meta: confidenceMeta,
+        progress: buildProgress(r.min_sample_count),
         generated_at: r.generated_at,
     };
 
@@ -298,61 +320,21 @@ export function buildActionableOutput(
         return {
             ...base,
             decision: {
+                type: 'collect_more_data',
                 action_required: false,
-                suggested_action: 'collect_more_data',
-                level: confidenceMeta.label,
-                ui_hint: confidenceMeta.ui_hint,
             },
             problem: null,
-            recommendation: trustBlocked
-                ? 'Agent is suspended. Restore trust before acting.'
-                : 'Do not change behavior yet. Continue collecting outcomes.',
             risk_context: trustBlocked
                 ? 'This agent has critically low trust. Acting on its history may cause regressions.'
                 : 'Evidence is insufficient. Acting now may cause regressions without measurable upside.',
             expected_improvement: null,
-            reason: trustBlocked
-                ? `Recommendations are suspended for this agent ` +
-                `(trust_status: ${(r as any)._trust_status ?? 'suspended'}). ` +
-                `Trust must be restored before recommendations resume.`
-                : templateNoData(r.task, totalOutcomes, r._qualification_context),
+            reason: buildReason(r, confidenceMeta),
             confidence: 0,
+            confidence_label: confidenceLabel,
             insight: buildInsight(r),
             message: buildMessage('no_data', false, confidenceMeta, null, null),
             validation_hint: null,
             sample_size: null,
-        };
-    }
-
-    if (r.state === 'close') {
-        return {
-            ...base,
-            decision: {
-                action_required: false,
-                suggested_action: 'monitor',
-                level: confidenceMeta.label,
-                ui_hint: confidenceMeta.ui_hint,
-            },
-            problem: null,
-            recommendation: 'Do not switch actions yet. Monitor both actions while collecting more data.',
-            risk_context: 'Observed performance is too close; switching now risks churn with little expected gain.',
-            expected_improvement: null,
-            reason: templateClose(r),
-            confidence: 0,
-            insight: buildInsight(r),
-            message: buildMessage(
-                'close',
-                false,
-                confidenceMeta,
-                r.best_action?.action_name ?? null,
-                r.worst_action?.action_name ?? null,
-            ),
-            validation_hint: null,
-            sample_size: {
-                best: r.best_action!.total_count,
-                worst: r.worst_action!.total_count,
-                min: r.min_sample_count,
-            },
         };
     }
 
@@ -362,25 +344,21 @@ export function buildActionableOutput(
         return {
             ...base,
             decision: {
+                type: 'monitor',
                 action_required: false,
-                suggested_action: 'monitor',
-                level: confidenceMeta.label,
-                ui_hint: confidenceMeta.ui_hint,
             },
             problem: (
                 `${w.action_name} is underperforming ` +
                 `(${pct(w.success_rate)} success rate, ` +
                 `${w.total_count} outcomes - early data)`
             ),
-            recommendation: (
-                `Monitor ${b.action_name} vs ${w.action_name} before a full replacement.`
-            ),
             risk_context: (r as any)._silent_failure_warning
                 ? 'Silent failures detected in the last 24h: some outcomes marked success=true had low outcome scores. Signal direction is promising but uncertainty remains high.'
                 : 'Signal direction is promising but uncertainty remains high; immediate full replacement may be premature.',
             expected_improvement: null,
-            reason: templateEarlySignal(r),
+            reason: buildReason(r, confidenceMeta),
             confidence: r.confidence ?? 0,
+            confidence_label: confidenceLabel,
             insight: buildInsight(r),
             message: buildMessage(
                 'early_signal',
@@ -401,24 +379,21 @@ export function buildActionableOutput(
     const b = r.best_action!;
     const w = r.worst_action!;
     const imp = r.improvement!;
-    const shouldAct = confidenceMeta.ui_hint === 'act_now';
+    const shouldAct =
+        confidenceMeta.label === 'high' ||
+        confidenceMeta.label === 'very_high';
 
     return {
         ...base,
         decision: {
+            type: shouldAct ? 'replace' : 'monitor',
             action_required: shouldAct,
-            suggested_action: shouldAct ? 'replace' : 'monitor',
-            level: confidenceMeta.label,
-            ui_hint: confidenceMeta.ui_hint,
         },
         problem: (
             `${w.action_name} is underperforming ` +
             `(${pct(imp.baseline_rate)} success rate, ` +
             `${w.total_count} outcomes)`
         ),
-        recommendation: shouldAct
-            ? `Replace ${w.action_name} with ${b.action_name}`
-            : `Pilot ${b.action_name} while monitoring before a full replacement of ${w.action_name}`,
         risk_context: (r as any)._silent_failure_warning
             ? (shouldAct
                 ? 'Silent failures detected in the last 24h. Verify outcome_score quality before fully committing to this switch.'
@@ -436,8 +411,9 @@ export function buildActionableOutput(
                 ? `Based on ${r.min_sample_count} outcomes per action. Result may shift with more data.`
                 : null,
         },
-        reason: templateStable(r),
+        reason: buildReason(r, confidenceMeta),
         confidence: r.confidence ?? 0,
+        confidence_label: confidenceLabel,
         insight: buildInsight(r),
         message: buildMessage(
             'stable',
