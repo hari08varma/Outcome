@@ -225,18 +225,18 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
 
     const borderAccent =
         state === 'stable' ? 'border-[#b8ff00]/40' :
-        state === 'early_signal' ? 'border-yellow-500/40' :
-        'border-[#1a1a24]';
+            state === 'early_signal' ? 'border-yellow-500/40' :
+                'border-[#1a1a24]';
 
     const recommendationTone =
         data.decision.type === 'replace' ? 'text-[#b8ff00]' :
-        data.decision.type === 'monitor' ? 'text-yellow-400' :
-        'text-[#a1a1aa]';
+            data.decision.type === 'monitor' ? 'text-yellow-400' :
+                'text-[#a1a1aa]';
 
     const recommendationTitle =
         data.decision.type === 'replace' ? 'Recommended Action' :
-        data.decision.type === 'monitor' ? 'Recommended Action (Monitor)' :
-        'Recommended Action (Wait)';
+            data.decision.type === 'monitor' ? 'Recommended Action (Monitor)' :
+                'Recommended Action (Wait)';
 
     return (
         <div className="space-y-6">
@@ -251,11 +251,10 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     {/* Issue 8: Descriptive scope label */}
                     <span
                         title={data.scope_label}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-help ${
-                            data.agent_scope === 'agent_scoped'
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-help ${data.agent_scope === 'agent_scoped'
                                 ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
                                 : 'bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'
-                        }`}
+                            }`}
                     >
                         {data.agent_scope === 'agent_scoped' ? '⬡ Agent data only' : '⬡ All agents blended'}
                     </span>
@@ -525,8 +524,8 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
 export default function RecommendationsPage(): React.ReactElement {
     const { apiKey, isValid, error: keyError, handleAuthFailure } = useAgentApiKey();
 
-    const [taskInput, setTaskInput] = useState('payment_failed');
-    const [activeTask, setActiveTask] = useState('payment_failed');
+    const [taskInput, setTaskInput] = useState('');
+    const [activeTask, setActiveTask] = useState('');
     const [data, setData] = useState<RecommendationResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -592,6 +591,34 @@ export default function RecommendationsPage(): React.ReactElement {
         return () => controller.abort();
     }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
 
+    // -- Agent scope reset -------------------------------------------------
+    // Fires every time the user switches to a different agent or
+    // clicks "All Agents". Clears the task input, active task,
+    // current result, and any error so the new agent starts clean.
+    // The auto-select effect below then picks the first available
+    // task once agentTasks finishes loading.
+    useEffect(() => {
+        setTaskInput('');
+        setActiveTask('');
+        setData(null);
+        setError(null);
+    }, [selectedAgentId]);
+
+    // -- Auto-select first task after agent switch ------------------------
+    // Runs whenever agentTasks changes (i.e., after agent switch
+    // completes and the new task list has loaded).
+    // Only fires when activeTask is '' — meaning we just switched
+    // agents and the reset cleared it. Skips if user is actively
+    // typing (activeTask already non-empty from manual input).
+    useEffect(() => {
+        if (agentTasksLoading) return;
+        if (activeTask !== '') return;
+        if (agentTasks.length === 0) return;
+        const first = agentTasks[0]!;
+        setTaskInput(first);
+        setActiveTask(first);
+    }, [agentTasks, agentTasksLoading, activeTask]);
+
     const fetchRecommendation = useCallback(
         async (task: string, showLoading = true): Promise<void> => {
             if (!isValid || !apiKey || !API_BASE) return;
@@ -627,6 +654,15 @@ export default function RecommendationsPage(): React.ReactElement {
 
     useEffect(() => {
         if (!isValid) return;
+        // Guard: activeTask is '' right after an agent switch (cleared
+        // by the agent-reset effect). Do not fetch — wait for the
+        // auto-select effect to populate activeTask with a valid task.
+        if (!activeTask.trim()) {
+            setData(null);
+            setError(null);
+            fetchRef.current = null;
+            return;
+        }
         // Clear stale result immediately so user never sees another agent's data while loading
         setData(null);
         setError(null);
