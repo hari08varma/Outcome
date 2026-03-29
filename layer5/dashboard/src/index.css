@@ -1,9 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color-scheme: dark;
+}
+
+/* Landing page animations */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.glass-card {
+  background: rgba(17, 17, 17, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.text-glow {
+  text-shadow: 0 0 10px rgba(0, 255, 133, 0.3);
+}
+
+.landing-page {
+  font-family: 'Inter', sans-serif;
+}
+
+.landing-page .font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.landing-page ::selection {
+  background: #00FF85;
+  color: #000000;
 }
 
 html,
