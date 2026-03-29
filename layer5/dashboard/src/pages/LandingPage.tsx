@@ -159,6 +159,83 @@ function CodeBlock({ lines }: { lines: { color: string; text: string }[] }): Rea
   );
 }
 
+// ── Pricing tier data ──
+const PRICING_TIERS = [
+  {
+    label: 'Free',
+    price: '$0',
+    per: '/month',
+    sub: 'No credit card required',
+    highlight: false,
+    badge: null,
+    features: [
+      '1 agent',
+      '5,000 outcomes / month',
+      'Action scoring — see what worked',
+      '1 task type recommendation',
+      'Community support',
+    ],
+    cta: 'Get Started Free',
+    ctaType: 'signup' as const,
+  },
+  {
+    label: 'Pro',
+    price: '$79',
+    per: '/month',
+    sub: 'Individual devs & small startups',
+    highlight: true,
+    badge: 'MOST POPULAR',
+    features: [
+      'Up to 5 agents',
+      '50,000 outcomes / month',
+      'Full recommendation engine — all task types',
+      'Safety gate (≥20 samples, ≥0.75 confidence)',
+      'Reason engine — plain language per recommendation',
+      'Compliance export CSV / JSON',
+      'Email support',
+    ],
+    cta: 'Start Pro',
+    ctaType: 'signup' as const,
+  },
+  {
+    label: 'Growth',
+    price: '$249',
+    per: '/month',
+    sub: 'Production teams at scale',
+    highlight: false,
+    badge: null,
+    features: [
+      'Unlimited agents',
+      '500,000 outcomes / month',
+      'Everything in Pro',
+      'Recommendations API (GET /v1/recommendations)',
+      '3 team dashboard seats',
+      'Slack / Email degradation alerts',
+      'Priority support',
+    ],
+    cta: 'Start Growth',
+    ctaType: 'signup' as const,
+  },
+  {
+    label: 'Enterprise',
+    price: 'Custom',
+    per: '',
+    sub: 'From $1,500 / month',
+    highlight: false,
+    badge: null,
+    features: [
+      'Unlimited everything',
+      'Private deploy option',
+      'SOC2 / HIPAA on request',
+      'Custom retention policies',
+      'SLA guarantee',
+      'Dedicated onboarding',
+    ],
+    cta: 'Contact Us',
+    ctaType: 'email' as const,
+  },
+];
+
 export default function LandingPage(): React.ReactElement {
   const navigate = useNavigate();
 
@@ -498,51 +575,100 @@ export default function LandingPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Pricing */}
+        {/* Pricing — 4 tiers */}
         <section className="py-24 bg-black" id="pricing">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Pricing</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Free while we&apos;re in beta.</h2>
-            <p className="text-[#888888] mb-16 max-w-xl">Shape the product from day one. Founding teams get permanent discounts and direct access to the roadmap.</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Simple, honest pricing.</h2>
+            <p className="text-[#888888] mb-16 max-w-xl">
+              Start free. Hit the limit in two weeks if you&apos;re serious. Upgrade when you need it.
+            </p>
 
-              <div className="border border-[#1a1a24] p-8 bg-[#07070f]">
-                <div className="text-[10px] font-mono text-[#888888] mb-4 uppercase tracking-widest">Free / Beta</div>
-                <div className="text-4xl font-bold mb-1">$0</div>
-                <div className="text-[#888888] text-sm mb-8">During beta &middot; No credit card</div>
-                <ul className="space-y-3 text-sm text-[#888888] mb-8">
-                  {['Up to 3 agents', '10,000 outcomes / month', 'Full SDK access', 'Dashboard and recommendations', 'Community support'].map(f => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">✓</span>{f}</li>
-                  ))}
-                </ul>
-                <button onClick={() => navigate('/auth?mode=signup')} className="w-full bg-[#00FF85] text-black py-3 text-sm font-bold hover:bg-white transition-all">Get Started Free</button>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              {PRICING_TIERS.map((tier) => (
+                <div
+                  key={tier.label}
+                  className={[
+                    'relative flex flex-col p-8',
+                    tier.highlight
+                      ? 'border border-[#00FF85]/50 bg-[#00FF85]/5'
+                      : 'border border-[#1a1a24] bg-[#07070f]',
+                  ].join(' ')}
+                >
+                  {/* Badge */}
+                  {tier.badge && (
+                    <div className="absolute -top-3 left-6 bg-[#00FF85] text-black text-[10px] font-bold px-3 py-1 tracking-widest">
+                      {tier.badge}
+                    </div>
+                  )}
+
+                  {/* Tier name */}
+                  <div className={[
+                    'text-[10px] font-mono font-bold uppercase tracking-widest mb-4',
+                    tier.highlight ? 'text-[#00FF85]' : 'text-[#888888]',
+                  ].join(' ')}>
+                    {tier.label}
+                  </div>
+
+                  {/* Price */}
+                  <div className="mb-1">
+                    <span className="text-4xl font-bold tracking-tight">{tier.price}</span>
+                    {tier.per && <span className="text-lg text-[#888888]">{tier.per}</span>}
+                  </div>
+                  <div className="text-[#555555] text-xs font-mono mb-8">{tier.sub}</div>
+
+                  {/* Features */}
+                  <ul className="space-y-3 text-sm text-[#888888] mb-10 flex-1">
+                    {tier.features.map((f) => (
+                      <li key={f} className="flex items-start gap-2">
+                        <span className="text-[#00FF85] mt-0.5 flex-shrink-0">✓</span>
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* CTA */}
+                  {tier.ctaType === 'email' ? (
+                    <a
+                      href="mailto:team@layerinfinite.app"
+                      className="block text-center border border-[#1a1a24] text-[#888888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
+                    >
+                      {tier.cta}
+                    </a>
+                  ) : tier.highlight ? (
+                    <button
+                      onClick={() => navigate('/auth?mode=signup')}
+                      className="w-full bg-[#00FF85] text-black py-3 text-sm font-bold hover:bg-white transition-all"
+                    >
+                      {tier.cta}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => navigate('/auth?mode=signup')}
+                      className="w-full border border-[#1a1a24] text-[#888888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
+                    >
+                      {tier.cta}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Growth callout — API access note */}
+            <div className="mt-8 border border-[#1a1a24] bg-[#07070f] p-5 rounded-lg flex flex-col md:flex-row items-start md:items-center gap-4">
+              <div className="flex-1">
+                <span className="text-[10px] font-mono text-[#00FF85] uppercase tracking-widest">Growth &amp; Enterprise</span>
+                <p className="text-sm text-[#888888] mt-1">
+                  The <span className="text-white font-mono">GET /v1/recommendations</span> API is only available on Growth and above.
+                  Pipe recommendations directly into your own systems — no dashboard required.
+                </p>
               </div>
-
-              <div className="border border-[#00FF85]/40 p-8 bg-[#00FF85]/5 relative">
-                <div className="absolute -top-3 left-8 bg-[#00FF85] text-black text-[10px] font-bold px-3 py-1">MOST POPULAR</div>
-                <div className="text-[10px] font-mono text-[#00FF85] mb-4 uppercase tracking-widest">Pro &middot; Coming Soon</div>
-                <div className="text-4xl font-bold mb-1">$49<span className="text-lg text-[#888888]">/mo</span></div>
-                <div className="text-[#888888] text-sm mb-8">Founding team rate locked in</div>
-                <ul className="space-y-3 text-sm text-[#888888] mb-8">
-                  {['Unlimited agents', '500,000 outcomes / month', 'Priority scoring engine', 'Degradation alerts (Slack/Email)', 'Compliance export (CSV/JSON)', 'Priority support'].map(f => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">✓</span>{f}</li>
-                  ))}
-                </ul>
-                <button onClick={() => navigate('/auth?mode=signup')} className="w-full border border-[#00FF85] text-[#00FF85] py-3 text-sm font-bold hover:bg-[#00FF85] hover:text-black transition-all">Join Waitlist</button>
-              </div>
-
-              <div className="border border-[#1a1a24] p-8 bg-[#07070f]">
-                <div className="text-[10px] font-mono text-[#888888] mb-4 uppercase tracking-widest">Enterprise</div>
-                <div className="text-4xl font-bold mb-1">Custom</div>
-                <div className="text-[#888888] text-sm mb-8">Volume &middot; SLA &middot; Private deploy</div>
-                <ul className="space-y-3 text-sm text-[#888888] mb-8">
-                  {['Unlimited everything', 'Dedicated infra option', 'Custom retention policies', 'SOC2 / HIPAA on request', 'SLA guarantee', 'Dedicated onboarding'].map(f => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">✓</span>{f}</li>
-                  ))}
-                </ul>
-                <a href="mailto:team@layerinfinite.app" className="block w-full text-center border border-[#1a1a24] text-[#888888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all">Contact Us</a>
-              </div>
-
+              <button
+                onClick={() => navigate('/auth?mode=signup')}
+                className="flex-shrink-0 border border-[#00FF85]/30 text-[#00FF85] px-5 py-2 text-sm font-bold hover:bg-[#00FF85]/10 transition-all whitespace-nowrap"
+              >
+                Start Growth &rarr;
+              </button>
             </div>
           </div>
         </section>
