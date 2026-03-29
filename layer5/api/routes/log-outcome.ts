@@ -564,7 +564,6 @@ async function checkRecommendationRegression(
             task_name: taskName,
             recent_rate: recentRate,
             baseline_rate: baselineRate,
-            final_success: finalSuccess,
         });
     } catch (err: any) {
         // Never propagate - regression check must NEVER affect outcome logging
