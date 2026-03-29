@@ -237,7 +237,7 @@ export async function computeCompositeScore(row: ActionScore, contextMatch: numb
 
     const ipsSignal = await fetchIPSSignal(row.action_id, row.customer_id);
     if (ipsSignal === null) {
-        return baseScore * f_context;
+        return Math.max(0, Math.min(1, baseScore * f_context));
     }
 
     // Clamp IPS signal to [0, 1] before blending.

@@ -241,11 +241,12 @@ export async function getRecommendation(
             )
             .eq('customer_id', customerId)
             .eq('task_name', taskName)
-            // ISSUE 10: Exclude staging/development from production recommendations.
-            // environment col on mv_task_action_performance mirrors fact_outcomes.environment.
-            // NOTE: If this column does not exist on the MV yet, comment this line out
-            // and add it in a migration: add environment to the MV SELECT + GROUP BY.
-            .eq('environment', 'production')
+            // ISSUE 10: environment filter is disabled until a DB migration adds
+            // the 'environment' column to mv_task_action_performance's SELECT + GROUP BY.
+            // mv_task_action_performance currently aggregates ALL environments together
+            // and has no environment column — filtering on it returns zero rows.
+            // Re-enable this ONLY after the migration is confirmed in Supabase.
+            // .eq('environment', 'production')
             // ISSUE 12: 180-day rolling window.
             .gte('last_seen_at', windowStart);
 
