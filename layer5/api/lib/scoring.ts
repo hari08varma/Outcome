@@ -202,8 +202,15 @@ export async function computeCompositeScore(row: ActionScore, contextMatch: numb
     const rawTrend = row.trend_delta ?? 0;
     const f_trend = Math.max(0, Math.min(1, (rawTrend + 0.5)));
 
-    // Factor 4: Salience — currently 1.0 per row (Phase 5 extensibility)
-    const f_salience = 1.0;
+    // Factor 4: Salience — use actual salience_score from fact_outcomes
+    // if available on the row. Defaults to 1.0 (neutral) if not present.
+    // mv_action_scores exposes avg_salience_score computed from fact_outcomes.
+    // If the column is null (old rows), fall back to 1.0 so behaviour is
+    // unchanged for existing data.
+    const rawSalience = (row as any).avg_salience_score;
+    const f_salience = (rawSalience !== null && rawSalience !== undefined)
+        ? Math.max(0, Math.min(1, Number(rawSalience)))
+        : 1.0;
 
     // Factor 5: Recency — bonus if last outcome < 24h ago
     let f_recency = 0.5;  // neutral default
@@ -225,7 +232,7 @@ export async function computeCompositeScore(row: ActionScore, contextMatch: numb
 
     const sampleCount = row.total_attempts ?? 0;
     if (sampleCount >= 20) {
-        return baseScore * f_context;
+        return Math.max(0, Math.min(1, baseScore * f_context));
     }
 
     const ipsSignal = await fetchIPSSignal(row.action_id, row.customer_id);
@@ -233,10 +240,17 @@ export async function computeCompositeScore(row: ActionScore, contextMatch: numb
         return baseScore * f_context;
     }
 
-    const blendWeight = Math.min(0.10, ((20 - sampleCount) / 20) * 0.10);
-    const blended = baseScore * (1 - blendWeight) + ipsSignal * blendWeight;
+    // Clamp IPS signal to [0, 1] before blending.
+    // avgEstimate * avgWeight from counterfactuals is not guaranteed
+    // to be bounded. Without clamping, composite_score can exceed 1.0
+    // which breaks the policy engine's threshold checks.
+    const clampedIps = Math.max(0, Math.min(1, ipsSignal));
 
-    return blended * f_context;  // scale by context similarity
+    const blendWeight = Math.min(0.10, ((20 - sampleCount) / 20) * 0.10);
+    const blended = baseScore * (1 - blendWeight) + clampedIps * blendWeight;
+
+    // Final clamp: composite_score must ALWAYS be in [0, 1]
+    return Math.max(0, Math.min(1, blended * f_context));
 }
 
 function toRecommendation(score: number, isEscalate: boolean): ScoredAction['recommendation'] {

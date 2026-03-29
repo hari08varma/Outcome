@@ -57,10 +57,19 @@ export interface RecommendationResult {
 }
 
 function rankingScore(a: ActionPerformance): number {
+    // Prefer the ML composite score from mv_action_scores —
+    // it already applies Bayesian smoothing and multi-factor weighting.
     if (a.ml_score !== null && a.ml_score !== undefined) {
-        return a.ml_score;   // ML composite score from mv_action_scores
+        return a.ml_score;
     }
-    return a.success_rate;   // cold-start fallback
+
+    // Fallback: apply Laplace (add-1) smoothing to raw success rate.
+    // Prevents low-sample actions from dominating on perfect-but-tiny scores.
+    // Formula: (successes + 1) / (total + 2)
+    // = (rate * n + 1) / (n + 2)
+    const n = a.total_count;
+    const smoothed = (a.success_rate * n + 1) / (n + 2);
+    return smoothed;
 }
 
 function confidenceFromSamplesAndLift(
@@ -68,10 +77,27 @@ function confidenceFromSamplesAndLift(
     worstCount: number,
     lift: number,
 ): number {
-    // Use harmonic mean so confidence is penalized when one arm is under-sampled.
-    const harmonicSamples = (2 * bestCount * worstCount) / (bestCount + worstCount);
-    const sampleWeight = Math.min(1, harmonicSamples / MIN_SAMPLES_HIGH_CONFIDENCE);
-    return Math.max(0, Number((sampleWeight * lift).toFixed(4)));
+    // Harmonic mean penalizes when one arm is under-sampled
+    const harmonicSamples =
+        (2 * bestCount * worstCount) / (bestCount + worstCount);
+
+    // sampleWeight: how much data do we have? [0, 1]
+    const sampleWeight = Math.min(
+        1,
+        harmonicSamples / MIN_SAMPLES_HIGH_CONFIDENCE
+    );
+
+    // liftSignal: how decisive is the gap?
+    // Normalized so a 0.30+ delta = full signal (1.0).
+    // This is separate from sampleWeight — large delta with few
+    // samples should NOT produce high confidence.
+    const liftSignal = Math.min(1, Math.max(0, lift / 0.30));
+
+    // Combined: both dimensions must be high for high confidence.
+    // Using geometric mean so neither factor dominates alone.
+    const combined = Math.sqrt(sampleWeight * liftSignal);
+
+    return Math.max(0, Number(combined.toFixed(4)));
 }
 
 async function getAgentTrustStatus(
@@ -96,13 +122,32 @@ async function hasSilentFailureAlert(
     customerId: string,
     taskName: string,
 ): Promise<boolean> {
+    // FIXED: scope alert lookup to the actions involved in this
+    // specific task. First find action_ids for this task+customer,
+    // then check if any of those actions have a degradation alert.
+    // This prevents cross-task alert bleed (BUG 2).
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    // Step 1: Get action_ids for this task scoped to this customer
+    const { data: taskRows, error: taskErr } = await supabase
+        .from('mv_task_action_performance')
+        .select('action_id')
+        .eq('customer_id', customerId)
+        .eq('task_name', taskName);
+
+    if (taskErr || !taskRows || taskRows.length === 0) return false;
+
+    const actionIds = taskRows.map((r: any) => r.action_id as string);
+
+    // Step 2: Check degradation alerts for those specific actions
     const { count, error } = await supabase
         .from('degradation_alert_events')
         .select('alert_id', { count: 'exact', head: true })
         .eq('customer_id', customerId)
-        .eq('alert_type', 'degradation')
+        .in('agent_id', actionIds)
+        .in('alert_type', ['degradation', 'success_hallucination'])
         .gte('detected_at', since);
+
     if (error) return false;
     return (count ?? 0) > 0;
 }
@@ -295,10 +340,14 @@ export async function getRecommendation(
 
         const absoluteDelta = best.success_rate - worst.success_rate;
         if (absoluteDelta < 0.08) {
+            // Near-equal actions: confidence represents "how sure are we
+            // that they're truly similar?" — based on sample size only.
+            // We use a fixed lift of 0.08 (the threshold itself) as the
+            // signal floor, so confidence is driven by sample adequacy.
             const closeConfidence = confidenceFromSamplesAndLift(
                 best.total_count,
                 worst.total_count,
-                absoluteDelta,
+                0.08,   // ← use threshold as floor lift, not the tiny actual delta
             );
             return {
                 ...makeResult('early_signal', actions, best, worst),
@@ -316,7 +365,7 @@ export async function getRecommendation(
             const closeConfidence2 = confidenceFromSamplesAndLift(
                 best.total_count,
                 worst.total_count,
-                absoluteDelta,
+                Math.max(absoluteDelta, 0.08),  // ← floor at 0.08, not raw tiny delta
             );
             return {
                 ...makeResult('early_signal', actions, best, worst),
