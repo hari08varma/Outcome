@@ -5,6 +5,7 @@ export const MIN_SAMPLES_STABLE = 20;
 export const MIN_SAMPLES_HIGH_CONFIDENCE = 50;
 export const TRUST_GATE_STATUSES: string[] = ['suspended'];
 export const TRUST_GATE_MIN_SCORE = 0.10;
+export const RECOMMENDATION_WINDOW_DAYS = 180;
 
 export type RecommendationState =
     | 'no_data'
@@ -54,6 +55,8 @@ export interface RecommendationResult {
     _silent_failure_warning?: boolean;
     agent_id: string | null;
     generated_at: string;
+    registered_actions: string[];
+    action_mismatch: boolean;
 }
 
 function rankingScore(a: ActionPerformance): number {
@@ -98,6 +101,16 @@ function confidenceFromSamplesAndLift(
     const combined = Math.sqrt(sampleWeight * liftSignal);
 
     return Math.max(0, Number(combined.toFixed(4)));
+}
+
+async function getRegisteredActions(customerId: string): Promise<string[]> {
+    const { data, error } = await supabase
+        .from('dim_actions')
+        .select('action_name')
+        .eq('customer_id', customerId)
+        .eq('is_active', true);
+    if (error || !data) return [];
+    return data.map((r: any) => String(r.action_name));
 }
 
 async function getAgentTrustStatus(
@@ -158,6 +171,7 @@ export async function getRecommendation(
     agentId?: string | null,
 ): Promise<RecommendationResult> {
     const generatedAt = new Date().toISOString();
+    const registeredActions = await getRegisteredActions(customerId);
 
     // Suspended / critically low-trust agents must not emit recommendations.
     if (agentId) {
@@ -181,6 +195,8 @@ export async function getRecommendation(
                     generated_at: generatedAt,
                     _trust_gate_blocked: true,
                     _trust_status: trustState.trust_status,
+                    registered_actions: registeredActions,
+                    action_mismatch: false,
                 } as any;
             }
         }
@@ -205,11 +221,18 @@ export async function getRecommendation(
             all_actions: actions,
             agent_id: agentId ?? null,
             generated_at: generatedAt,
+            registered_actions: registeredActions,
+            action_mismatch: false,
         };
     }
 
     try {
-        // Build query — scope to agent when provided, else customer-wide
+        // ISSUE 12: Only outcomes from last 180 days. Prevents stale history
+        // dominating current signal without blanking new customer data.
+        const windowStart = new Date(
+            Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000
+        ).toISOString();
+
         let query = supabase
             .from('mv_task_action_performance')
             .select(
@@ -217,7 +240,14 @@ export async function getRecommendation(
                 'success_rate, ml_score, last_seen_at'
             )
             .eq('customer_id', customerId)
-            .eq('task_name', taskName);
+            .eq('task_name', taskName)
+            // ISSUE 10: Exclude staging/development from production recommendations.
+            // environment col on mv_task_action_performance mirrors fact_outcomes.environment.
+            // NOTE: If this column does not exist on the MV yet, comment this line out
+            // and add it in a migration: add environment to the MV SELECT + GROUP BY.
+            .eq('environment', 'production')
+            // ISSUE 12: 180-day rolling window.
+            .gte('last_seen_at', windowStart);
 
         if (agentId) {
             // Agent-scoped: only show outcomes for this specific agent
@@ -302,6 +332,8 @@ export async function getRecommendation(
                 _silent_failure_warning: false,
                 generated_at: generatedAt,
                 agent_id: agentId ?? null,
+                registered_actions: registeredActions,
+                action_mismatch: false,
             };
         }
 
@@ -321,6 +353,8 @@ export async function getRecommendation(
             return {
                 ...makeResult('no_data', actions, best, worst),
                 _silent_failure_warning: false,
+                registered_actions: registeredActions,
+                action_mismatch: false,
             };
         }
 
@@ -335,6 +369,10 @@ export async function getRecommendation(
                 confidence: rawConfidence,
                 min_sample_count: minSamples,
                 _silent_failure_warning: silentFailureActive,
+                registered_actions: registeredActions,
+                action_mismatch: best !== null
+                    && registeredActions.length > 0
+                    && !registeredActions.includes(best.action_name),
             };
         }
 
@@ -354,6 +392,10 @@ export async function getRecommendation(
                 confidence: closeConfidence,
                 min_sample_count: minSamples,
                 _silent_failure_warning: false,
+                registered_actions: registeredActions,
+                action_mismatch: best !== null
+                    && registeredActions.length > 0
+                    && !registeredActions.includes(best.action_name),
             };
         }
 
@@ -372,6 +414,10 @@ export async function getRecommendation(
                 confidence: closeConfidence2,
                 min_sample_count: minSamples,
                 _silent_failure_warning: false,
+                registered_actions: registeredActions,
+                action_mismatch: best !== null
+                    && registeredActions.length > 0
+                    && !registeredActions.includes(best.action_name),
             };
         }
 
@@ -388,6 +434,10 @@ export async function getRecommendation(
                 confidence: rawConfidence,
                 min_sample_count: minSamples,
                 _silent_failure_warning: silentFailureActive,
+                registered_actions: registeredActions,
+                action_mismatch: best !== null
+                    && registeredActions.length > 0
+                    && !registeredActions.includes(best.action_name),
             };
         }
 
@@ -408,6 +458,9 @@ export async function getRecommendation(
             _silent_failure_warning: silentFailureActive,
             agent_id: agentId ?? null,
             generated_at: generatedAt,
+            registered_actions: registeredActions,
+            action_mismatch: registeredActions.length > 0
+                && !registeredActions.includes(best.action_name),
         };
     } catch (err: any) {
         console.error('[engine] unexpected error:', err.message);

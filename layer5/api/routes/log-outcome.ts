@@ -502,6 +502,76 @@ async function computePolicyRecommendation(
     }
 }
 
+// ISSUE 9: Detect post-recommendation regression.
+// If a developer followed a recommendation (switched to a new action) and
+// performance got WORSE, surface a warning alert in degradation_alert_events.
+// Fire-and-forget - never throws, never blocks outcome logging.
+async function checkRecommendationRegression(
+    customerId: string,
+    agentId: string,
+    actionId: string,
+    actionName: string,
+    taskName: string | null,
+    finalSuccess: boolean,
+): Promise<void> {
+    if (!taskName) return;
+    try {
+        const { data: recentOutcomes, error } = await supabase
+            .from('fact_outcomes')
+            .select('success, timestamp')
+            .eq('customer_id', customerId)
+            .eq('action_id', actionId)
+            .eq('task_name', taskName)
+            .eq('environment', 'production')
+            .order('timestamp', { ascending: false })
+            .limit(20);
+
+        if (error || !recentOutcomes || recentOutcomes.length < 10) return;
+
+        // Recent 10 outcomes success rate
+        const recent10 = recentOutcomes.slice(0, 10);
+        const recentRate = recent10.filter((o: any) => o.success).length / 10;
+
+        // Baseline: full 20-outcome rolling window
+        const baselineRate = recentOutcomes.filter((o: any) => o.success).length
+            / recentOutcomes.length;
+
+        // Regression threshold: recent 10 are 15%+ worse than 20-outcome baseline
+        const isRegression =
+            baselineRate > 0.1 &&
+            (baselineRate - recentRate) > 0.15;
+
+        if (!isRegression) return;
+
+        await supabase.from('degradation_alert_events').insert({
+            customer_id: customerId,
+            agent_id: agentId,
+            alert_type: 'recommendation_regression',
+            severity: 'warning',
+            message:
+                `Post-recommendation regression detected for action "${actionName}" ` +
+                `on task "${taskName}". ` +
+                `Recent 10-outcome rate: ${(recentRate * 100).toFixed(1)}% vs ` +
+                `baseline ${(baselineRate * 100).toFixed(1)}%. ` +
+                `This recommendation may not have improved performance. ` +
+                `Review in Dashboard -> Discrepancies.`,
+        });
+
+        console.warn('[log-outcome] recommendation_regression', {
+            customer_id: customerId,
+            agent_id: agentId,
+            action_name: actionName,
+            task_name: taskName,
+            recent_rate: recentRate,
+            baseline_rate: baselineRate,
+            final_success: finalSuccess,
+        });
+    } catch (err: any) {
+        // Never propagate - regression check must NEVER affect outcome logging
+        console.warn('[log-outcome] regression check threw (suppressed):', err.message);
+    }
+}
+
 // ── MAIN ORCHESTRATOR ──
 logOutcomeRouter.post('/', async (c) => {
     const agentId = c.get('agent_id') as string;
@@ -575,6 +645,17 @@ logOutcomeRouter.post('/', async (c) => {
             signalConfidence: body.causal_confidence ?? null,
         }).catch(err => console.error('[log-outcome] orchestrator failed:', { error: err.message, outcomeId: outcome.outcome_id }));
 
+        checkRecommendationRegression(
+            customerId,
+            agentId,
+            actionId,
+            body.action_name ?? 'unknown',
+            (body as any)._resolved_task_name ?? null,
+            finalSuccess,
+        ).catch(() => {
+            // Silent - regression check must never affect outcome logging
+        });
+
         // ── Refresh task aggregation (debounced in the store) ─────
         // Fires async — never blocks the response.
         // mv_task_action_performance stays fresh within ~30s of each write.
@@ -612,6 +693,22 @@ logOutcomeRouter.post('/', async (c) => {
             sequence_position: sequencePosition,
             idempotency_replayed: false,
             validation_warnings: finalValidatedAction?.validation_warnings ?? [],
+            // ISSUE 4: Tell developer exactly when and how to improve logging quality.
+            // outcome_score_tip is null when they already provided outcome_score (no nagging).
+            logging_guidance: {
+                when_to_log:
+                    'Log AFTER the action result is known - not when you start it. ' +
+                    'Examples: after API response received, after retry completes, ' +
+                    'after ticket closes, after payment confirms.',
+                outcome_score_tip: (body.outcome_score === undefined || body.outcome_score === null)
+                    ? 'Pass outcome_score (0.0-1.0) for richer signal. ' +
+                    'Example: partial_success=0.6, full_success=1.0, failure=0.0'
+                    : null,
+                next_milestone: (body as any)._resolved_task_name
+                    ? `Keep logging for task "${(body as any)._resolved_task_name}" ` +
+                    `to improve recommendation confidence.`
+                    : 'Add task_name to your log_outcome calls for task-specific recommendations.',
+            },
         }, 201);
 
     } catch (err: any) {

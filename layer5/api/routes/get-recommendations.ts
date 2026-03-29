@@ -98,6 +98,20 @@ getRecommendationsRouter.get('/', async (c) => {
                     ? 'Based on this agent\'s logged outcomes only'
                     : 'Based on all agents\' combined outcomes',
                 customer_id: customerId,
+                // ISSUE 1: Action registry validation.
+                // Tells the developer if the recommended action matches what they have registered.
+                // action_mismatch=true means the recommended action name does not exist in
+                // their dim_actions registry - they should check their action naming.
+                // warning is null when everything matches (do not show it in the dashboard).
+                action_registry: {
+                    registered_actions: result.registered_actions,
+                    action_mismatch: result.action_mismatch,
+                    warning: result.action_mismatch && result.best_action
+                        ? `Recommended action "${result.best_action.action_name}" is not in your ` +
+                        `registered actions. Check your action names match between log_outcome calls ` +
+                        `and your registered dim_actions.`
+                        : null,
+                },
             },
             200
         );

@@ -2,7 +2,7 @@ import type {
     RecommendationResult,
     RecommendationState,
 } from './engine.js';
-import { MIN_SAMPLES, MIN_SAMPLES_HIGH_CONFIDENCE } from './engine.js';
+import { MIN_SAMPLES, MIN_SAMPLES_STABLE, MIN_SAMPLES_HIGH_CONFIDENCE } from './engine.js';
 
 function pct(rate: number): string {
     return `${(rate * 100).toFixed(1)}%`;
@@ -208,6 +208,12 @@ export interface ActionableOutput {
     // Issue 7: decision threshold hint
     threshold_hint: string;
 
+    // Issue 6: explicit validation status
+    validated: 'validated' | 'provisional' | 'insufficient_data';
+
+    // Issue 7: plain-English confidence explanation
+    confidence_explanation: string;
+
     // Issue 8: agent scope label
     scope_label: string;
 }
@@ -238,14 +244,46 @@ function buildMonitorSteps(
     targetSamples: number,
     bestAction: string,
     taskName: string,
+    bestRate?: number,
+    worstAction?: string,
+    worstRate?: number,
+    confidencePct?: number,
 ): string[] {
     const remaining = Math.max(0, targetSamples - currentSamples);
-    return [
-        `Continue logging outcomes for task "${taskName}" with task_name="${taskName}" in your log_outcome calls`,
-        `Run at least ${remaining} more executions of ${bestAction} to reach ${targetSamples} total samples`,
-        `Do NOT switch actions yet — wait for the confidence bar to reach 50%+`,
-        `Re-check this page after every ~10 new outcomes`,
-    ];
+    const steps: string[] = [];
+
+    if (remaining > 0) {
+        steps.push(
+            `Log ${remaining} more outcomes for task "${taskName}" to reach stable signal ` +
+            `(currently ${currentSamples}/${targetSamples} per action).`
+        );
+    }
+
+    if (bestRate !== undefined) {
+        steps.push(
+            `Keep using "${bestAction}" as your primary action ` +
+            `(current success rate: ${(bestRate * 100).toFixed(1)}%).`
+        );
+    } else {
+        steps.push(`Keep using "${bestAction}" as your primary action.`);
+    }
+
+    if (worstAction && worstRate !== undefined && bestRate !== undefined) {
+        steps.push(
+            `Avoid "${worstAction}" until confidence improves ` +
+            `(${(worstRate * 100).toFixed(1)}% vs ${(bestRate * 100).toFixed(1)}% for best action).`
+        );
+    }
+
+    const confNote = confidencePct !== undefined
+        ? `currently ${confidencePct}%`
+        : 'not yet 50%';
+    steps.push(
+        `Check back when confidence reaches 50%+ (${confNote}). ` +
+        `Recommendation becomes fully actionable above this threshold.`
+    );
+
+    return steps;
 }
 
 // Issue 4: Unlock hint text
@@ -463,6 +501,9 @@ export function buildActionableOutput(
             reason: buildReason(r, confidenceMeta),
             confidence: 0,
             confidence_label: confidenceLabel,
+            validated: 'insufficient_data' as const,
+            confidence_explanation: 'Not enough data to estimate confidence yet. ' +
+                `Log outcomes with task_name="${r.task}" to unlock a recommendation.`,
             insight: buildInsight(r),
             message: buildMessage('no_data', false, confidenceMeta, null, null),
             validation_hint: null,
@@ -521,6 +562,23 @@ export function buildActionableOutput(
             reason: buildReason(r, confidenceMeta),
             confidence: r.confidence ?? 0,
             confidence_label: confidenceLabel,
+            validated: 'provisional' as const,
+            confidence_explanation: (() => {
+                const confPct = Math.round((r.confidence ?? 0) * 100);
+                const samples = r.min_sample_count;
+                const sampleNote = `${samples} outcomes per action recorded ` +
+                    `(need ${MIN_SAMPLES_STABLE} for stable signal).`;
+                if (confPct >= 50) {
+                    return `${confPct}% confidence - moderate signal. ${sampleNote} ` +
+                        `The performance gap is real but more data would make it more reliable.`;
+                }
+                if (confPct >= 30) {
+                    return `${confPct}% confidence - early signal. ${sampleNote} ` +
+                        `Continue logging - this recommendation may change as more data arrives.`;
+                }
+                return `${confPct}% confidence - low signal. ${sampleNote} ` +
+                    `Log more outcomes before acting on this recommendation.`;
+            })(),
             insight: buildInsight(r),
             message: (() => {
                 if (delta < 0.08) {
@@ -555,6 +613,10 @@ export function buildActionableOutput(
                 MIN_SAMPLES_HIGH_CONFIDENCE,
                 b.action_name,
                 r.task,
+                b.success_rate,
+                w.action_name,
+                w.success_rate,
+                Math.round((r.confidence ?? 0) * 100),
             ),
             unlock_hint: buildUnlockHint(
                 r.min_sample_count,
@@ -611,6 +673,25 @@ export function buildActionableOutput(
         reason: buildReason(r, confidenceMeta),
         confidence: r.confidence ?? 0,
         confidence_label: confidenceLabel,
+        validated: (
+            (r.confidence ?? 0) >= 0.5 &&
+            r.min_sample_count >= MIN_SAMPLES_STABLE
+        ) ? 'validated' as const : 'provisional' as const,
+        confidence_explanation: (() => {
+            const confPct = Math.round((r.confidence ?? 0) * 100);
+            const samples = r.min_sample_count;
+            const sampleNote = `${samples} outcomes per action recorded.`;
+            if (confPct >= 80) {
+                return `${confPct}% confidence - strong signal. ${sampleNote} ` +
+                    `The performance gap between best and worst action is clear and consistent.`;
+            }
+            if (confPct >= 50) {
+                return `${confPct}% confidence - moderate signal. ${sampleNote} ` +
+                    `The performance gap is real. Pilot the recommendation before full rollout.`;
+            }
+            return `${confPct}% confidence - moderate signal. ${sampleNote} ` +
+                `More outcomes will raise confidence. Acting now carries some uncertainty.`;
+        })(),
         insight: buildInsight(r),
         message: buildMessage(
             'stable',
@@ -641,6 +722,10 @@ export function buildActionableOutput(
             MIN_SAMPLES_HIGH_CONFIDENCE,
             b.action_name,
             r.task,
+            b.success_rate,
+            w.action_name,
+            w.success_rate,
+            Math.round((r.confidence ?? 0) * 100),
         ),
         unlock_hint: shouldAct ? null : buildUnlockHint(
             r.min_sample_count,
