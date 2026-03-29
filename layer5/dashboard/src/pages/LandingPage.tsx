@@ -1,31 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-// ── Animated terminal lines ──────────────────────────────────
 const TERMINAL_LINES = [
-  { delay: 0,    color: 'text-[#555]',     text: '# 1. Install the SDK' },
-  { delay: 400,  color: 'text-[#00FF85]',  text: '$ pip install layerinfinite-sdk' },
-  { delay: 1000, color: 'text-[#555]',     text: '' },
-  { delay: 1200, color: 'text-[#555]',     text: '# 2. Get ranked actions before your agent acts' },
-  { delay: 1600, color: 'text-blue-400',   text: 'from layerinfinite import LayerInfinite' },
-  { delay: 1900, color: 'text-white',      text: 'li = LayerInfinite(api_key="li_••••••••")' },
-  { delay: 2300, color: 'text-white',      text: 'scores = li.get_scores(' },
-  { delay: 2500, color: 'text-green-300',  text: '    agent_id="payment-bot-1",' },
-  { delay: 2700, color: 'text-green-300',  text: '    context={"issue": "payment_failed"}' },
-  { delay: 2900, color: 'text-white',      text: ')' },
-  { delay: 3100, color: 'text-[#555]',     text: '' },
-  { delay: 3300, color: 'text-[#555]',     text: '# Returns ranked actions instantly' },
-  { delay: 3600, color: 'text-[#00FF85]',  text: '# ✓  update_app     score: 0.85  ← best action' },
-  { delay: 3900, color: 'text-[#888]',     text: '# ·  clear_cache    score: 0.61' },
-  { delay: 4100, color: 'text-red-400',    text: '# ✕  restart_svc    score: 0.07  ← skip this' },
-  { delay: 4400, color: 'text-[#555]',     text: '' },
-  { delay: 4600, color: 'text-[#555]',     text: '# 3. Log outcome after execution' },
-  { delay: 5000, color: 'text-white',      text: 'li.log_outcome(' },
-  { delay: 5200, color: 'text-green-300',  text: '    action="update_app",' },
-  { delay: 5400, color: 'text-green-300',  text: '    success=True,' },
-  { delay: 5600, color: 'text-green-300',  text: '    response_ms=241' },
-  { delay: 5800, color: 'text-white',      text: ')' },
-  { delay: 6200, color: 'text-[#00FF85]',  text: '# ✓  Outcome logged. Agent is learning.' },
+  { delay: 0,    color: 'text-[#555555]',   text: '# 1. Install the SDK' },
+  { delay: 400,  color: 'text-[#00FF85]',   text: '$ pip install layerinfinite-sdk' },
+  { delay: 1000, color: 'text-[#555555]',   text: '' },
+  { delay: 1200, color: 'text-[#555555]',   text: '# 2. Get ranked actions before your agent acts' },
+  { delay: 1600, color: 'text-blue-400',    text: 'from layerinfinite import LayerInfinite' },
+  { delay: 1900, color: 'text-white',       text: 'li = LayerInfinite(api_key="li_xxxxxxxx")' },
+  { delay: 2300, color: 'text-white',       text: 'scores = li.get_scores(' },
+  { delay: 2500, color: 'text-green-300',   text: '    agent_id="payment-bot-1",' },
+  { delay: 2700, color: 'text-green-300',   text: '    context={"issue": "payment_failed"}' },
+  { delay: 2900, color: 'text-white',       text: ')' },
+  { delay: 3100, color: 'text-[#555555]',   text: '' },
+  { delay: 3300, color: 'text-[#555555]',   text: '# Returns ranked actions instantly' },
+  { delay: 3600, color: 'text-[#00FF85]',   text: '# v  update_app     score: 0.85  <- best action' },
+  { delay: 3900, color: 'text-[#888888]',   text: '# .  clear_cache    score: 0.61' },
+  { delay: 4100, color: 'text-red-400',     text: '# x  restart_svc    score: 0.07  <- skip this' },
+  { delay: 4400, color: 'text-[#555555]',   text: '' },
+  { delay: 4600, color: 'text-[#555555]',   text: '# 3. Log outcome after execution' },
+  { delay: 5000, color: 'text-white',       text: 'li.log_outcome(' },
+  { delay: 5200, color: 'text-green-300',   text: '    action="update_app",' },
+  { delay: 5400, color: 'text-green-300',   text: '    success=True,' },
+  { delay: 5600, color: 'text-green-300',   text: '    response_ms=241' },
+  { delay: 5800, color: 'text-white',       text: ')' },
+  { delay: 6200, color: 'text-[#00FF85]',   text: '# Agent is now learning from this outcome.' },
 ];
 
 function AnimatedTerminal(): React.ReactElement {
@@ -46,7 +45,7 @@ function AnimatedTerminal(): React.ReactElement {
         <div className="w-2.5 h-2.5 rounded-full bg-red-500/50" />
         <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50" />
         <div className="w-2.5 h-2.5 rounded-full bg-[#00FF85]/50" />
-        <span className="text-[11px] text-[#555] ml-3">quick_start.py</span>
+        <span className="text-[11px] text-[#555555] ml-3">quick_start.py</span>
       </div>
       <div className="p-6 min-h-[340px]">
         {TERMINAL_LINES.slice(0, visibleCount).map((line, i) => (
@@ -55,14 +54,13 @@ function AnimatedTerminal(): React.ReactElement {
           </div>
         ))}
         {visibleCount < TERMINAL_LINES.length && (
-          <span className="inline-block w-2 h-4 bg-[#00FF85] animate-pulse ml-0.5" />
+          <span className="inline-block w-2 h-4 bg-[#00FF85] animate-pulse" />
         )}
       </div>
     </div>
   );
 }
 
-// ── Stat counter ─────────────────────────────────────────────
 function StatCard({ value, label }: { value: string; label: string }): React.ReactElement {
   return (
     <div className="text-center md:text-left">
@@ -72,7 +70,6 @@ function StatCard({ value, label }: { value: string; label: string }): React.Rea
   );
 }
 
-// ── Feature card ─────────────────────────────────────────────
 function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc: string }): React.ReactElement {
   return (
     <div className="bg-black border border-[#1a1a24] p-8 hover:border-[#00FF85]/30 hover:bg-[#07070f] transition-all group">
@@ -83,7 +80,62 @@ function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc:
   );
 }
 
-// ── Main component ────────────────────────────────────────────
+const PY_LINES = [
+  { color: 'text-[#555555]', text: '# Install' },
+  { color: 'text-[#00FF85]', text: 'pip install layerinfinite-sdk' },
+  { color: '', text: '' },
+  { color: 'text-[#555555]', text: '# Import and init' },
+  { color: 'text-blue-400',  text: 'from layerinfinite import LayerInfinite' },
+  { color: 'text-white',     text: 'li = LayerInfinite(api_key="li_...")'  },
+  { color: '', text: '' },
+  { color: 'text-[#555555]', text: '# Get ranked actions' },
+  { color: 'text-white',     text: 'scores = li.get_scores(' },
+  { color: 'text-green-300', text: '    agent_id="my-agent",' },
+  { color: 'text-green-300', text: '    context={"task": "resolve_ticket"}' },
+  { color: 'text-white',     text: ')' },
+  { color: '', text: '' },
+  { color: 'text-[#555555]', text: '# Log outcome' },
+  { color: 'text-white',     text: 'li.log_outcome(' },
+  { color: 'text-green-300', text: '    action="escalate_to_human",' },
+  { color: 'text-blue-400',  text: '    success=True' },
+  { color: 'text-white',     text: ')' },
+];
+
+const JS_LINES = [
+  { color: 'text-[#555555]', text: '// Install' },
+  { color: 'text-[#00FF85]', text: 'npm install layerinfinite-sdk' },
+  { color: '', text: '' },
+  { color: 'text-[#555555]', text: '// Import and init' },
+  { color: 'text-blue-400',  text: "import { LayerInfinite } from 'layerinfinite-sdk';" },
+  { color: 'text-white',     text: 'const li = new LayerInfinite({ apiKey: "li_..." });' },
+  { color: '', text: '' },
+  { color: 'text-[#555555]', text: '// Get ranked actions' },
+  { color: 'text-white',     text: 'const scores = await li.getScores({' },
+  { color: 'text-green-300', text: '  agentId: "my-agent",' },
+  { color: 'text-green-300', text: '  context: { task: "resolve_ticket" }' },
+  { color: 'text-white',     text: '});' },
+  { color: '', text: '' },
+  { color: 'text-[#555555]', text: '// Log outcome' },
+  { color: 'text-white',     text: 'await li.logOutcome({' },
+  { color: 'text-green-300', text: '  action: "escalate_to_human",' },
+  { color: 'text-blue-400',  text: '  success: true' },
+  { color: 'text-white',     text: '});' },
+];
+
+function CodeBlock({ lines }: { lines: { color: string; text: string }[] }): React.ReactElement {
+  return (
+    <div className="p-6 font-mono text-sm space-y-0.5">
+      {lines.map((line, i) =>
+        line.text === '' ? (
+          <div key={i} className="h-3" />
+        ) : (
+          <div key={i} className={line.color}>{line.text}</div>
+        )
+      )}
+    </div>
+  );
+}
+
 export default function LandingPage(): React.ReactElement {
   const navigate = useNavigate();
 
@@ -94,14 +146,12 @@ export default function LandingPage(): React.ReactElement {
   return (
     <div className="bg-black text-white landing-page">
 
-      {/* ── Nav ── */}
+      {/* Nav */}
       <nav className="fixed top-0 w-full z-50 border-b border-[#1a1a24] bg-black/85 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl font-bold tracking-tight">
-              layer<span className="text-[#00FF85]">infinite</span>
-            </span>
-          </div>
+          <span className="text-xl font-bold tracking-tight">
+            layer<span className="text-[#00FF85]">infinite</span>
+          </span>
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#888888]">
             <button className="hover:text-white transition-colors" onClick={() => scrollTo('problem')}>Problem</button>
             <button className="hover:text-white transition-colors" onClick={() => scrollTo('how-it-works')}>How It Works</button>
@@ -110,39 +160,30 @@ export default function LandingPage(): React.ReactElement {
             <button className="hover:text-white transition-colors" onClick={() => scrollTo('pricing')}>Pricing</button>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/auth?mode=login')}
-              className="text-sm font-medium text-[#888888] hover:text-white transition-colors"
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => navigate('/auth?mode=signup')}
-              className="bg-[#00FF85] text-black px-5 py-2 text-sm font-bold tracking-tight hover:bg-white transition-all"
-            >
-              Get Started Free
-            </button>
+            <button onClick={() => navigate('/auth?mode=login')} className="text-sm font-medium text-[#888888] hover:text-white transition-colors">Sign In</button>
+            <button onClick={() => navigate('/auth?mode=signup')} className="bg-[#00FF85] text-black px-5 py-2 text-sm font-bold tracking-tight hover:bg-white transition-all">Get Started Free</button>
           </div>
         </div>
       </nav>
 
       <main>
 
-        {/* ── Hero ── */}
+        {/* Hero */}
         <section className="relative pt-28 pb-20 overflow-hidden" id="hero">
-          {/* subtle grid bg */}
           <div
             className="absolute inset-0 opacity-[0.025] pointer-events-none"
-            style={{ backgroundImage: 'linear-gradient(#00FF85 1px,transparent 1px),linear-gradient(90deg,#00FF85 1px,transparent 1px)', backgroundSize: '60px 60px' }}
+            style={{
+              backgroundImage: 'linear-gradient(#00FF85 1px,transparent 1px),linear-gradient(90deg,#00FF85 1px,transparent 1px)',
+              backgroundSize: '60px 60px',
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-b from-black via-transparent to-black pointer-events-none" />
 
           <div className="max-w-7xl mx-auto px-6 relative z-10">
-            {/* eyebrow badge */}
             <div className="flex justify-center mb-8">
               <div className="inline-flex items-center gap-2 border border-[#00FF85]/20 bg-[#00FF85]/5 px-4 py-1.5 rounded-full text-[11px] font-mono text-[#00FF85]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#00FF85] animate-pulse" />
-                Beta · Open to founding teams · 50 seats left
+                Beta &middot; Open to founding teams &middot; 50 seats left
               </div>
             </div>
 
@@ -156,7 +197,8 @@ export default function LandingPage(): React.ReactElement {
             </h1>
             <p className="text-lg text-[#888888] text-center max-w-2xl mx-auto leading-relaxed mb-10">
               Layerinfinite is a decision intelligence layer that sits between your LLM and infrastructure.
-              Agents learn what works from production outcomes — <strong className="text-white">without retraining, without rebuilding.</strong>
+              Agents learn what works from production outcomes &mdash;{' '}
+              <strong className="text-white">without retraining, without rebuilding.</strong>
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
@@ -164,63 +206,63 @@ export default function LandingPage(): React.ReactElement {
                 onClick={() => navigate('/auth?mode=signup')}
                 className="bg-[#00FF85] text-black px-8 py-3.5 text-sm font-bold tracking-tight hover:bg-white transition-all shadow-[0_0_30px_rgba(0,255,133,0.25)]"
               >
-                Start for Free — No Credit Card
+                Start for Free &mdash; No Credit Card
               </button>
               <button
                 onClick={() => scrollTo('sdk-docs')}
                 className="border border-[#1a1a24] text-[#888888] px-8 py-3.5 text-sm font-bold tracking-tight hover:border-[#00FF85]/40 hover:text-white transition-all"
               >
-                View SDK Docs →
+                View SDK Docs &rarr;
               </button>
             </div>
 
-            {/* Trust bar */}
-            <div className="flex flex-wrap items-center justify-center gap-6 text-[11px] text-[#555] font-mono mb-16">
-              <span>🐍 Python SDK on PyPI</span>
+            <div className="flex flex-wrap items-center justify-center gap-6 text-[11px] text-[#555555] font-mono mb-16">
+              <span>Python SDK on PyPI</span>
               <span className="text-[#1a1a24]">|</span>
-              <span>🟨 JS/TS SDK on npm</span>
+              <span>JS/TS SDK on npm</span>
               <span className="text-[#1a1a24]">|</span>
-              <span>⚡ Sub-5ms decision latency</span>
+              <span>Sub-5ms decision latency</span>
               <span className="text-[#1a1a24]">|</span>
-              <span>🔒 Append-only audit trail</span>
+              <span>Append-only audit trail</span>
               <span className="text-[#1a1a24]">|</span>
-              <span>🌍 GDPR-ready</span>
+              <span>GDPR-ready</span>
             </div>
 
-            {/* Live terminal */}
             <div className="max-w-2xl mx-auto">
               <AnimatedTerminal />
             </div>
           </div>
         </section>
 
-        {/* ── Stats ── */}
+        {/* Stats */}
         <section className="py-16 border-y border-[#1a1a24] bg-[#07070f]">
           <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-10 md:gap-16">
-            <StatCard value="Sub-5ms" label="Decision latency — benchmarked on PostgreSQL materialized views at scale" />
-            <StatCard value="3 lines" label="Minimum integration — one log_outcome call is all it takes to start learning" />
-            <StatCard value="10-year" label="Immutable audit trail — every decision logged, traceable, GDPR-compliant" />
+            <StatCard value="Sub-5ms" label="Decision latency benchmarked on PostgreSQL materialized views at scale" />
+            <StatCard value="3 lines" label="Minimum integration. One log_outcome call is all it takes to start learning" />
+            <StatCard value="10-year" label="Immutable audit trail. Every decision logged, traceable, GDPR-compliant" />
           </div>
         </section>
 
-        {/* ── Problem ── */}
+        {/* Problem */}
         <section className="py-24 bg-black" id="problem">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">The Problem</span>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Every session starts from zero.</h2>
-            <p className="text-[#888888] max-w-xl mb-16 text-lg">Your agents are expensive. They're also amnesiac. Here's what production looks like without a decision layer.</p>
+            <p className="text-[#888888] max-w-xl mb-16 text-lg">
+              Your agents are expensive. They&apos;re also amnesiac. Here&apos;s what production looks like without a decision layer.
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {[
+              {([
                 {
                   err: '[ERR] agent_loop :: retry_overflow',
                   title: 'Agent Amnesia',
-                  body: 'AI agents retry the same failed action 5–10 times per session with zero adaptation. Every failure costs compute, latency, and user trust.',
-                  tag: '5–10 retries / session',
+                  body: 'AI agents retry the same failed action 5-10 times per session with zero adaptation. Every failure costs compute, latency, and user trust.',
+                  tag: '5-10 retries / session',
                 },
                 {
                   err: '[ERR] session_init :: cold_start',
                   title: 'No Cross-Session Learning',
-                  body: 'Every deployment resets to zero. The model never improves from production experience. Last week's fix is forgotten today.',
+                  body: 'Every deployment resets to zero. The model never improves from production experience. Last week\'s fix is forgotten today.',
                   tag: '0% knowledge retained',
                 },
                 {
@@ -229,7 +271,7 @@ export default function LandingPage(): React.ReactElement {
                   body: 'EU AI Act requires 10-year decision trails. Vector stores cannot produce them. Your compliance team is flying blind.',
                   tag: '10yr retention required',
                 },
-              ].map(({ err, title, body, tag }) => (
+              ] as { err: string; title: string; body: string; tag: string }[]).map(({ err, title, body, tag }) => (
                 <div key={title} className="border border-[#1a1a24] p-8 hover:border-[#00FF85]/30 transition-colors bg-[#07070f]">
                   <div className="text-[10px] font-mono text-red-500/60 mb-5 uppercase tracking-widest">{err}</div>
                   <h3 className="text-lg font-bold mb-3">{title}</h3>
@@ -241,40 +283,21 @@ export default function LandingPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* ── How it works ── */}
+        {/* How it works */}
         <section className="py-24 bg-[#07070f] border-y border-[#1a1a24]" id="how-it-works">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">How It Works</span>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-16">Two API calls. Agents that learn.</h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-              {/* Steps */}
               <div className="space-y-10">
-                {[
-                  {
-                    n: '01',
-                    title: 'Before your agent acts — get ranked scores',
-                    body: 'Call get_scores() with your agent ID and context. Layerinfinite returns every available action ranked by its evidence-based success probability for that exact context.',
-                  },
-                  {
-                    n: '02',
-                    title: 'Your agent picks the top action',
-                    body: 'Execute ranked_actions[0]. No guessing. No retrying failed paths. The best action for this context, backed by production history.',
-                  },
-                  {
-                    n: '03',
-                    title: 'After acting — log the outcome',
-                    body: 'Call log_outcome() with success=True/False. That's it. The scoring engine updates in real-time. Every agent in your fleet benefits immediately.',
-                  },
-                  {
-                    n: '04',
-                    title: 'Dashboard shows what's working',
-                    body: 'Track agent health scores, success rates, degradation alerts, and decision recommendations — all in one place. No additional infra.',
-                  },
-                ].map(({ n, title, body }) => (
+                {([
+                  { n: '01', title: 'Before your agent acts — get ranked scores', body: 'Call get_scores() with your agent ID and context. Layerinfinite returns every available action ranked by evidence-based success probability for that exact context.' },
+                  { n: '02', title: 'Your agent picks the top action', body: 'Execute ranked_actions[0]. No guessing. No retrying failed paths. The best action for this context, backed by production history.' },
+                  { n: '03', title: 'After acting — log the outcome', body: 'Call log_outcome() with success=True/False. The scoring engine updates in real-time. Every agent in your fleet benefits immediately.' },
+                  { n: '04', title: 'Dashboard shows what is working', body: 'Track agent health scores, success rates, degradation alerts, and decision recommendations in one place. No additional infra.' },
+                ] as { n: string; title: string; body: string }[]).map(({ n, title, body }) => (
                   <div key={n} className="flex gap-6">
-                    <div className="flex-shrink-0 w-10 h-10 border border-[#00FF85]/30 bg-[#00FF85]/5 flex items-center justify-center text-[#00FF85] text-xs font-bold font-mono">
-                      {n}
-                    </div>
+                    <div className="flex-shrink-0 w-10 h-10 border border-[#00FF85]/30 bg-[#00FF85]/5 flex items-center justify-center text-[#00FF85] text-xs font-bold font-mono">{n}</div>
                     <div>
                       <h4 className="font-bold mb-2">{title}</h4>
                       <p className="text-sm text-[#888888] leading-relaxed">{body}</p>
@@ -283,21 +306,25 @@ export default function LandingPage(): React.ReactElement {
                 ))}
               </div>
 
-              {/* Architecture diagram */}
-              <div className="border border-[#1a1a24] bg-black p-8 rounded-lg space-y-4 font-mono text-xs">
-                <div className="text-[#555] mb-4 uppercase tracking-widest text-[10px]">// System Architecture</div>
-                {[
-                  { label: 'Your Agent / LLM', color: 'border-blue-400/40 text-blue-300' },
-                  { label: '↕  get_scores()  |  log_outcome()', color: 'border-[#00FF85]/30 text-[#00FF85]', small: true },
-                  { label: 'Layerinfinite Decision Layer', color: 'border-[#00FF85]/40 text-[#00FF85]', highlight: true },
-                  { label: '↕  SQL · Materialized Views · Scoring Engine', color: 'border-[#555]/40 text-[#555]', small: true },
-                  { label: 'Your Supabase / Postgres', color: 'border-[#888]/30 text-[#888]' },
-                  { label: '↕  audit trail · outcomes · agent trust', color: 'border-[#555]/40 text-[#555]', small: true },
-                  { label: 'Layerinfinite Dashboard', color: 'border-purple-400/30 text-purple-300' },
-                ].map(({ label, color, small, highlight }) => (
+              <div className="border border-[#1a1a24] bg-black p-8 rounded-lg space-y-3 font-mono text-xs">
+                <div className="text-[#555555] mb-2 uppercase tracking-widest text-[10px]">// System Architecture</div>
+                {([
+                  { label: 'Your Agent / LLM',                        cls: 'border-blue-400/40 text-blue-300',        small: false, hi: false },
+                  { label: 'get_scores()  |  log_outcome()',           cls: 'border-[#00FF85]/30 text-[#00FF85]',     small: true,  hi: false },
+                  { label: 'Layerinfinite Decision Layer',             cls: 'border-[#00FF85]/40 text-[#00FF85]',     small: false, hi: true  },
+                  { label: 'SQL  Materialized Views  Scoring Engine',  cls: 'border-[#555555]/40 text-[#555555]',    small: true,  hi: false },
+                  { label: 'Your Supabase / Postgres',                 cls: 'border-[#888888]/30 text-[#888888]',    small: false, hi: false },
+                  { label: 'audit trail  outcomes  agent trust',       cls: 'border-[#555555]/40 text-[#555555]',    small: true,  hi: false },
+                  { label: 'Layerinfinite Dashboard',                  cls: 'border-purple-400/30 text-purple-300',  small: false, hi: false },
+                ] as { label: string; cls: string; small: boolean; hi: boolean }[]).map(({ label, cls, small, hi }) => (
                   <div
                     key={label}
-                    className={`border px-4 py-3 text-center ${color} ${small ? 'border-dashed text-[10px] py-1' : ''} ${highlight ? 'bg-[#00FF85]/5' : ''}`}
+                    className={[
+                      'border px-4 py-3 text-center',
+                      cls,
+                      small ? 'border-dashed text-[10px] py-1' : '',
+                      hi ? 'bg-[#00FF85]/5' : '',
+                    ].join(' ')}
                   >
                     {label}
                   </div>
@@ -307,48 +334,24 @@ export default function LandingPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* ── Features ── */}
+        {/* Features */}
         <section className="py-24 bg-black" id="features">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Capabilities</span>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Everything production agents need.</h2>
             <p className="text-[#888888] mb-16 max-w-xl">Not just monitoring. Not just logging. An active intelligence layer that makes every agent decision better over time.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-px bg-[#1a1a24]">
-              <FeatureCard
-                icon="🎯"
-                title="Outcome-Ranked Decisions"
-                desc="Every available action is scored using context-weighted success history. The best action surfaces automatically — no prompt engineering required."
-              />
-              <FeatureCard
-                icon="🧊"
-                title="Cold Start Protocol"
-                desc="Four-stage bootstrap with prior injection and cross-agent transfer. Agents are intelligent from day one — not after 10,000 outcomes."
-              />
-              <FeatureCard
-                icon="🛡️"
-                title="Trust-Aware Routing"
-                desc="Auto-suspends agents whose success rate drops below threshold. Routes to human escalation before damage compounds. Configurable per agent."
-              />
-              <FeatureCard
-                icon="📉"
-                title="Degradation Detection"
-                desc="Detects performance trends before they crash your system. Recency-weighted scoring with automatic decay surfaces early warning signals."
-              />
-              <FeatureCard
-                icon="📋"
-                title="Compliance Audit Trail"
-                desc="Append-only, SQL-readable decision log. Every action traceable by agent, context, score, and timestamp. GDPR & EU AI Act ready."
-              />
-              <FeatureCard
-                icon="💡"
-                title="AI Recommendations"
-                desc="The dashboard surfaces exactly which actions to promote, demote, or investigate — backed by statistical confidence and production evidence."
-              />
+              <FeatureCard icon="(*)" title="Outcome-Ranked Decisions" desc="Every available action is scored using context-weighted success history. The best action surfaces automatically with no prompt engineering required." />
+              <FeatureCard icon="[~]" title="Cold Start Protocol" desc="Four-stage bootstrap with prior injection and cross-agent transfer. Agents are intelligent from day one, not after 10,000 outcomes." />
+              <FeatureCard icon="[S]" title="Trust-Aware Routing" desc="Auto-suspends agents whose success rate drops below threshold. Routes to human escalation before damage compounds. Configurable per agent." />
+              <FeatureCard icon="[v]" title="Degradation Detection" desc="Detects performance trends before they crash your system. Recency-weighted scoring with automatic decay surfaces early warning signals." />
+              <FeatureCard icon="[=]" title="Compliance Audit Trail" desc="Append-only, SQL-readable decision log. Every action traceable by agent, context, score, and timestamp. GDPR and EU AI Act ready." />
+              <FeatureCard icon="[i]" title="AI Recommendations" desc="The dashboard surfaces exactly which actions to promote, demote, or investigate, backed by statistical confidence and production evidence." />
             </div>
           </div>
         </section>
 
-        {/* ── SDK Docs ── */}
+        {/* SDK Docs */}
         <section className="py-24 bg-[#07070f] border-y border-[#1a1a24]" id="sdk-docs">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">SDK Docs</span>
@@ -356,78 +359,23 @@ export default function LandingPage(): React.ReactElement {
             <p className="text-[#888888] mb-16 max-w-xl">Available for Python and JavaScript/TypeScript. Works with LangChain, AutoGen, CrewAI, or any custom agent framework.</p>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
-              {/* Python */}
               <div className="border border-[#1a1a24] rounded-lg overflow-hidden">
                 <div className="bg-[#0e0e18] px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between">
-                  <span className="text-[11px] text-[#888] font-mono">🐍 Python SDK</span>
-                  <a
-                    href="https://pypi.org/project/layerinfinite-sdk/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[10px] text-[#00FF85] hover:underline font-mono"
-                  >
-                    PyPI →
-                  </a>
+                  <span className="text-[11px] text-[#888888] font-mono">Python SDK</span>
+                  <a href="https://pypi.org/project/layerinfinite-sdk/" target="_blank" rel="noreferrer" className="text-[10px] text-[#00FF85] hover:underline font-mono">PyPI &rarr;</a>
                 </div>
-                <div className="p-6 font-mono text-sm space-y-1">
-                  <div className="text-[#555]"># Install</div>
-                  <div className="text-[#00FF85]">pip install layerinfinite-sdk</div>
-                  <div className="h-2" />
-                  <div className="text-[#555]"># Usage</div>
-                  <div className="text-blue-400">from layerinfinite import LayerInfinite</div>
-                  <div className="text-white">li = LayerInfinite(api_key=<span className="text-green-300">"li_..."</span>)</div>
-                  <div className="h-2" />
-                  <div className="text-[#555]"># Get ranked actions</div>
-                  <div className="text-white">scores = li.get_scores(</div>
-                  <div className="text-green-300 pl-4">agent_id=<span className="text-green-300">"my-agent"</span>,</div>
-                  <div className="text-green-300 pl-4">context={'{'}<span className="text-green-300">"task"</span>: <span className="text-green-300">"resolve_ticket"</span>{'}'}</div>
-                  <div className="text-white">)</div>
-                  <div className="h-2" />
-                  <div className="text-[#555]"># Log outcome</div>
-                  <div className="text-white">li.log_outcome(</div>
-                  <div className="text-green-300 pl-4">action=<span className="text-green-300">"escalate_to_human"</span>,</div>
-                  <div className="text-green-300 pl-4">success=<span className="text-blue-400">True</span></div>
-                  <div className="text-white">)</div>
-                </div>
+                <CodeBlock lines={PY_LINES} />
               </div>
 
-              {/* JS/TS */}
               <div className="border border-[#1a1a24] rounded-lg overflow-hidden">
                 <div className="bg-[#0e0e18] px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between">
-                  <span className="text-[11px] text-[#888] font-mono">🟨 JavaScript / TypeScript SDK</span>
-                  <a
-                    href="https://www.npmjs.com/package/layerinfinite-sdk"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[10px] text-[#00FF85] hover:underline font-mono"
-                  >
-                    npm →
-                  </a>
+                  <span className="text-[11px] text-[#888888] font-mono">JavaScript / TypeScript SDK</span>
+                  <a href="https://www.npmjs.com/package/layerinfinite-sdk" target="_blank" rel="noreferrer" className="text-[10px] text-[#00FF85] hover:underline font-mono">npm &rarr;</a>
                 </div>
-                <div className="p-6 font-mono text-sm space-y-1">
-                  <div className="text-[#555]">// Install</div>
-                  <div className="text-[#00FF85]">npm install layerinfinite-sdk</div>
-                  <div className="h-2" />
-                  <div className="text-[#555]">// Usage</div>
-                  <div className="text-blue-400">import {'{'} LayerInfinite {'}'} from <span className="text-green-300">'layerinfinite-sdk'</span>;</div>
-                  <div className="text-white">const li = new LayerInfinite({'{'}<span className="text-green-300">apiKey: "li_..."</span>{'}'});</div>
-                  <div className="h-2" />
-                  <div className="text-[#555]">// Get ranked actions</div>
-                  <div className="text-white">const scores = await li.getScores({'({'}</div>
-                  <div className="text-green-300 pl-4">agentId: <span className="text-green-300">"my-agent"</span>,</div>
-                  <div className="text-green-300 pl-4">context: {'{'} task: <span className="text-green-300">"resolve_ticket"</span> {'}'}</div>
-                  <div className="text-white">{')'})'};</div>
-                  <div className="h-2" />
-                  <div className="text-[#555]">// Log outcome</div>
-                  <div className="text-white">await li.logOutcome({'({'}</div>
-                  <div className="text-green-300 pl-4">action: <span className="text-green-300">"escalate_to_human"</span>,</div>
-                  <div className="text-green-300 pl-4">success: <span className="text-blue-400">true</span></div>
-                  <div className="text-white">{')'})'};</div>
-                </div>
+                <CodeBlock lines={JS_LINES} />
               </div>
             </div>
 
-            {/* REST API note */}
             <div className="border border-[#1a1a24] bg-black p-6 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <div className="text-sm font-bold mb-1">Prefer plain HTTP? Use the REST API directly.</div>
@@ -439,13 +387,13 @@ export default function LandingPage(): React.ReactElement {
                 rel="noreferrer"
                 className="flex-shrink-0 border border-[#00FF85]/30 text-[#00FF85] px-5 py-2 text-sm font-bold hover:bg-[#00FF85]/10 transition-all"
               >
-                Full API Reference →
+                Full API Reference &rarr;
               </a>
             </div>
           </div>
         </section>
 
-        {/* ── Comparison ── */}
+        {/* Comparison */}
         <section className="py-24 bg-black" id="comparison">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Why Layerinfinite</span>
@@ -462,15 +410,15 @@ export default function LandingPage(): React.ReactElement {
                   </tr>
                 </thead>
                 <tbody className="text-sm">
-                  {[
-                    ['Production Learning',   'Real-time / Instant',      'Manual Review',       'Weeks (Retraining)', 'Never'],
-                    ['Integration',           '3 lines of code',          'Heavy SDK setup',     'Infra rebuild',      'Prompt iteration'],
-                    ['Compliance Audit',      'Built-in (SQL)',           'Log aggregation',     'Black-box weights',  '❌'],
-                    ['Cold Start Support',    'Day 1 prior injection',    '❌',                  'Data dependency',    '❌'],
-                    ['Decision Latency',      'Sub-5ms',                  '100ms+',              'Variable',           'LLM latency'],
-                    ['Agent Trust Scoring',   '✓ Auto-suspend on decay',  '❌',                  '❌',                 '❌'],
-                  ].map(([feat, li, obs, rl, manual]) => (
-                    <tr key={feat as string} className="border-b border-[#1a1a24]/50 hover:bg-[#07070f] transition-colors">
+                  {([
+                    ['Production Learning',  'Real-time / Instant',     'Manual Review',     'Weeks (Retraining)', 'Never'],
+                    ['Integration',          '3 lines of code',         'Heavy SDK setup',   'Infra rebuild',      'Prompt iteration'],
+                    ['Compliance Audit',     'Built-in (SQL)',          'Log aggregation',   'Black-box weights',  'None'],
+                    ['Cold Start Support',   'Day 1 prior injection',   'None',              'Data dependency',    'None'],
+                    ['Decision Latency',     'Sub-5ms',                 '100ms+',            'Variable',           'LLM latency'],
+                    ['Agent Trust Scoring',  'Auto-suspend on decay',   'None',              'None',               'None'],
+                  ] as string[][]).map(([feat, li, obs, rl, manual]) => (
+                    <tr key={feat} className="border-b border-[#1a1a24]/50 hover:bg-[#07070f] transition-colors">
                       <td className="py-5 px-4 font-bold text-white">{feat}</td>
                       <td className="py-5 px-4 text-[#00FF85] font-mono">{li}</td>
                       <td className="py-5 px-4 text-[#888888]">{obs}</td>
@@ -484,20 +432,20 @@ export default function LandingPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* ── Use Cases ── */}
+        {/* Use Cases */}
         <section className="py-24 bg-[#07070f] border-y border-[#1a1a24]" id="use-cases">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Use Cases</span>
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-16">Works for any AI agent in production.</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              {[
-                { icon: '🤖', title: 'Customer Support Bots', body: 'Learn which resolution paths actually close tickets. Stop routing every edge case to restart.' },
-                { icon: '💰', title: 'Finance & Payment Agents', body: 'Track which recovery actions succeed per payment type, tier, and region. Evidence-backed decisions.' },
-                { icon: '🔧', title: 'DevOps Automation', body: 'Build a ranked playbook from real incident data. Agents run the best fix first, every time.' },
-                { icon: '📊', title: 'Data Pipeline Agents', body: 'Detect which transformation strategies succeed at scale. Catch degradation before it hits SLA.' },
-              ].map(({ icon, title, body }) => (
+              {([
+                { icon: '[bot]',   title: 'Customer Support Bots',       body: 'Learn which resolution paths actually close tickets. Stop routing every edge case to restart.' },
+                { icon: '[$]',    title: 'Finance & Payment Agents',     body: 'Track which recovery actions succeed per payment type, tier, and region. Evidence-backed decisions.' },
+                { icon: '[wrench]', title: 'DevOps Automation',          body: 'Build a ranked playbook from real incident data. Agents run the best fix first, every time.' },
+                { icon: '[chart]', title: 'Data Pipeline Agents',        body: 'Detect which transformation strategies succeed at scale. Catch degradation before it hits SLA.' },
+              ] as { icon: string; title: string; body: string }[]).map(({ icon, title, body }) => (
                 <div key={title} className="border border-[#1a1a24] p-6 hover:border-[#00FF85]/30 transition-all bg-black">
-                  <div className="text-3xl mb-4">{icon}</div>
+                  <div className="text-[#00FF85] font-mono text-xs mb-4">{icon}</div>
                   <h4 className="font-bold mb-2 text-sm">{title}</h4>
                   <p className="text-xs text-[#888888] leading-relaxed">{body}</p>
                 </div>
@@ -506,82 +454,65 @@ export default function LandingPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* ── Pricing ── */}
+        {/* Pricing */}
         <section className="py-24 bg-black" id="pricing">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Pricing</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Free while we're in beta.</h2>
+            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Free while we&apos;re in beta.</h2>
             <p className="text-[#888888] mb-16 max-w-xl">Shape the product from day one. Founding teams get permanent discounts and direct access to the roadmap.</p>
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Free */}
+
               <div className="border border-[#1a1a24] p-8 bg-[#07070f]">
-                <div className="text-[10px] font-mono text-[#888] mb-4 uppercase tracking-widest">Free / Beta</div>
+                <div className="text-[10px] font-mono text-[#888888] mb-4 uppercase tracking-widest">Free / Beta</div>
                 <div className="text-4xl font-bold mb-1">$0</div>
-                <div className="text-[#888] text-sm mb-8">During beta · No credit card</div>
+                <div className="text-[#888888] text-sm mb-8">During beta &middot; No credit card</div>
                 <ul className="space-y-3 text-sm text-[#888888] mb-8">
-                  {['Up to 3 agents', '10,000 outcomes / month', 'Full SDK access', 'Dashboard & recommendations', 'Community support'].map(f => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">✓</span>{f}</li>
+                  {['Up to 3 agents', '10,000 outcomes / month', 'Full SDK access', 'Dashboard and recommendations', 'Community support'].map(f => (
+                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">+</span>{f}</li>
                   ))}
                 </ul>
-                <button
-                  onClick={() => navigate('/auth?mode=signup')}
-                  className="w-full bg-[#00FF85] text-black py-3 text-sm font-bold hover:bg-white transition-all"
-                >
-                  Get Started Free
-                </button>
+                <button onClick={() => navigate('/auth?mode=signup')} className="w-full bg-[#00FF85] text-black py-3 text-sm font-bold hover:bg-white transition-all">Get Started Free</button>
               </div>
 
-              {/* Pro */}
               <div className="border border-[#00FF85]/40 p-8 bg-[#00FF85]/5 relative">
                 <div className="absolute -top-3 left-8 bg-[#00FF85] text-black text-[10px] font-bold px-3 py-1">MOST POPULAR</div>
-                <div className="text-[10px] font-mono text-[#00FF85] mb-4 uppercase tracking-widest">Pro · Coming Soon</div>
-                <div className="text-4xl font-bold mb-1">$49<span className="text-lg text-[#888]">/mo</span></div>
-                <div className="text-[#888] text-sm mb-8">Founding team rate locked in</div>
+                <div className="text-[10px] font-mono text-[#00FF85] mb-4 uppercase tracking-widest">Pro &middot; Coming Soon</div>
+                <div className="text-4xl font-bold mb-1">$49<span className="text-lg text-[#888888]">/mo</span></div>
+                <div className="text-[#888888] text-sm mb-8">Founding team rate locked in</div>
                 <ul className="space-y-3 text-sm text-[#888888] mb-8">
                   {['Unlimited agents', '500,000 outcomes / month', 'Priority scoring engine', 'Degradation alerts (Slack/Email)', 'Compliance export (CSV/JSON)', 'Priority support'].map(f => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">✓</span>{f}</li>
+                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">+</span>{f}</li>
                   ))}
                 </ul>
-                <button
-                  onClick={() => navigate('/auth?mode=signup')}
-                  className="w-full border border-[#00FF85] text-[#00FF85] py-3 text-sm font-bold hover:bg-[#00FF85] hover:text-black transition-all"
-                >
-                  Join Waitlist
-                </button>
+                <button onClick={() => navigate('/auth?mode=signup')} className="w-full border border-[#00FF85] text-[#00FF85] py-3 text-sm font-bold hover:bg-[#00FF85] hover:text-black transition-all">Join Waitlist</button>
               </div>
 
-              {/* Enterprise */}
               <div className="border border-[#1a1a24] p-8 bg-[#07070f]">
-                <div className="text-[10px] font-mono text-[#888] mb-4 uppercase tracking-widest">Enterprise</div>
+                <div className="text-[10px] font-mono text-[#888888] mb-4 uppercase tracking-widest">Enterprise</div>
                 <div className="text-4xl font-bold mb-1">Custom</div>
-                <div className="text-[#888] text-sm mb-8">Volume · SLA · Private deploy</div>
+                <div className="text-[#888888] text-sm mb-8">Volume &middot; SLA &middot; Private deploy</div>
                 <ul className="space-y-3 text-sm text-[#888888] mb-8">
                   {['Unlimited everything', 'Dedicated infra option', 'Custom retention policies', 'SOC2 / HIPAA on request', 'SLA guarantee', 'Dedicated onboarding'].map(f => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">✓</span>{f}</li>
+                    <li key={f} className="flex items-center gap-2"><span className="text-[#00FF85]">+</span>{f}</li>
                   ))}
                 </ul>
-                <a
-                  href="mailto:team@layerinfinite.app"
-                  className="block w-full text-center border border-[#1a1a24] text-[#888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
-                >
-                  Contact Us
-                </a>
+                <a href="mailto:team@layerinfinite.app" className="block w-full text-center border border-[#1a1a24] text-[#888888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all">Contact Us</a>
               </div>
+
             </div>
           </div>
         </section>
 
-        {/* ── Final CTA ── */}
+        {/* Final CTA */}
         <section className="py-28 relative" id="final-cta">
           <div className="absolute inset-0 bg-gradient-to-b from-black via-[#00FF85]/5 to-black pointer-events-none" />
           <div className="max-w-7xl mx-auto px-6 text-center relative z-10">
             <div className="inline-flex items-center gap-2 border border-[#00FF85]/20 bg-[#00FF85]/5 px-4 py-1.5 rounded-full text-[11px] font-mono text-[#00FF85] mb-8">
               <span className="w-1.5 h-1.5 rounded-full bg-[#00FF85] animate-pulse" />
-              Free beta · 50 founding team seats
+              Free beta &middot; 50 founding team seats
             </div>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tighter mb-6 max-w-3xl mx-auto">
-              Your agents are failing <span className="text-[#00FF85]">right now.</span>
+              Your agents are failing{' '}<span className="text-[#00FF85]">right now.</span>
             </h2>
             <p className="text-[#888888] mb-10 max-w-lg mx-auto text-lg">
               Layerinfinite starts learning from your first outcome. Free during beta. No credit card. Integration in under 30 minutes.
@@ -591,22 +522,22 @@ export default function LandingPage(): React.ReactElement {
                 onClick={() => navigate('/auth?mode=signup')}
                 className="bg-[#00FF85] text-black px-10 py-4 text-base font-bold tracking-tight hover:scale-105 hover:bg-white transition-all shadow-[0_0_40px_rgba(0,255,133,0.3)]"
               >
-                Get Started Free — No Credit Card
+                Get Started Free &mdash; No Credit Card
               </button>
               <button
                 onClick={() => scrollTo('sdk-docs')}
                 className="border border-[#1a1a24] text-[#888888] px-10 py-4 text-base font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
               >
-                Read the Docs →
+                Read the Docs &rarr;
               </button>
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-6 text-[11px] text-[#555] font-mono">
+            <div className="flex flex-wrap items-center justify-center gap-6 text-[11px] text-[#555555] font-mono">
               <span>Free during beta</span>
-              <span>·</span>
+              <span>&middot;</span>
               <span>No credit card</span>
-              <span>·</span>
+              <span>&middot;</span>
               <span>30-minute setup</span>
-              <span>·</span>
+              <span>&middot;</span>
               <span>Cancel anytime</span>
             </div>
           </div>
@@ -614,27 +545,18 @@ export default function LandingPage(): React.ReactElement {
 
       </main>
 
-      {/* ── Footer ── */}
+      {/* Footer */}
       <footer className="py-12 border-t border-[#1a1a24] bg-black">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="flex items-center gap-6">
-            <span className="text-xl font-bold tracking-tight">
-              layer<span className="text-[#00FF85]">infinite</span>
-            </span>
-            <span className="text-[#555] text-[10px] font-mono">v1.0 · March 2026</span>
+            <span className="text-xl font-bold tracking-tight">layer<span className="text-[#00FF85]">infinite</span></span>
+            <span className="text-[#555555] text-[10px] font-mono">v1.0 &middot; March 2026</span>
           </div>
           <div className="flex gap-8 text-[11px] font-bold uppercase tracking-widest text-[#888888]">
             <Link className="hover:text-[#00FF85] transition-colors" to="/privacy">Privacy</Link>
             <Link className="hover:text-[#00FF85] transition-colors" to="/terms">Terms</Link>
             <a className="hover:text-[#00FF85] transition-colors" href="mailto:team@layerinfinite.app">Contact</a>
-            <a
-              className="hover:text-[#00FF85] transition-colors"
-              href="https://pypi.org/project/layerinfinite-sdk/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              SDK
-            </a>
+            <a className="hover:text-[#00FF85] transition-colors" href="https://pypi.org/project/layerinfinite-sdk/" target="_blank" rel="noreferrer">SDK</a>
           </div>
         </div>
       </footer>
