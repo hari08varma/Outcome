@@ -8,10 +8,6 @@ function pct(rate: number): string {
     return `${(rate * 100).toFixed(1)}%`;
 }
 
-function confPct(confidence: number): string {
-    return `${Math.round(confidence * 100)}%`;
-}
-
 type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
 type SuggestedAction = 'collect_more_data' | 'monitor' | 'replace';
 
@@ -181,6 +177,131 @@ export interface ActionableOutput {
     // Meta
     sample_size: { best: number; worst: number; min: number } | null;
     generated_at: string;
+
+    // Issue 1+2: confidence-qualified improvement display
+    improvement_display: {
+        raw_delta_pct: string;
+        qualified_delta_pct: string;
+        is_estimate: boolean;
+        samples_basis: number;
+    } | null;
+
+    // Issue 3: actionable monitoring steps
+    monitor_steps: string[] | null;
+
+    // Issue 4: unlock threshold explanation
+    unlock_hint: string | null;
+
+    // Issue 5: time dimension
+    data_window: {
+        first_seen_at: string | null;
+        last_seen_at: string | null;
+        last_updated_label: string;
+    } | null;
+
+    // Issue 6: per-action uncertainty bands
+    action_uncertainty: {
+        best: { action: string; rate_pct: string; margin_pct: string };
+        worst: { action: string; rate_pct: string; margin_pct: string };
+    } | null;
+
+    // Issue 7: decision threshold hint
+    threshold_hint: string;
+
+    // Issue 8: agent scope label
+    scope_label: string;
+}
+
+// Issue 1+2: Raw delta with uncertainty label, plus confidence-weighted delta
+function buildImprovementDisplay(
+    delta: number,
+    confidence: number | null,
+    minSamples: number,
+    isEarlySignal: boolean,
+): ActionableOutput['improvement_display'] {
+    if (delta <= 0) return null;
+    const conf = confidence ?? 0;
+    const rawPct = `+${(delta * 100).toFixed(1)}%`;
+    const qualifiedRaw = delta * conf;
+    const qualifiedPct = `+${(qualifiedRaw * 100).toFixed(1)}%`;
+    return {
+        raw_delta_pct: rawPct,
+        qualified_delta_pct: qualifiedPct,
+        is_estimate: isEarlySignal || conf < 0.5,
+        samples_basis: minSamples,
+    };
+}
+
+// Issue 3: Concrete monitor steps
+function buildMonitorSteps(
+    currentSamples: number,
+    targetSamples: number,
+    bestAction: string,
+    taskName: string,
+): string[] {
+    const remaining = Math.max(0, targetSamples - currentSamples);
+    return [
+        `Continue logging outcomes for task "${taskName}" with task_name="${taskName}" in your log_outcome calls`,
+        `Run at least ${remaining} more executions of ${bestAction} to reach ${targetSamples} total samples`,
+        `Do NOT switch actions yet — wait for the confidence bar to reach 50%+`,
+        `Re-check this page after every ~10 new outcomes`,
+    ];
+}
+
+// Issue 4: Unlock hint text
+function buildUnlockHint(
+    currentSamples: number,
+    targetSamples: number,
+    _confidencePct: number,
+): string {
+    const remaining = Math.max(0, targetSamples - currentSamples);
+    if (remaining === 0) {
+        return `Enough samples collected. Confidence will unlock once signal stabilizes above 50%.`;
+    }
+    return (
+        `~${remaining} more outcomes needed to approach a stable signal. ` +
+        `A high-confidence recommendation unlocks at ~${targetSamples} samples + 80% confidence.`
+    );
+}
+
+// Issue 6: Per-action margin of error using Wilson score interval (simplified)
+// margin ≈ 1.96 × sqrt(p(1-p)/n) — 95% confidence interval half-width
+function wilsonMargin(successRate: number, n: number): string {
+    if (n === 0) return '±?%';
+    const p = Math.min(1, Math.max(0, successRate));
+    const margin = 1.96 * Math.sqrt((p * (1 - p)) / n);
+    return `±${(margin * 100).toFixed(1)}%`;
+}
+
+function buildActionUncertainty(
+    best: { action_name: string; success_rate: number; total_count: number },
+    worst: { action_name: string; success_rate: number; total_count: number },
+): ActionableOutput['action_uncertainty'] {
+    return {
+        best: {
+            action: best.action_name,
+            rate_pct: `${(best.success_rate * 100).toFixed(1)}%`,
+            margin_pct: wilsonMargin(best.success_rate, best.total_count),
+        },
+        worst: {
+            action: worst.action_name,
+            rate_pct: `${(worst.success_rate * 100).toFixed(1)}%`,
+            margin_pct: wilsonMargin(worst.success_rate, worst.total_count),
+        },
+    };
+}
+
+// Issue 5: Relative time label from ISO string
+function relativeTimeLabel(isoString: string | null): string {
+    if (!isoString) return 'Unknown';
+    const diffMs = Date.now() - new Date(isoString).getTime();
+    const mins = Math.floor(diffMs / 60_000);
+    if (mins < 2) return 'Updated just now';
+    if (mins < 60) return `Updated ${mins} minutes ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `Updated ${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+    const days = Math.floor(hrs / 24);
+    return `Updated ${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 function buildInsight(r: RecommendationResult): ActionableOutput['insight'] {
@@ -304,6 +425,14 @@ export function buildActionableOutput(
     const confidenceLabel = confidenceMeta.label;
     const stateMeta = STATE_META[r.state];
 
+    // Issue 7: threshold hint — always present
+    const thresholdHint =
+        `Recommendations appear at 50%+ confidence and stabilize at 80%+. ` +
+        `High-confidence (80%+) recommendations include a direct "replace" action.`;
+
+    // Issue 8: scope label — placeholder, overwritten by route via spread
+    const scopeLabel = '';
+
     const base = {
         task: r.task,
         state: r.state,
@@ -320,10 +449,6 @@ export function buildActionableOutput(
 
     if (r.state === 'no_data') {
         const trustBlocked = (r as any)._trust_gate_blocked === true;
-        const totalOutcomes = r.all_actions.reduce(
-            (sum, a) => sum + a.total_count,
-            0
-        );
         return {
             ...base,
             decision: {
@@ -342,12 +467,21 @@ export function buildActionableOutput(
             message: buildMessage('no_data', false, confidenceMeta, null, null),
             validation_hint: null,
             sample_size: null,
+            improvement_display: null,
+            monitor_steps: null,
+            unlock_hint: buildUnlockHint(0, MIN_SAMPLES_HIGH_CONFIDENCE, 0),
+            data_window: null,
+            action_uncertainty: null,
+            threshold_hint: thresholdHint,
+            scope_label: scopeLabel,
         };
     }
 
     if (r.state === 'early_signal') {
         const b = r.best_action!;
         const w = r.worst_action!;
+        const delta = b.success_rate - w.success_rate;
+        const lastSeen = b.last_seen_at || w.last_seen_at || null;
         return {
             ...base,
             decision: {
@@ -355,7 +489,6 @@ export function buildActionableOutput(
                 action_required: false,
             },
             problem: (() => {
-                const delta = b.success_rate - w.success_rate;
                 if (delta < 0.08) {
                     return (
                         `${b.action_name} and ${w.action_name} perform similarly ` +
@@ -372,13 +505,24 @@ export function buildActionableOutput(
             risk_context: (r as any)._silent_failure_warning
                 ? 'Silent failures detected in the last 24h: some outcomes marked success=true had low outcome scores. Signal direction is promising but uncertainty remains high.'
                 : 'Signal direction is promising but uncertainty remains high; immediate full replacement may be premature.',
-            expected_improvement: null,
+            expected_improvement: (() => {
+                if (delta <= 0) return null;
+                return {
+                    baseline: pct(w.success_rate),
+                    improved: pct(b.success_rate),
+                    delta: `+${(delta * 100).toFixed(1)}% (early estimate)`,
+                    delta_raw: Number(delta.toFixed(4)),
+                    based_on_samples: r.min_sample_count,
+                    caution: `Based on ${r.min_sample_count} outcomes per action at ` +
+                        `${Math.round((r.confidence ?? 0) * 100)}% confidence. ` +
+                        `Effective reliable gain: ~${((delta * (r.confidence ?? 0)) * 100).toFixed(1)}%.`,
+                };
+            })(),
             reason: buildReason(r, confidenceMeta),
             confidence: r.confidence ?? 0,
             confidence_label: confidenceLabel,
             insight: buildInsight(r),
             message: (() => {
-                const delta = b.success_rate - w.success_rate;
                 if (delta < 0.08) {
                     return (
                         `${b.action_name} and ${w.action_name} are performing ` +
@@ -400,6 +544,31 @@ export function buildActionableOutput(
                 worst: w.total_count,
                 min: r.min_sample_count,
             },
+            improvement_display: buildImprovementDisplay(
+                delta,
+                r.confidence,
+                r.min_sample_count,
+                true,
+            ),
+            monitor_steps: buildMonitorSteps(
+                r.min_sample_count,
+                MIN_SAMPLES_HIGH_CONFIDENCE,
+                b.action_name,
+                r.task,
+            ),
+            unlock_hint: buildUnlockHint(
+                r.min_sample_count,
+                MIN_SAMPLES_HIGH_CONFIDENCE,
+                Math.round((r.confidence ?? 0) * 100),
+            ),
+            data_window: {
+                first_seen_at: null,
+                last_seen_at: lastSeen,
+                last_updated_label: relativeTimeLabel(lastSeen),
+            },
+            action_uncertainty: buildActionUncertainty(b, w),
+            threshold_hint: thresholdHint,
+            scope_label: scopeLabel,
         };
     }
 
@@ -409,6 +578,7 @@ export function buildActionableOutput(
     const shouldAct =
         confidenceMeta.label === 'high' ||
         confidenceMeta.label === 'very_high';
+    const lastSeen = b.last_seen_at || w.last_seen_at || null;
 
     return {
         ...base,
@@ -460,5 +630,30 @@ export function buildActionableOutput(
             worst: w.total_count,
             min: r.min_sample_count,
         },
+        improvement_display: buildImprovementDisplay(
+            imp.absolute_delta,
+            r.confidence,
+            r.min_sample_count,
+            false,
+        ),
+        monitor_steps: shouldAct ? null : buildMonitorSteps(
+            r.min_sample_count,
+            MIN_SAMPLES_HIGH_CONFIDENCE,
+            b.action_name,
+            r.task,
+        ),
+        unlock_hint: shouldAct ? null : buildUnlockHint(
+            r.min_sample_count,
+            MIN_SAMPLES_HIGH_CONFIDENCE,
+            Math.round((r.confidence ?? 0) * 100),
+        ),
+        data_window: {
+            first_seen_at: null,
+            last_seen_at: lastSeen,
+            last_updated_label: relativeTimeLabel(lastSeen),
+        },
+        action_uncertainty: buildActionUncertainty(b, w),
+        threshold_hint: thresholdHint,
+        scope_label: scopeLabel,
     };
 }

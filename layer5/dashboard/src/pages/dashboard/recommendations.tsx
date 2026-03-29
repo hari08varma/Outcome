@@ -81,6 +81,25 @@ interface RecommendationResponse {
     agent_scope: 'agent_scoped' | 'customer_blended';
     customer_id: string;
     generated_at: string;
+    improvement_display: {
+        raw_delta_pct: string;
+        qualified_delta_pct: string;
+        is_estimate: boolean;
+        samples_basis: number;
+    } | null;
+    monitor_steps: string[] | null;
+    unlock_hint: string | null;
+    data_window: {
+        first_seen_at: string | null;
+        last_seen_at: string | null;
+        last_updated_label: string;
+    } | null;
+    action_uncertainty: {
+        best: { action: string; rate_pct: string; margin_pct: string };
+        worst: { action: string; rate_pct: string; margin_pct: string };
+    } | null;
+    threshold_hint: string;
+    scope_label: string;
 }
 
 const CONFIDENCE_CONFIG: Record<
@@ -206,46 +225,53 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
 
     const borderAccent =
         state === 'stable' ? 'border-[#b8ff00]/40' :
-            state === 'early_signal' ? 'border-yellow-500/40' :
-                'border-[#1a1a24]';
+        state === 'early_signal' ? 'border-yellow-500/40' :
+        'border-[#1a1a24]';
 
     const recommendationTone =
         data.decision.type === 'replace' ? 'text-[#b8ff00]' :
-            data.decision.type === 'monitor' ? 'text-yellow-400' :
-                'text-[#a1a1aa]';
+        data.decision.type === 'monitor' ? 'text-yellow-400' :
+        'text-[#a1a1aa]';
 
     const recommendationTitle =
         data.decision.type === 'replace' ? 'Recommended Action' :
-            data.decision.type === 'monitor' ? 'Recommended Action (Monitor)' :
-                'Recommended Action (Wait)';
+        data.decision.type === 'monitor' ? 'Recommended Action (Monitor)' :
+        'Recommended Action (Wait)';
 
     return (
         <div className="space-y-6">
+            {/* ── Header row ── */}
             <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-lg font-semibold text-white font-mono">{data.task}</span>
                     {stateBadge(state)}
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${confidenceCfg.chipClass}`}>
                         {confidenceCfg.label}
                     </span>
-                    {data.agent_scope === 'customer_blended' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30">
-                            All Agents
-                        </span>
-                    )}
-                    {data.agent_scope === 'agent_scoped' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/30">
-                            Agent Scoped
-                        </span>
-                    )}
+                    {/* Issue 8: Descriptive scope label */}
+                    <span
+                        title={data.scope_label}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-help ${
+                            data.agent_scope === 'agent_scoped'
+                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
+                                : 'bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'
+                        }`}
+                    >
+                        {data.agent_scope === 'agent_scoped' ? '⬡ Agent data only' : '⬡ All agents blended'}
+                    </span>
                 </div>
-                <p className="text-xs text-[#a1a1aa] mt-1">{data.explanation}</p>
-                <span className="text-xs text-[#a1a1aa]">
-                    Updated {new Date(data.generated_at).toLocaleString()}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                    <p className="text-xs text-[#a1a1aa]">{data.explanation}</p>
+                    {/* Issue 5: Last updated label from API */}
+                    <p className="text-xs text-[#52525b]">
+                        {data.data_window?.last_updated_label ?? `Updated ${new Date(data.generated_at).toLocaleString()}`}
+                    </p>
+                </div>
             </div>
 
+            {/* ── Main card ── */}
             <div className={`bg-[#111118] border ${borderAccent} rounded-xl p-6 space-y-5`}>
+
                 {data.problem && (
                     <div>
                         <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">Problem</p>
@@ -268,6 +294,23 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     </div>
                 )}
 
+                {/* Issue 3: Actionable monitor steps */}
+                {data.monitor_steps && data.monitor_steps.length > 0 && (
+                    <div className="rounded-lg bg-yellow-500/5 border border-yellow-500/20 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-yellow-500 mb-2">
+                            How to Monitor
+                        </p>
+                        <ul className="space-y-1">
+                            {data.monitor_steps.map((step, i) => (
+                                <li key={i} className="text-xs text-[#a1a1aa] flex items-start gap-2">
+                                    <span className="text-yellow-500 shrink-0">{i + 1}.</span>
+                                    <span>{step}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
                 {data.risk_context && (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-[#ffb4b4]">
                         <p className="text-xs font-medium uppercase tracking-wider text-[#ff6b6b] mb-1">Risk Context</p>
@@ -275,18 +318,55 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     </div>
                 )}
 
-                {data.expected_improvement && (
+                {/* Issue 1+2: Confidence-qualified improvement block */}
+                {data.improvement_display && (
                     <div>
-                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-2">Expected Impact</p>
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <span className="text-2xl font-bold text-white">{data.expected_improvement.baseline}</span>
-                            <ArrowRight size={18} className="text-[#a1a1aa]" />
-                            <span className="text-2xl font-bold text-[#b8ff00]">{data.expected_improvement.improved}</span>
-                            <span className="ml-1 px-2 py-0.5 rounded-full text-sm font-bold bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30">
-                                {data.expected_improvement.delta}
-                            </span>
+                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-2">
+                            Expected Impact
+                        </p>
+                        <div className="flex items-start gap-6 flex-wrap">
+                            {/* Raw delta with estimate label */}
+                            <div>
+                                <div className="flex items-baseline gap-2">
+                                    <span className="text-2xl font-bold text-white">
+                                        {data.expected_improvement?.baseline ?? '-'}
+                                    </span>
+                                    <ArrowRight size={16} className="text-[#a1a1aa]" />
+                                    <span className="text-2xl font-bold text-[#b8ff00]">
+                                        {data.expected_improvement?.improved ?? '-'}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-full text-sm font-bold bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30">
+                                        {data.improvement_display.raw_delta_pct}
+                                        {data.improvement_display.is_estimate && (
+                                            <span className="text-[10px] font-normal text-yellow-400 ml-1">
+                                                early estimate
+                                            </span>
+                                        )}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-[#a1a1aa] mt-1">
+                                    potential improvement (based on {data.improvement_display.samples_basis} samples)
+                                </p>
+                            </div>
+                            {/* Issue 2: Confidence-weighted reliable gain */}
+                            {data.improvement_display.is_estimate && (
+                                <div className="bg-[#1a1a24] rounded-lg px-3 py-2">
+                                    <p className="text-xs text-[#a1a1aa] mb-0.5">Reliable gain estimate</p>
+                                    <p className="text-lg font-bold text-yellow-400">
+                                        {data.improvement_display.qualified_delta_pct}
+                                    </p>
+                                    <p className="text-[10px] text-[#52525b]">
+                                        = raw delta × {data.confidence_meta?.percent ?? 0}% confidence
+                                    </p>
+                                </div>
+                            )}
                         </div>
-                        <p className="text-xs text-[#a1a1aa] mt-1">success rate improvement (success_rate)</p>
+                        {data.expected_improvement?.caution && (
+                            <p className="text-xs text-[#ffaa00] mt-2 flex items-center gap-1">
+                                <span>⚠</span>
+                                <span>{data.expected_improvement.caution}</span>
+                            </p>
+                        )}
                     </div>
                 )}
 
@@ -300,12 +380,16 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                 </div>
             </div>
 
+            {/* ── Metric cards row ── */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
-                    <p className="text-xs text-[#a1a1aa] mb-3">Confidence</p>
+
+                {/* Confidence card */}
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 space-y-3">
+                    <p className="text-xs text-[#a1a1aa]">Confidence</p>
                     <ConfidenceBar meta={confidenceMeta} />
+
                     {data.progress && (
-                        <div className="mt-4">
+                        <div>
                             <div className="flex items-center justify-between text-xs text-[#a1a1aa] mb-1">
                                 <span>Data progress</span>
                                 <span>{data.progress.current_samples} / {data.progress.target_samples}</span>
@@ -321,14 +405,22 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                             </p>
                         </div>
                     )}
-                    {confidenceMeta && (
-                        <p className="text-xs text-[#a1a1aa] mt-2">
-                            Confidence tier: <span className={confidenceCfg.textClass}>{confidenceCfg.label}</span>
+
+                    {/* Issue 4: Unlock hint */}
+                    {data.unlock_hint && (
+                        <p className="text-xs text-[#52525b] border-t border-[#1a1a24] pt-2">
+                            {data.unlock_hint}
                         </p>
                     )}
 
+                    {/* Issue 7: Decision threshold hint */}
+                    <p className="text-xs text-[#52525b] border-t border-[#1a1a24] pt-2">
+                        {data.threshold_hint}
+                    </p>
+
+                    {/* Current signal row */}
                     {data.insight.best_action && (
-                        <div className="mt-4 bg-[#111118] border border-[#1a1a24] rounded-lg p-3">
+                        <div className="bg-[#111118] border border-[#1a1a24] rounded-lg p-3">
                             <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-2">
                                 Current Signal
                             </p>
@@ -353,38 +445,76 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                                     </div>
                                 )}
                             </div>
-                            {data.expected_improvement?.caution && (
-                                <p className="text-xs text-[#ffaa00] mt-2 flex items-center gap-1">
-                                    <span>!</span>
-                                    <span>{data.expected_improvement.caution}</span>
-                                </p>
-                            )}
                         </div>
                     )}
                 </div>
 
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
+                {/* Sample size card with Issue 6: uncertainty bands */}
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 space-y-3">
                     <p className="text-xs text-[#a1a1aa] mb-2">Sample Size</p>
                     {data.sample_size ? (
-                        <div className="space-y-1">
-                            <p className="text-white text-sm">
-                                Best:&nbsp;<span className="font-bold">{data.sample_size.best}</span>
-                            </p>
-                            <p className="text-white text-sm">
-                                Worst:&nbsp;<span className="font-bold">{data.sample_size.worst}</span>
-                            </p>
-                            <p className="text-[#a1a1aa] text-xs">Gate value (min): {data.sample_size.min}</p>
+                        <div className="space-y-2">
+                            {data.action_uncertainty ? (
+                                <>
+                                    <div className="space-y-1">
+                                        <p className="text-[#a1a1aa] text-xs uppercase tracking-wider">Best</p>
+                                        <p className="text-white text-sm font-mono">
+                                            {data.action_uncertainty.best.rate_pct}
+                                            <span className="text-[#52525b] ml-1 text-xs">
+                                                {data.action_uncertainty.best.margin_pct}
+                                            </span>
+                                        </p>
+                                        <p className="text-[#52525b] text-xs">
+                                            {data.action_uncertainty.best.action} · {data.sample_size.best} outcomes
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1 border-t border-[#1a1a24] pt-2">
+                                        <p className="text-[#a1a1aa] text-xs uppercase tracking-wider">Baseline</p>
+                                        <p className="text-white text-sm font-mono">
+                                            {data.action_uncertainty.worst.rate_pct}
+                                            <span className="text-[#52525b] ml-1 text-xs">
+                                                {data.action_uncertainty.worst.margin_pct}
+                                            </span>
+                                        </p>
+                                        <p className="text-[#52525b] text-xs">
+                                            {data.action_uncertainty.worst.action} · {data.sample_size.worst} outcomes
+                                        </p>
+                                    </div>
+                                    <p className="text-[#52525b] text-xs border-t border-[#1a1a24] pt-2">
+                                        ± margin is 95% confidence interval
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-white text-sm">Best: <span className="font-bold">{data.sample_size.best}</span></p>
+                                    <p className="text-white text-sm">Worst: <span className="font-bold">{data.sample_size.worst}</span></p>
+                                    <p className="text-[#a1a1aa] text-xs">Gate value (min): {data.sample_size.min}</p>
+                                </>
+                            )}
                         </div>
                     ) : (
                         <p className="text-[#a1a1aa] text-sm">-</p>
                     )}
                 </div>
 
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
+                {/* Task + scope card */}
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 space-y-3">
                     <p className="text-xs text-[#a1a1aa] mb-2">Task</p>
                     <p className="text-white text-sm font-mono break-all">{data.task}</p>
                     {data.customer_id && (
                         <p className="text-[#a1a1aa] text-xs mt-1 font-mono">{data.customer_id.slice(-8)}</p>
+                    )}
+                    {/* Issue 8: Full scope explanation */}
+                    {data.scope_label && (
+                        <p className="text-xs text-[#52525b] border-t border-[#1a1a24] pt-2">
+                            {data.scope_label}
+                        </p>
+                    )}
+                    {/* Issue 5: Time dimension */}
+                    {data.data_window?.last_seen_at && (
+                        <p className="text-xs text-[#52525b]">
+                            Last outcome: {new Date(data.data_window.last_seen_at).toLocaleString()}
+                        </p>
                     )}
                 </div>
             </div>

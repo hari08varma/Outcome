@@ -94,6 +94,9 @@ getRecommendationsRouter.get('/', async (c) => {
                 agent_scope: scopedAgentId
                     ? 'agent_scoped'
                     : 'customer_blended',
+                scope_label: scopedAgentId
+                    ? 'Based on this agent\'s logged outcomes only'
+                    : 'Based on all agents\' combined outcomes',
                 customer_id: customerId,
             },
             200
