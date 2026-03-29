@@ -178,9 +178,9 @@ export async function getRecommendation(
             // Agent-scoped: only show outcomes for this specific agent
             query = query.eq('agent_id', agentId);
         } else {
-            // Customer-blended (All Agents): exclude unattributed sentinel rows
-            // to avoid double-counting outcomes that had no agent_id on ingestion
-            query = query.neq('agent_id', '__unattributed__');
+            // Customer-blended (All Agents): exclude zero-UUID sentinel rows
+            // (outcomes logged without an agent_id — stored as 00000000-... by migration 076)
+            query = query.neq('agent_id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data, error } = await query;

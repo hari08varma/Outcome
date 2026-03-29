@@ -431,28 +431,36 @@ export default function RecommendationsPage(): React.ReactElement {
 
     // Fetch distinct task_names from the MV scoped to the selected agent.
     // RLS on mv_task_action_performance enforces customer_id via JWT automatically.
+    // Fetch tasks via the authenticated API endpoint — avoids silent RLS failures
+    // that occur when querying MVs directly via the Supabase anon client.
     useEffect(() => {
-        if (!isValid) return;
+        if (!isValid || !apiKey || !API_BASE) {
+            setAgentTasks([]);
+            return;
+        }
+        setAgentTasksLoading(true);
+        const controller = new AbortController();
         void (async () => {
-            setAgentTasksLoading(true);
             try {
-                let q = supabase
-                    .from('mv_task_action_performance')
-                    .select('task_name')
-                    .neq('agent_id', '__unattributed__');
-                if (selectedAgentId) {
-                    q = q.eq('agent_id', selectedAgentId);
+                const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
+                const qs = selectedAgentId
+                    ? `?agent_id=${encodeURIComponent(selectedAgentId)}`
+                    : '';
+                const res = await agentFetch(`${API_BASE}/v1/recommendations/tasks${qs}`);
+                if (res.ok) {
+                    const json = await res.json() as { tasks: string[] };
+                    setAgentTasks(json.tasks ?? []);
+                } else {
+                    setAgentTasks([]);
                 }
-                const { data: taskRows } = await q;
-                const tasks = [
-                    ...new Set((taskRows ?? []).map((r: any) => r.task_name as string)),
-                ].sort();
-                setAgentTasks(tasks);
+            } catch {
+                setAgentTasks([]);
             } finally {
                 setAgentTasksLoading(false);
             }
         })();
-    }, [isValid, selectedAgentId]);
+        return () => controller.abort();
+    }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
 
     const fetchRecommendation = useCallback(
         async (task: string, showLoading = true): Promise<void> => {
@@ -489,6 +497,9 @@ export default function RecommendationsPage(): React.ReactElement {
 
     useEffect(() => {
         if (!isValid) return;
+        // Clear stale result immediately so user never sees another agent's data while loading
+        setData(null);
+        setError(null);
 
         fetchRef.current = () => fetchRecommendation(activeTask, false);
         void fetchRecommendation(activeTask, true);
