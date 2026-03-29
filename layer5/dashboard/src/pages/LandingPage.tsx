@@ -236,6 +236,30 @@ const PRICING_TIERS = [
   },
 ];
 
+// ── Use case data ──
+const USE_CASES = [
+  {
+    icon: '🤖',
+    title: 'Customer Support Agents',
+    quote: 'Your agent is routing edge cases to humans. Layerinfinite tells you which routing action actually closes tickets — and which one is making it worse.',
+  },
+  {
+    icon: '💰',
+    title: 'Finance & Payment Agents',
+    quote: '31% of your recovery emails are failing. Layerinfinite identifies the exact action to replace and shows you the expected recovery rate improvement.',
+  },
+  {
+    icon: '🔧',
+    title: 'DevOps Automation',
+    quote: 'Stop guessing which fix to run first. Layerinfinite builds a ranked playbook from real incident data. Best action first, every time.',
+  },
+  {
+    icon: '📊',
+    title: 'Data Pipeline Agents',
+    quote: 'One bad imputation strategy is silently failing 57% of your pipelines. Layerinfinite finds it before it hits SLA.',
+  },
+];
+
 export default function LandingPage(): React.ReactElement {
   const navigate = useNavigate();
 
@@ -557,18 +581,27 @@ export default function LandingPage(): React.ReactElement {
         <section className="py-24 bg-[#07070f] border-y border-[#1a1a24]" id="use-cases">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Use Cases</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-16">Works for any AI agent in production.</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              {([
-                { icon: '🤖', title: 'Customer Support Bots',       body: 'Learn which resolution paths actually close tickets. Stop routing every edge case to restart.' },
-                { icon: '💰', title: 'Finance & Payment Agents',     body: 'Track which recovery actions succeed per payment type, tier, and region. Evidence-backed decisions.' },
-                { icon: '🔧', title: 'DevOps Automation',            body: 'Build a ranked playbook from real incident data. Agents run the best fix first, every time.' },
-                { icon: '📊', title: 'Data Pipeline Agents',         body: 'Detect which transformation strategies succeed at scale. Catch degradation before it hits SLA.' },
-              ] as { icon: string; title: string; body: string }[]).map(({ icon, title, body }) => (
-                <div key={title} className="border border-[#1a1a24] p-6 hover:border-[#00FF85]/30 transition-all bg-black">
-                  <div className="text-3xl mb-4">{icon}</div>
-                  <h4 className="font-bold mb-2 text-sm">{title}</h4>
-                  <p className="text-xs text-[#888888] leading-relaxed">{body}</p>
+            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Works for any AI agent in production.</h2>
+            <p className="text-[#888888] mb-16 max-w-xl">Not hypothetical. These are the exact problems Layerinfinite was built to solve.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {USE_CASES.map(({ icon, title, quote }) => (
+                <div
+                  key={title}
+                  className="border border-[#1a1a24] bg-black p-8 hover:border-[#00FF85]/30 hover:bg-[#07070f] transition-all group"
+                >
+                  {/* Icon + title row */}
+                  <div className="flex items-center gap-3 mb-6">
+                    <span className="text-2xl">{icon}</span>
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#555555] group-hover:text-[#00FF85] transition-colors">
+                      {title}
+                    </span>
+                  </div>
+                  {/* Pull quote */}
+                  <blockquote className="border-l-2 border-[#00FF85]/40 pl-5">
+                    <p className="text-[15px] text-white leading-relaxed font-medium">
+                      &ldquo;{quote}&rdquo;
+                    </p>
+                  </blockquote>
                 </div>
               ))}
             </div>
