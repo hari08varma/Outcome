@@ -11,6 +11,13 @@ Add these secrets to GitHub → Settings → Secrets → Actions:
 
 Without SMOKE_TEST_API_KEY, smoke tests are skipped (not failed).
 
+## [0.2.1] — 2026-03-29
+### Fixed
+- Published `get_recommendations(task)` method that was present in source but missing from PyPI release 0.2.0
+- Added Python 3.13 and 3.14 classifier support
+
+---
+
 ## [0.2.0] - 2026-03-25
 ### Added
 - instrument(client) — one-line setup, patches httpx + requests
