@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 
 const TERMINAL_LINES = [
   { delay: 0,    color: 'text-[#555555]',   text: '# 1. Install the SDK' },
@@ -73,12 +74,177 @@ function StatCard({ value, label }: { value: string; label: string }): React.Rea
   );
 }
 
-function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc: string }): React.ReactElement {
+// ── Feature data ──
+const FEATURES = [
+  {
+    title: 'Action Scoring',
+    body: 'Every action your agent executes gets a score based on what actually happened. Success rate, sample count, and confidence — computed from your own production data, not benchmarks.',
+    stat: 'success_rate = outcomes / total',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <rect x="3" y="12" width="4" height="9" rx="1" />
+        <rect x="10" y="7" width="4" height="14" rx="1" />
+        <rect x="17" y="3" width="4" height="18" rx="1" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Decision Recommendations',
+    body: 'Identifies the action that is underperforming and tells you exactly what to replace it with. One clear output: the worst action, the best alternative, and the expected improvement.',
+    stat: 'worst → best, with % improvement',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <path d="M5 12h14" />
+        <path d="M13 6l6 6-6 6" />
+        <circle cx="5" cy="12" r="2" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Safety Gate',
+    body: 'A recommendation only appears when there are ≥20 outcomes and confidence ≥0.75. If the data is not reliable yet, it says “Not enough data.” Never a guess dressed up as insight.',
+    stat: '≥20 samples · ≥0.75 confidence',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <path d="M12 3l8 4v5c0 4.4-3.4 8.5-8 9.5C7.4 20.5 4 16.4 4 12V7l8-4z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Reason Engine',
+    body: 'Every recommendation comes with a plain-language explanation backed by the actual numbers. “Replace X with Y. X fails 67% of the time. Y succeeds 87%. Based on 142 outcomes.”',
+    stat: 'no black box · always explainable',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+        <line x1="9" y1="9" x2="15" y2="9" />
+        <line x1="9" y1="13" x2="13" y2="13" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Performance Trend Tracking',
+    body: 'See when an action’s success rate is declining before it becomes a real problem. Recency-weighted scoring surfaces early warning signals across every task type your agent runs.',
+    stat: 'recency-weighted · early warning',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+        <polyline points="16 7 22 7 22 13" />
+      </svg>
+    ),
+  },
+  {
+    title: 'Compliance Audit Trail',
+    body: 'Append-only outcome log. Every action traceable by agent, task, success rate, and timestamp. SQL-readable, GDPR-ready, and EU AI Act compliant. Nothing is ever overwritten.',
+    stat: 'append-only · GDPR · EU AI Act',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+        <rect x="3" y="11" width="18" height="11" rx="2" />
+        <path d="M7 11V7a5 5 0 0110 0v4" />
+        <line x1="12" y1="15" x2="12" y2="17" />
+      </svg>
+    ),
+  },
+];
+
+function FeaturesGrid(): React.ReactElement {
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const el = entry.target as HTMLElement;
+          const delay = el.dataset.delay ?? '0';
+          el.style.transitionDelay = `${delay}s`;
+          el.classList.add('feat-visible');
+          observer.unobserve(el);
+        });
+      },
+      { threshold: 0.08 }
+    );
+
+    cardRefs.current.forEach((c) => { if (c) observer.observe(c); });
+
+    // Trigger for cards already in viewport on load
+    const onLoad = () => {
+      cardRefs.current.forEach((c) => {
+        if (!c) return;
+        const rect = c.getBoundingClientRect();
+        if (rect.top < window.innerHeight * 0.95) {
+          const delay = c.dataset.delay ?? '0';
+          c.style.transitionDelay = `${delay}s`;
+          c.classList.add('feat-visible');
+          observer.unobserve(c);
+        }
+      });
+    };
+    window.addEventListener('load', onLoad);
+    onLoad();
+    return () => window.removeEventListener('load', onLoad);
+  }, []);
+
   return (
-    <div className="bg-black border border-[#1a1a24] p-8 hover:border-[#00FF85]/30 hover:bg-[#07070f] transition-all group">
-      <div className="text-2xl mb-5">{icon}</div>
-      <h4 className="text-base font-bold mb-3 group-hover:text-[#00FF85] transition-colors">{title}</h4>
-      <p className="text-sm text-[#888888] leading-relaxed">{desc}</p>
+    <div
+      className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 border border-[#1a1a24] rounded-[20px] overflow-hidden"
+      style={{ isolation: 'isolate' }}
+    >
+      {/* inner top glow */}
+      <div
+        className="pointer-events-none absolute inset-0 rounded-[20px] z-0"
+        style={{
+          background: 'radial-gradient(ellipse 60% 40% at 50% 0%, rgba(0,255,133,0.03) 0%, transparent 70%)',
+        }}
+      />
+
+      {FEATURES.map((f, i) => {
+        const isLastCol   = (i + 1) % 3 === 0;
+        const isLastRow   = i >= 3;
+        const isMd2nd     = (i + 1) % 2 === 0;   // 2nd col on md
+        const isMdLastRow = i >= 4;               // last row on md (5, 6)
+
+        return (
+          <div
+            key={f.title}
+            ref={(el) => { cardRefs.current[i] = el; }}
+            data-delay={String((i + 1) * 0.05)}
+            className={[
+              'feat-card group relative z-10 p-10 cursor-default',
+              // right border — all except last col on xl
+              !isLastCol ? 'xl:border-r border-[#1a1a24]' : '',
+              // right border on md (2-col): remove every 2nd
+              !isMd2nd ? 'md:border-r border-[#1a1a24]' : 'md:border-r-0',
+              // bottom border — all except last row on xl
+              !isLastRow ? 'xl:border-b border-[#1a1a24]' : 'xl:border-b-0',
+              // bottom border on md: rows 1-4 get it, last row doesn't
+              !isMdLastRow ? 'md:border-b border-[#1a1a24]' : 'md:border-b-0',
+              // mobile: always bottom border, remove on last card
+              i < FEATURES.length - 1 ? 'border-b border-[#1a1a24]' : '',
+            ].join(' ')}
+          >
+            {/* icon */}
+            <div className="mb-6 flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.06] bg-[#1a1a24] text-[#555555] transition-all duration-200 group-hover:border-[#00FF85]/20 group-hover:bg-[#00FF85]/10 group-hover:text-[#00FF85]">
+              {f.icon}
+            </div>
+
+            {/* title */}
+            <h3 className="mb-3 text-[17px] font-bold tracking-[-0.01em] leading-snug text-white">
+              {f.title}
+            </h3>
+
+            {/* body */}
+            <p className="text-sm leading-[1.7] text-[#888888]">{f.body}</p>
+
+            {/* stat pill — visible on hover */}
+            <div className="mt-5 inline-flex items-center gap-[6px] rounded-full border border-[#00FF85]/15 bg-[#00FF85]/[0.06] px-3 py-[5px] font-mono text-[11px] tracking-[0.04em] text-[#00FF85] opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+              <span className="h-[5px] w-[5px] flex-shrink-0 rounded-full bg-[#00FF85]" />
+              {f.stat}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -239,22 +405,22 @@ const PRICING_TIERS = [
 // ── Use case data ──
 const USE_CASES = [
   {
-    icon: '🤖',
+    icon: '\uD83E\uDD16',
     title: 'Customer Support Agents',
     quote: 'Your agent is routing edge cases to humans. Layerinfinite tells you which routing action actually closes tickets — and which one is making it worse.',
   },
   {
-    icon: '💰',
+    icon: '\uD83D\uDCB0',
     title: 'Finance & Payment Agents',
     quote: '31% of your recovery emails are failing. Layerinfinite identifies the exact action to replace and shows you the expected recovery rate improvement.',
   },
   {
-    icon: '🔧',
+    icon: '\uD83D\uDD27',
     title: 'DevOps Automation',
     quote: 'Stop guessing which fix to run first. Layerinfinite builds a ranked playbook from real incident data. Best action first, every time.',
   },
   {
-    icon: '📊',
+    icon: '\uD83D\uDCCA',
     title: 'Data Pipeline Agents',
     quote: 'One bad imputation strategy is silently failing 57% of your pipelines. Layerinfinite finds it before it hits SLA.',
   },
@@ -269,6 +435,22 @@ export default function LandingPage(): React.ReactElement {
 
   return (
     <div className="bg-black text-white landing-page">
+
+      {/* feat-card animation styles injected once */}
+      <style>{`
+        .feat-card {
+          opacity: 0;
+          transform: translateY(14px);
+          background: #111118;
+          transition: background 0.22s ease;
+        }
+        .feat-card.feat-visible {
+          transition: background 0.22s ease, opacity 0.55s ease, transform 0.55s ease;
+          opacity: 1;
+          transform: translateY(0);
+        }
+        .feat-card:hover { background: rgba(255,255,255,0.025); }
+      `}</style>
 
       {/* Nav */}
       <nav className="fixed top-0 w-full z-50 border-b border-[#1a1a24] bg-black/85 backdrop-blur-md">
@@ -461,17 +643,25 @@ export default function LandingPage(): React.ReactElement {
         {/* Features */}
         <section className="py-24 bg-black" id="features">
           <div className="max-w-7xl mx-auto px-6">
-            <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Capabilities</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Everything production agents need.</h2>
-            <p className="text-[#888888] mb-16 max-w-xl">Not just monitoring. Not just logging. An active intelligence layer that makes every agent decision better over time.</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-px bg-[#1a1a24]">
-              <FeatureCard icon="🎯" title="Outcome-Ranked Decisions" desc="Every available action is scored using context-weighted success history. The best action surfaces automatically with no prompt engineering required." />
-              <FeatureCard icon="🧊" title="Cold Start Protocol" desc="Four-stage bootstrap with prior injection and cross-agent transfer. Agents are intelligent from day one, not after 10,000 outcomes." />
-              <FeatureCard icon="🛡️" title="Trust-Aware Routing" desc="Auto-suspends agents whose success rate drops below threshold. Routes to human escalation before damage compounds. Configurable per agent." />
-              <FeatureCard icon="📉" title="Degradation Detection" desc="Detects performance trends before they crash your system. Recency-weighted scoring with automatic decay surfaces early warning signals." />
-              <FeatureCard icon="📋" title="Compliance Audit Trail" desc="Append-only, SQL-readable decision log. Every action traceable by agent, context, score, and timestamp. GDPR and EU AI Act ready." />
-              <FeatureCard icon="💡" title="AI Recommendations" desc="The dashboard surfaces exactly which actions to promote, demote, or investigate, backed by statistical confidence and production evidence." />
+            {/* Header */}
+            <div className="mb-16">
+              <div className="flex items-center gap-[10px] font-mono text-[11px] tracking-[0.12em] uppercase text-[#00FF85] mb-5">
+                <span className="block w-5 h-px bg-[#00FF85]" />
+                Features
+              </div>
+              <h2
+                className="font-extrabold tracking-[-0.03em] leading-[1.05] text-white"
+                style={{ fontSize: 'clamp(36px, 5vw, 56px)' }}
+              >
+                Everything production<br />agents need.
+              </h2>
+              <p className="mt-4 text-base text-[#888888] max-w-[520px] leading-[1.65]">
+                Not just monitoring. Not just logging. A scoring and recommendation layer built on your agent&apos;s own outcome data.
+              </p>
             </div>
+
+            {/* Framed grid */}
+            <FeaturesGrid />
           </div>
         </section>
 
@@ -589,14 +779,12 @@ export default function LandingPage(): React.ReactElement {
                   key={title}
                   className="border border-[#1a1a24] bg-black p-8 hover:border-[#00FF85]/30 hover:bg-[#07070f] transition-all group"
                 >
-                  {/* Icon + title row */}
                   <div className="flex items-center gap-3 mb-6">
                     <span className="text-2xl">{icon}</span>
                     <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#555555] group-hover:text-[#00FF85] transition-colors">
                       {title}
                     </span>
                   </div>
-                  {/* Pull quote */}
                   <blockquote className="border-l-2 border-[#00FF85]/40 pl-5">
                     <p className="text-[15px] text-white leading-relaxed font-medium">
                       &ldquo;{quote}&rdquo;
@@ -628,29 +816,22 @@ export default function LandingPage(): React.ReactElement {
                       : 'border border-[#1a1a24] bg-[#07070f]',
                   ].join(' ')}
                 >
-                  {/* Badge */}
                   {tier.badge && (
                     <div className="absolute -top-3 left-6 bg-[#00FF85] text-black text-[10px] font-bold px-3 py-1 tracking-widest">
                       {tier.badge}
                     </div>
                   )}
-
-                  {/* Tier name */}
                   <div className={[
                     'text-[10px] font-mono font-bold uppercase tracking-widest mb-4',
                     tier.highlight ? 'text-[#00FF85]' : 'text-[#888888]',
                   ].join(' ')}>
                     {tier.label}
                   </div>
-
-                  {/* Price */}
                   <div className="mb-1">
                     <span className="text-4xl font-bold tracking-tight">{tier.price}</span>
                     {tier.per && <span className="text-lg text-[#888888]">{tier.per}</span>}
                   </div>
                   <div className="text-[#555555] text-xs font-mono mb-8">{tier.sub}</div>
-
-                  {/* Features */}
                   <ul className="space-y-3 text-sm text-[#888888] mb-10 flex-1">
                     {tier.features.map((f) => (
                       <li key={f} className="flex items-start gap-2">
@@ -659,8 +840,6 @@ export default function LandingPage(): React.ReactElement {
                       </li>
                     ))}
                   </ul>
-
-                  {/* CTA */}
                   {tier.ctaType === 'email' ? (
                     <a
                       href="mailto:team@layerinfinite.app"
@@ -687,7 +866,6 @@ export default function LandingPage(): React.ReactElement {
               ))}
             </div>
 
-            {/* Growth callout — API access note */}
             <div className="mt-8 border border-[#1a1a24] bg-[#07070f] p-5 rounded-lg flex flex-col md:flex-row items-start md:items-center gap-4">
               <div className="flex-1">
                 <span className="text-[10px] font-mono text-[#00FF85] uppercase tracking-widest">Growth &amp; Enterprise</span>
