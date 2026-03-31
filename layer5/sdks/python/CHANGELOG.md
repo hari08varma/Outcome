@@ -2,6 +2,35 @@
 
 All notable changes to the Python SDK are documented here.
 
+## [0.3.0] — 2026-03-31
+
+### Breaking Changes
+- `LayerinfiniteClient` is now an alias for `Layerinfinite` (new primary class)
+- `LayerinfiniteClient()` now requires `agent_id` parameter
+- `get_recommendations(task)` replaced by `recommend(task)` -> returns `Recommendation` dataclass (not dict)
+- Removed: `instrument.py`, `pipeline/`, `tracing/` modules
+
+### Added
+- `Layerinfinite` class with three modes: `recommend`, `assist`, `auto`
+- `@li.action(task)` decorator — auto-logs every outcome, zero boilerplate
+- `li.run(task, **kwargs)` — autonomous action execution (auto mode)
+- `li.suggest(task)` -> `Suggestion` — best action without executing (assist mode)
+- `li.recommend(task)` -> `Recommendation` — plain-English insights (all modes)
+- `li.scores(task)` -> `GetScoresResponse` — raw scores (all modes)
+- `li.observe(task)` -> `ObservationSummary` — outcome stats (all modes)
+- `li.register_action(task, name, fn)` — manual registration
+- `li.list_actions(task=None)` — registry introspection
+- `LowConfidenceError` exception with `suggestion`, `confidence`, `threshold`
+- `auto_fallback` — automatic next-action fallback in auto mode
+- `log_async` — non-blocking outcome logging via daemon threads
+- `auto_register` — automatic action registration in dashboard
+- Thread-safe action registry
+- Context manager support (`with Layerinfinite(...) as li:`)
+- `py.typed` marker for PEP 561 compliance
+
+### Fixed
+- `context_id` in `LogOutcomeRequest` is now optional (default: "")
+
 ## CI/CD Setup
 Add these secrets to GitHub → Settings → Secrets → Actions:
 - PYPI_API_TOKEN — from pypi.org → Account → API tokens

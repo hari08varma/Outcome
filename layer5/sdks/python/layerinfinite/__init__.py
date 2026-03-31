@@ -2,46 +2,68 @@
 Layerinfinite Python SDK
 ========================
 Decision intelligence layer for AI agents.
+Zero LLM dependency. Learns from your outcome data.
 
-Usage::
+Quick start::
 
-    from layerinfinite import LayerinfiniteClient, LogOutcomeRequest
+    from layerinfinite import Layerinfinite
 
-    client = LayerinfiniteClient(api_key="layerinfinite_your_key")
-    scores = client.get_scores(agent_id="agent-1", issue_type="billing_dispute")
-    print(scores.top_action.action_name)
+    li = Layerinfinite(api_key="layerinfinite_xxx", agent_id="my-agent")
+
+    @li.action("payment_failed")
+    def retry_payment(ticket_id):
+        return gateway.charge(ticket_id)
+
+    @li.action("payment_failed")
+    def switch_provider(ticket_id):
+        return alt_gateway.charge(ticket_id)
+
+    # Outcomes auto-logged on every call.
+    retry_payment("t-001")
+
+    # Get recommendation after data accumulates:
+    rec = li.recommend("payment_failed")
+    print(rec.recommendation)
 """
 
 from __future__ import annotations
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
-    "LayerinfiniteClient",
-    "ScoredAction",
-    "GetScoresResponse",
-    "LogOutcomeRequest",
-    "LogOutcomeResponse",
+    "Layerinfinite",
+    "Suggestion",
+    "RankedAction",
+    "Recommendation",
+    "ObservationSummary",
     "LayerinfiniteError",
     "LayerinfiniteAuthError",
     "LayerinfiniteRateLimitError",
     "LayerinfiniteNotFoundError",
     "LayerinfiniteServerError",
-    "get_recommendations",
+    "LowConfidenceError",
+    "LayerinfiniteClient",
+    "ScoredAction",
+    "GetScoresResponse",
+    "LogOutcomeRequest",
+    "LogOutcomeResponse",
 ]
 
-from .client import LayerinfiniteClient
+from .client import Layerinfinite, LayerinfiniteClient
 from .exceptions import (
     LayerinfiniteAuthError,
     LayerinfiniteError,
     LayerinfiniteNotFoundError,
     LayerinfiniteRateLimitError,
     LayerinfiniteServerError,
+    LowConfidenceError,
 )
 from .models import (
     GetScoresResponse,
     LogOutcomeRequest,
     LogOutcomeResponse,
+    ObservationSummary,
+    RankedAction,
+    Recommendation,
     ScoredAction,
+    Suggestion,
 )
-from .instrument import instrument
-from .tracing.traced_response import TracedResponse

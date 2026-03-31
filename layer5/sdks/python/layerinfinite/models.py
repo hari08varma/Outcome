@@ -5,7 +5,8 @@ Pydantic v2 request/response models.
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Callable, List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,7 +38,7 @@ class LogOutcomeRequest(BaseModel):
     action_name: str  # Required: API validates via validateActionMiddleware
     action_id: str | None = None   # kept for backward compat — ignored by API
     session_id: str | None = None
-    context_id: str
+    context_id: str = ""
     issue_type: str
     success: bool
     outcome_score: float = Field(ge=0.0, le=1.0)
@@ -58,3 +59,68 @@ class LogOutcomeResponse(BaseModel):
     agent_trust_score: float
     trust_status: str
     policy: str
+
+
+@dataclass
+class ActionEntry:
+    """Internal registry entry for a registered action function."""
+
+    fn: Callable
+    name: str
+    task: str
+    registered_via: str
+    created_at: str
+
+
+@dataclass
+class RankedAction:
+    """A single action in a ranked suggestion list."""
+
+    action_name: str
+    score: float
+    confidence: float
+
+
+@dataclass
+class Suggestion:
+    """
+    Returned by li.suggest(task) in assist mode.
+    Contains the recommended action and full ranked list.
+    """
+
+    action_name: str
+    confidence: float
+    reason: str
+    ranked: List[RankedAction]
+
+
+@dataclass
+class Recommendation:
+    """
+    Returned by li.recommend(task) in all modes.
+    Parsed from GET /v1/recommendations response.
+    """
+
+    task: str
+    state: str
+    problem: str | None = None
+    recommendation: str | None = None
+    expected_improvement: dict | None = None
+    reason: str | None = None
+    confidence: float | None = None
+
+
+@dataclass
+class ObservationSummary:
+    """
+    Returned by li.observe(task) in all modes.
+    Parsed from GET /v1/observe response.
+    """
+
+    task: str
+    total_runs: int
+    success_rate: float
+    actions_seen: List[str]
+    best_performing: str | None = None
+    worst_performing: str | None = None
+    last_run: str | None = None
