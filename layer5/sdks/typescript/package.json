@@ -1,7 +1,7 @@
 {
-    "name": "@layerinfinite/sdk",
-    "version": "0.2.0",
-    "description": "Decision intelligence layer for AI agents",
+    "name": "layerinfinite",
+    "version": "0.3.0",
+    "description": "Decision intelligence layer for AI agents. No LLMs. Just math.",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
     "types": "dist/index.d.ts",
@@ -19,12 +19,11 @@
         "prepublishOnly": "npm run build && npm run typecheck"
     },
     "keywords": [
-        "ai",
-        "agents",
-        "llm",
+        "ai-agents",
         "decision-intelligence",
-        "layerinfinite",
-        "mlops"
+        "agent-scoring",
+        "observability",
+        "ai-reliability"
     ],
     "author": "Layerinfinite",
     "license": "MIT",
@@ -46,5 +45,8 @@
     },
     "publishConfig": {
         "access": "public"
+    },
+    "engines": {
+        "node": ">=18.0.0"
     }
 }

@@ -11,6 +11,46 @@ Add these secrets to GitHub → Settings → Secrets → Actions:
 
 Without SMOKE_TEST_API_KEY, smoke tests are skipped (not failed).
 
+## [0.3.0] — 2026-04-01
+
+### Breaking Changes
+- `LayerinfiniteClient` is now an alias for `Layerinfinite` (new primary class)
+- Constructor now requires `agentId` parameter
+- `getRecommendations(task)` replaced by `recommend(task)` -> returns `Recommendation` (camelCase fields)
+- `getScores()` replaced by `scores(task)` - no longer takes `agentId`/`issueType` params
+- Removed exports: `instrument`, `InstrumentOptions`, `InstrumentResult`, `CausalGraph`,
+  `TracedResponse`, `ContractClient`, all tracing types
+- Removed source files: `instrument.ts`, `interceptor.ts`, `pipeline/`, `tracing/`, `contracts/`
+- Default base URL changed from `outcome-production.up.railway.app` to `api.layerinfinite.app`
+
+### Added
+- `Layerinfinite` class with three modes: `recommend`, `assist`, `auto`
+- `li.action(task, fn)` / `li.action(task, name, fn)` - wrapper pattern with auto-logging
+- `li.run(task, ...args)` - autonomous execution with ranked fallback (auto mode)
+- `li.suggest(task)` -> `Suggestion` - best action without executing (assist mode)
+- `li.recommend(task)` -> `Recommendation` - plain-English insights (all modes)
+- `li.scores(task)` -> `GetScoresResponse` - raw ranked scores (all modes)
+- `li.observe(task)` -> `ObservationSummary` - outcome stats (all modes)
+- `li.registerAction(task, name, fn)` - manual registration without wrapping
+- `li.listActions(task?)` - registry introspection
+- `LowConfidenceError` with `suggestion`, `confidence`, `threshold` fields
+- `autoFallback` - automatic next-action fallback in auto mode
+- `autoRegister` - automatic action registration in dashboard (no-op, future-ready)
+- `confidenceThreshold` constructor option
+- `agentId` constructor option
+- `mode` constructor option
+- Fire-and-forget outcome logging (non-blocking)
+- Pretty-print console output for recommend(), suggest(), observe(), run()
+- camelCase TypeScript API with snake_case wire protocol (conversion handled internally)
+
+### Deprecated (will be removed in v0.5.0)
+- `getScores(params)` -> use `scores(task)` instead
+- `getRecommendations(task)` -> use `recommend(task)` instead
+
+### Fixed
+- User-Agent header updated to `layerinfinite-ts-sdk/0.3.0`
+- `agent_id` no longer sent as query parameter in GET /v1/get-scores
+
 ## [0.2.0] - 2026-03-25
 ### Added
 - instrument(client) — one-line setup, patches fetch + db + child process

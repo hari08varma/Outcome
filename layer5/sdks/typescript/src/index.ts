@@ -1,11 +1,34 @@
 // Layerinfinite SDK — index.ts
-// Public barrel export for @layerinfinite/sdk
+// Public barrel export. v0.3.0 — clean rewrite, zero legacy imports.
 
+// ── Primary class ────────────────────────────────────────────────
+export { Layerinfinite } from './client.js';
+
+// ── Backward compatibility alias ─────────────────────────────────
 export { LayerinfiniteClient } from './client.js';
-export * from './types.js';
-export * from './errors.js';
-export { instrument } from './instrument.js';
-export type { InstrumentOptions, InstrumentResult } from './instrument.js';
-export * from './tracing/index.js';
-export { ContractClient } from './contracts/contract-client.js';
-export * from './contracts/types.js';
+
+// ── All types ────────────────────────────────────────────────────
+export type {
+    LayerinfiniteConfig,
+    ActionFunction,
+    WrappedActionFunction,
+    ActionEntry,
+    Suggestion,
+    RankedAction,
+    Recommendation,
+    ObservationSummary,
+    GetScoresResponse,
+    ScoredAction,
+    LogOutcomeRequest,
+    LogOutcomeResponse,
+} from './types.js';
+
+// ── All error classes ────────────────────────────────────────────
+export {
+    LayerinfiniteError,
+    LayerinfiniteAuthError,
+    LayerinfiniteNotFoundError,
+    LayerinfiniteRateLimitError,
+    LayerinfiniteServerError,
+    LowConfidenceError,
+} from './errors.js';

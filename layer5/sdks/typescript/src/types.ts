@@ -1,5 +1,7 @@
 // Layerinfinite SDK — types.ts
-// Shared TypeScript interfaces for request/response payloads.
+// All interfaces and type definitions.
+
+// ── Existing API types (keep exactly — wire format is snake_case) ──
 
 export interface ScoredAction {
     action_id: string;
@@ -23,6 +25,11 @@ export interface GetScoresResponse {
     served_from_cache?: boolean;
 }
 
+/**
+ * Public log-outcome request shape (backward-compat).
+ * Used by the deprecated li.logOutcome() public method only.
+ * Internal auto-logging uses InternalLogPayload in client.ts.
+ */
 export interface LogOutcomeRequest {
     agent_id: string;
     action_id: string;
@@ -31,21 +38,9 @@ export interface LogOutcomeRequest {
     success: boolean;
     /** Must be between 0.0 and 1.0 */
     outcome_score: number;
-    /**
-     * Outcome label for reporting. API accepts any string and normalizes:
-     * - 'resolved' | 'partial' | 'failed' | 'unknown' → stored as-is
-     * - any other value (e.g. 'unresolved', 'escalated') → stored as 'unknown'
-     * @example 'resolved' | 'partial' | 'failed' | 'unknown'
-     */
     business_outcome?: string;
     episode_id?: string;
     response_ms?: number;
-    /**
-     * When feedback was received. API accepts any string and normalizes:
-     * - 'immediate' | 'delayed' | 'none' → stored as-is
-     * - any other value (e.g. 'async', 'webhook') → stored as 'none'
-     * @example 'immediate' | 'delayed' | 'none'
-     */
     feedback_signal?: string;
 }
 
@@ -57,12 +52,80 @@ export interface LogOutcomeResponse {
     policy: string;
 }
 
+// ── v0.3.0 Config ──────────────────────────────────────────────────
+
 export interface LayerinfiniteConfig {
+    /** Required. Must start with 'layerinfinite_'. */
     apiKey: string;
-    /** Default: https://outcome-production.up.railway.app */
+    /** Required. Identifies your agent in the dashboard. */
+    agentId: string;
+    /** 'recommend' | 'assist' | 'auto'. Default: 'recommend'. */
+    mode?: 'recommend' | 'assist' | 'auto';
+    /** Confidence threshold for auto mode (0.0–1.0). Default: 0.7. */
+    confidenceThreshold?: number;
+    /** Auto-try next action on failure in auto mode. Default: true. */
+    autoFallback?: boolean;
+    /** Sync action names to dashboard on registration. Default: true. */
+    autoRegister?: boolean;
+    /** Default: 'https://api.layerinfinite.app' */
     baseUrl?: string;
-    /** Request timeout in ms. Default: 10000 */
+    /** Request timeout in ms. Default: 10000. */
     timeout?: number;
-    /** Max retries on 429/5xx. Default: 3 */
+    /** Max retries on 429/5xx. Default: 3. */
     maxRetries?: number;
+}
+
+// ── Action Registry ────────────────────────────────────────────────
+
+export type ActionFunction<TArgs extends any[] = any[], TReturn = any> =
+    (...args: TArgs) => TReturn | Promise<TReturn>;
+
+export type WrappedActionFunction<TArgs extends any[] = any[], TReturn = any> =
+    (...args: TArgs) => Promise<TReturn>;
+
+export interface ActionEntry {
+    fn: ActionFunction;
+    name: string;
+    task: string;
+    registeredVia: 'wrapper' | 'manual';
+    createdAt: string; // ISO timestamp
+}
+
+// ── Suggest / Recommend / Observe ──────────────────────────────────
+
+export interface RankedAction {
+    actionName: string;
+    score: number;
+    confidence: number;
+}
+
+export interface Suggestion {
+    actionName: string;
+    confidence: number;
+    reason: string;
+    ranked: RankedAction[];
+}
+
+export interface Recommendation {
+    task: string;
+    state: 'no_data' | 'early_signal' | 'close' | 'stable';
+    problem: string | null;
+    recommendation: string | null;
+    expectedImprovement: {
+        baseline: string;
+        improved: string;
+        delta: string;
+    } | null;
+    reason: string | null;
+    confidence: number | null;
+}
+
+export interface ObservationSummary {
+    task: string;
+    totalRuns: number;
+    successRate: number;
+    actionsSeen: string[];
+    bestPerforming: string | null;
+    worstPerforming: string | null;
+    lastRun: string | null;
 }

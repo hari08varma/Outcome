@@ -56,3 +56,28 @@ export class LayerinfiniteServerError extends LayerinfiniteError {
         Object.setPrototypeOf(this, new.target.prototype);
     }
 }
+
+/**
+ * Raised by li.run() when top-action confidence is below
+ * the configured confidenceThreshold.
+ * Includes the Suggestion so callers can inspect ranked alternatives.
+ */
+export class LowConfidenceError extends LayerinfiniteError {
+    override name = 'LowConfidenceError';
+    public readonly suggestion: import('./types.js').Suggestion;
+    public readonly confidence: number;
+    public readonly threshold: number;
+
+    constructor(
+        message: string,
+        suggestion: import('./types.js').Suggestion,
+        confidence: number,
+        threshold: number,
+    ) {
+        super(message);
+        this.suggestion = suggestion;
+        this.confidence = confidence;
+        this.threshold = threshold;
+        Object.setPrototypeOf(this, new.target.prototype);
+    }
+}
