@@ -87,6 +87,12 @@ jobs:
             echo "Version $VERSION not found on npm - will publish."
           fi
 
+      - name: Verify npm auth
+        if: steps.npm_check.outputs.exists == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NPM_TKOEN || vars.NPM_TOKEN || vars.NPM_TKOEN }}
+        run: npm whoami
+
       - name: Publish to npm
         if: steps.npm_check.outputs.exists == 'false'
         env:
