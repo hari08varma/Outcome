@@ -1,5 +1,5 @@
 {
-    "name": "layerinfinite",
+    "name": "@layerinfinite/sdk",
     "version": "0.3.0",
     "description": "Decision intelligence layer for AI agents. No LLMs. Just math.",
     "main": "dist/index.js",
