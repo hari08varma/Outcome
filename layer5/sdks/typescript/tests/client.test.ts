@@ -67,7 +67,7 @@ describe('LayerinfiniteClient', () => {
     it('Test 1: getScores returns typed GetScoresResponse', async () => {
         fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_GET_SCORES_BODY));
 
-        const client = new LayerinfiniteClient({ apiKey: API_KEY, baseUrl: BASE_URL });
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
         const result = await client.getScores({
             agentId: 'my-agent',
             issueType: 'billing_dispute',
@@ -86,7 +86,7 @@ describe('LayerinfiniteClient', () => {
             mockResponse({ error: 'Unauthorized' }, 401),
         );
 
-        const client = new LayerinfiniteClient({ apiKey: 'layerinfinite_bad_key', baseUrl: BASE_URL, maxRetries: 0 });
+        const client = new LayerinfiniteClient({ apiKey: 'layerinfinite_bad_key', agentId: 'my-agent', baseUrl: BASE_URL, maxRetries: 0 });
 
         await expect(
             client.getScores({ agentId: 'agent-1', issueType: 'test' }),
@@ -99,11 +99,17 @@ describe('LayerinfiniteClient', () => {
             mockResponse({ error: 'Too Many Requests' }, 429, { 'Retry-After': '30' }),
         );
 
-        const client = new LayerinfiniteClient({ apiKey: API_KEY, baseUrl: BASE_URL, maxRetries: 0 });
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL, maxRetries: 0 });
 
         let error: unknown;
         try {
-            await client.getScores({ agentId: 'agent-1', issueType: 'test' });
+            await client.logOutcome({
+                agent_id: 'my-agent',
+                action_id: 'act-uuid-1',
+                context_id: 'ctx-uuid-1',
+                issue_type: 'test',
+                success: true,
+            });
         } catch (err) {
             error = err;
         }
@@ -117,7 +123,7 @@ describe('LayerinfiniteClient', () => {
     it('Test 4: logOutcome returns LogOutcomeResponse', async () => {
         fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_LOG_OUTCOME_BODY));
 
-        const client = new LayerinfiniteClient({ apiKey: API_KEY, baseUrl: BASE_URL });
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
         const response = await client.logOutcome({
             agent_id: 'my-agent',
             action_id: 'act-uuid-1',
@@ -139,7 +145,7 @@ describe('LayerinfiniteClient', () => {
             mockResponse({ status: 'ok', version: '1.0.0' }),
         );
 
-        const client = new LayerinfiniteClient({ apiKey: API_KEY, baseUrl: BASE_URL });
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
         const result = await client.health();
 
         expect(result.status).toBe('ok');

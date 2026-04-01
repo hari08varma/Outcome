@@ -60,8 +60,8 @@ def test_get_scores_returns_typed_response():
         return_value=httpx.Response(200, json=MOCK_GET_SCORES_RESPONSE)
     )
 
-    client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL)
-    response = client.get_scores(agent_id="my-agent", issue_type="billing_dispute")
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+    response = client.scores("billing_dispute")
 
     assert isinstance(response, GetScoresResponse)
     assert isinstance(response.top_action, ScoredAction)
@@ -77,9 +77,9 @@ def test_get_scores_401_raises_auth_error():
         return_value=httpx.Response(401, json={"error": "Unauthorized"})
     )
 
-    client = LayerinfiniteClient(api_key="layerinfinite_bad_key", base_url=BASE_URL)
+    client = LayerinfiniteClient(api_key="layerinfinite_bad_key", agent_id='my-agent', base_url=BASE_URL)
     with pytest.raises(LayerinfiniteAuthError) as exc_info:
-        client.get_scores(agent_id="agent-1", issue_type="test")
+        client.scores("test")
 
     assert exc_info.value.status_code == 401
 
@@ -95,9 +95,9 @@ def test_get_scores_429_raises_rate_limit_error():
         )
     )
 
-    client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL, max_retries=0)
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL, max_retries=0)
     with pytest.raises(LayerinfiniteRateLimitError) as exc_info:
-        client.get_scores(agent_id="agent-1", issue_type="test")
+        client.scores("test")
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.retry_after == 30
@@ -110,7 +110,7 @@ def test_log_outcome_returns_typed_response():
         return_value=httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
     )
 
-    client = LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL)
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
     request = LogOutcomeRequest(
         agent_id="my-agent",
         action_name="escalate_to_senior",
@@ -133,9 +133,9 @@ def test_log_outcome_returns_typed_response():
 def test_context_manager_closes_session():
     client_ref = None
 
-    with LayerinfiniteClient(api_key=API_KEY, base_url=BASE_URL) as client:
+    with LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL) as client:
         client_ref = client
-        assert not client._session.is_closed
+        assert not client._http.is_closed
 
     assert client_ref is not None
-    assert client_ref._session.is_closed
+    assert client_ref._http.is_closed
