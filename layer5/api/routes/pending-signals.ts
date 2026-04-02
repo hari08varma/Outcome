@@ -58,25 +58,48 @@ pendingSignalsRoute.post('/', async (c) => {
         return c.json({ error: 'Outcome not found', code: 'NOT_FOUND' }, 404);
     }
 
-    const { data: contract } = await supabase
-        .from('dim_signal_contracts')
-        .select('id')
+    const { data: action, error: actionError } = await supabase
+        .from('dim_actions')
+        .select('action_id')
         .eq('customer_id', customerId)
         .eq('action_name', body.action_name)
+        .maybeSingle();
+
+    if (actionError) {
+        return c.json({ error: 'Failed action lookup', details: actionError.message }, 500);
+    }
+
+    if (!action) {
+        return c.json({ error: 'No active contract found for this action' }, 422);
+    }
+
+    const { data: contract, error: contractError } = await supabase
+        .from('dim_signal_contracts')
+        .select('contract_id, event_type, platform')
+        .eq('customer_id', customerId)
+        .eq('action_id', action.action_id)
         .eq('is_active', true)
         .limit(1)
         .maybeSingle();
+
+    if (contractError) {
+        return c.json({ error: 'Failed contract lookup', details: contractError.message }, 500);
+    }
+
+    if (!contract) {
+        return c.json({ error: 'No active contract found for this action' }, 422);
+    }
 
     const { data: inserted, error: insertError } = await supabase
         .from('dim_pending_signal_registrations')
         .insert({
             outcome_id: body.outcome_id,
+            agent_id: outcome.agent_id,
             customer_id: customerId,
-            action_name: body.action_name,
-            provider_hint: body.provider_hint ?? null,
-            contract_id: contract?.id ?? null,
+            event_type: contract.event_type,
+            platform: contract.platform,
         })
-        .select('id, outcome_id, registered_at')
+        .select('registration_id, outcome_id, created_at')
         .single();
 
     if (insertError) {

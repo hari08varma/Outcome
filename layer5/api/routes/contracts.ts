@@ -14,10 +14,10 @@ contractsRoute.use('*', primaryAuth, rateLimitMiddleware());
 
 const ContractBody = z.object({
     action_name: z.string().min(1),
+    event_type: z.string().min(1),
+    platform: z.string().min(1),
     success_condition: z.string().min(1),
     score_expression: z.string().min(1),
-    timeout_hours: z.number().int().min(1).max(8760).default(24),
-    fallback_strategy: z.enum(['use_http_status', 'explicit_only', 'always_pending']).default('use_http_status'),
 });
 
 contractsRoute.post('/', async (c) => {
@@ -30,17 +30,32 @@ contractsRoute.post('/', async (c) => {
 
     const customerId = c.get('customer_id') as string;
 
+    const { data: action, error: actionError } = await supabase
+        .from('dim_actions')
+        .select('action_id')
+        .eq('action_name', body.action_name)
+        .eq('customer_id', customerId)
+        .maybeSingle();
+
+    if (actionError) {
+        return c.json({ error: 'Failed to resolve action', details: actionError.message }, 500);
+    }
+
+    if (!action) {
+        return c.json({ error: 'Action not found' }, 404);
+    }
+
     const { data, error } = await supabase
         .from('dim_signal_contracts')
         .upsert({
+            action_id: action.action_id,
             customer_id: customerId,
-            action_name: body.action_name,
+            event_type: body.event_type,
+            platform: body.platform,
             success_condition: body.success_condition,
             score_expression: body.score_expression,
-            timeout_hours: body.timeout_hours,
-            fallback_strategy: body.fallback_strategy,
             is_active: true,
-        }, { onConflict: 'customer_id,action_name' })
+        }, { onConflict: 'action_id,customer_id,platform' })
         .select('*')
         .single();
 
@@ -75,15 +90,15 @@ contractsRoute.delete('/:id', async (c) => {
     const { data, error } = await supabase
         .from('dim_signal_contracts')
         .update({ is_active: false })
-        .eq('id', id)
+        .eq('contract_id', id)
         .eq('customer_id', customerId)
-        .select('id');
+        .select('contract_id');
 
     if (error) {
         return c.json({ error: 'Failed to deactivate contract', details: error.message }, 500);
     }
 
-    if (!data || data.length === 0) {
+    if (!data || data.length === 0 || !data[0]?.contract_id) {
         return c.json({ error: 'Contract not found', code: 'NOT_FOUND' }, 404);
     }
 

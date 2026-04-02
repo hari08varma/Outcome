@@ -83,9 +83,9 @@ export default async function webhookRoute(c: Context): Promise<Response> {
 
         const { data: pending } = await supabase
             .from('dim_pending_signal_registrations')
-            .select('id, customer_id, is_resolved')
+            .select('registration_id, customer_id, resolved')
             .eq('outcome_id', payload.outcomeId)
-            .eq('is_resolved', false)
+            .eq('resolved', false)
             .limit(1)
             .maybeSingle();
 
@@ -96,11 +96,11 @@ export default async function webhookRoute(c: Context): Promise<Response> {
         await supabase
             .from('dim_pending_signal_registrations')
             .update({
-                is_resolved: true,
+                resolved: true,
                 resolved_at: new Date().toISOString(),
-                final_score: payload.finalScore,
+                resolved_by: `${provider}_webhook`,
             })
-            .eq('id', pending.id);
+            .eq('registration_id', pending.registration_id);
 
         await supabase
             .from('fact_outcomes')

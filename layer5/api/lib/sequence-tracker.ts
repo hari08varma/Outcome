@@ -24,6 +24,7 @@ const RESOLUTION_THRESHOLD = 0.7;  // outcome >= this = resolved
 export async function upsertSequence(params: {
     episodeId: string;
     agentId: string;
+    customerId: string;
     contextHash: string;
     actionName: string;
     responseMs?: number;
@@ -43,6 +44,7 @@ export async function upsertSequence(params: {
             .insert({
                 episode_id: params.episodeId,
                 agent_id: params.agentId,
+                customer_id: params.customerId,
                 context_hash: params.contextHash,
                 action_sequence: [params.actionName],
                 total_response_ms: params.responseMs ?? null,

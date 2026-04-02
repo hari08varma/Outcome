@@ -205,6 +205,7 @@ export async function findClosestContext(
             p_model: CURRENT_EMBEDDING_MODEL,
             p_threshold: SIMILARITY_THRESHOLD,
             p_limit: 1,
+            p_schema_version: CURRENT_EMBEDDING_SCHEMA_VERSION,
         });
 
         if (error) {

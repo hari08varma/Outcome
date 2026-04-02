@@ -67,6 +67,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
             await upsertSequence({
                 episodeId: params.episodeId,
                 agentId: params.agentId,
+                customerId: params.customerId,
                 contextHash: params.decisionRecord?.context_hash ?? `${params.contextId}:${params.issueType}`,
                 actionName: params.actionName,
                 responseMs: params.responseMs ?? undefined,

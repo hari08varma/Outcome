@@ -1,5 +1,9 @@
 -- ============================================================
 -- LAYERINFINITE — Migration 063: Reconcile failed live steps
+-- ⚠️  DO NOT REPLAY ON FRESH / CI / STAGING ENVIRONMENTS.
+-- This migration deletes real dim_actions rows created before 2026-03-10.
+-- It is a one-time prod data-cleanup migration only.
+-- On a fresh DB, run seed scripts AFTER this migration, not before.
 -- Covers failed legacy steps from deploy all:
 --   015_update_mv_outcome_score.sql
 --   033_sandbox_status.sql
@@ -159,12 +163,20 @@ ALTER TABLE fact_decisions
 -- 045 compatibility: run cleanup conditionally depending on
 -- schema shape (legacy/live divergence safe).
 -- ------------------------------------------------------------
-DELETE FROM dim_actions
-WHERE created_at < '2026-03-10'
-  AND customer_id IN (
-    SELECT customer_id FROM dim_customers
+DO $$
+BEGIN
+  -- Only run on production-like datasets. Fresh/seeded environments should skip.
+  IF (SELECT COUNT(*) FROM dim_actions) > 100 THEN
+    DELETE FROM dim_actions
     WHERE created_at < '2026-03-10'
-  );
+      AND customer_id IN (
+        SELECT customer_id FROM dim_customers
+        WHERE created_at < '2026-03-10'
+      );
+  ELSE
+    RAISE NOTICE 'Skipping reconcile DELETE — looks like a fresh environment.';
+  END IF;
+END $$;
 
 DO $$
 BEGIN
