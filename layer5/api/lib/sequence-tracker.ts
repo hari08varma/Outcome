@@ -22,11 +22,11 @@ const RESOLUTION_THRESHOLD = 0.7;  // outcome >= this = resolved
  * Called every time log-outcome is called with an episode_id.
  */
 export async function upsertSequence(params: {
-    episodeId:    string;
-    agentId:      string;
-    contextHash:  string;
-    actionName:   string;
-    responseMs?:  number;
+    episodeId: string;
+    agentId: string;
+    contextHash: string;
+    actionName: string;
+    responseMs?: number;
 }): Promise<{ sequenceId: string; isNew: boolean }> {
     // Check if sequence exists for this episode
     const { data: existing } = await supabase
@@ -41,10 +41,10 @@ export async function upsertSequence(params: {
         const { data, error } = await supabase
             .from('action_sequences')
             .insert({
-                episode_id:        params.episodeId,
-                agent_id:          params.agentId,
-                context_hash:      params.contextHash,
-                action_sequence:   [params.actionName],
+                episode_id: params.episodeId,
+                agent_id: params.agentId,
+                context_hash: params.contextHash,
+                action_sequence: [params.actionName],
                 total_response_ms: params.responseMs ?? null,
             })
             .select('id')
@@ -61,9 +61,9 @@ export async function upsertSequence(params: {
     const { error } = await supabase
         .from('action_sequences')
         .update({
-            action_sequence:   [...existing.action_sequence, params.actionName],
+            action_sequence: [...existing.action_sequence, params.actionName],
             total_response_ms: (existing.total_response_ms ?? 0) +
-                               (params.responseMs ?? 0),
+                (params.responseMs ?? 0),
         })
         .eq('id', existing.id)
         .eq('agent_id', params.agentId);
@@ -85,16 +85,16 @@ export async function upsertSequence(params: {
  *   - feedback_signal is "immediate" with clear outcome
  */
 export async function closeSequence(params: {
-    episodeId:    string;
-    agentId:      string;
+    episodeId: string;
+    agentId: string;
     finalOutcome: number;  // 0.0–1.0
 }): Promise<void> {
     const { error } = await supabase
         .from('action_sequences')
         .update({
             final_outcome: params.finalOutcome,
-            resolved:      params.finalOutcome >= RESOLUTION_THRESHOLD,
-            closed_at:     new Date().toISOString(),
+            resolved: params.finalOutcome >= RESOLUTION_THRESHOLD,
+            closed_at: new Date().toISOString(),
         })
         .eq('episode_id', params.episodeId)
         .eq('agent_id', params.agentId)

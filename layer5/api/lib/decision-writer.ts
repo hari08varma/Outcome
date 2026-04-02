@@ -23,7 +23,7 @@ export function bufferDecision(row: DecisionRow): string {
     const uuid = crypto.randomUUID();
     buffer.push({ ...row, _id: uuid });
     if (buffer.length >= MAX_BUFFER_SIZE) {
-        flushDecisions().catch(() => {});
+        flushDecisions().catch(() => { });
     }
     return uuid;
 }
@@ -60,9 +60,9 @@ export async function flushDecisions(): Promise<void> {
 }
 
 setInterval(() => {
-    flushDecisions().catch(() => {});
+    flushDecisions().catch(() => { });
 }, FLUSH_INTERVAL_MS).unref();
 
 process.on('SIGTERM', () => {
-    flushDecisions().catch(() => {}).finally(() => process.exit(0));
+    flushDecisions().catch(() => { }).finally(() => process.exit(0));
 });
