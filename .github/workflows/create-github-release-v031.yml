@@ -1,0 +1,36 @@
+name: Create GitHub Release v0.3.1
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if release exists
+        id: check
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://api.github.com/repos/${{ github.repository }}/releases/tags/v0.3.1)
+          if [ "$STATUS" = "200" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release v0.3.1 already exists."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release v0.3.1 does not exist. Creating it."
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.3.1
+          target_commitish: master
+          name: v0.3.1 - Score callback fixes (Python async + run() mode)
+          body_path: RELEASE_NOTES_v0.3.1.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
