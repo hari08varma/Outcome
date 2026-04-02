@@ -91,6 +91,62 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         }
     }
 
+    async function taskLatencySpike(): Promise<void> {
+        const { data: recentOutcomes } = await supabase
+            .from('fact_outcomes')
+            .select('response_time_ms')
+            .eq('agent_id', params.agentId)
+            .eq('action_id', params.actionId)
+            .order('created_at', { ascending: false })
+            .limit(20);
+
+        if (!recentOutcomes || recentOutcomes.length < 5) return;
+
+        const current = recentOutcomes[0].response_time_ms;
+        if (!current || current <= 0) return;
+
+        const baselineValues = recentOutcomes
+            .slice(1, 16)
+            .map((r) => r.response_time_ms)
+            .filter((v): v is number => typeof v === 'number' && v > 0)
+            .sort((a, b) => a - b);
+
+        if (baselineValues.length < 3) return;
+
+        const mid = Math.floor(baselineValues.length / 2);
+        const median = baselineValues[mid]!;
+
+        // 3× multiplier + 1000ms absolute floor prevents false positives
+        // (e.g. an action that normally takes 50ms spiking to 200ms is not worth alerting on)
+        if (current <= median * 3 || current <= 1000) return;
+
+        // Deduplicate: skip if a latency_spike alert already exists for
+        // this (customer_id, action_id) in the last hour
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const { data: existing } = await supabase
+            .from('degradation_alert_events')
+            .select('id')
+            .eq('customer_id', params.customerId)
+            .eq('action_id', params.actionId)
+            .eq('alert_type', 'latency_spike')
+            .gte('created_at', oneHourAgo)
+            .limit(1);
+
+        if (existing && existing.length > 0) return;
+
+        await supabase.from('degradation_alert_events').insert({
+            customer_id: params.customerId,
+            agent_id: params.agentId,
+            action_id: params.actionId,
+            alert_type: 'latency_spike',
+            severity: 'warning',
+            message:
+                `Latency spike detected on action "${params.actionName}". ` +
+                `Current response time: ${current}ms vs median baseline: ${median}ms ` +
+                `(${(current / median).toFixed(1)}× normal).`,
+        });
+    }
+
     // Trust atomicity is guaranteed by the update_trust_and_audit() RPC (migration 062),
     // which writes both the trust score UPDATE and audit INSERT in one DB transaction.
     // Surfacing trust failures as HTTP 500 to agents is counterproductive — a trust DB
@@ -101,6 +157,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         taskSilentFailure(),
         taskCounterfactuals(),
         taskSequence(),
+        taskLatencySpike(),
     ]);
 
     const taskNames = [
@@ -109,6 +166,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         'silent-failure',
         'counterfactuals',
         'sequence',
+        'latency-spike',
     ];
 
     results.forEach((result, index) => {
@@ -376,6 +434,18 @@ async function updateAgentTrust(
             if (auditError) {
                 throw new Error(`[trust] failed to write audit event: ${auditError.message}`);
             }
+
+            await supabase.from('degradation_alert_events').insert({
+                customer_id: customerId,
+                agent_id: agentId,
+                alert_type: 'coordinated_failure',
+                severity: 'critical',
+                message:
+                    `Coordinated infrastructure failure detected on action "${actionName}". ` +
+                    `3+ agents failed this action within 5 minutes. ` +
+                    `Trust score frozen for affected agents.`,
+            });
+
             console.info('[trust] Failure excluded — coordinated infrastructure event', { agentId, actionName });
             return; // No trust modification
         }
