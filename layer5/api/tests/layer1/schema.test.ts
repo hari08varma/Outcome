@@ -115,15 +115,24 @@ describe('Layer 1 — Schema validation', () => {
         expect(body.code).toBe('VALIDATION_ERROR');
     });
 
-    test('rejects unknown environment value', async () => {
+    test("normalizes environment alias 'qa' to 'staging' and returns 201", async () => {
         const res = await app.request('/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: crypto.randomUUID(), action_name: 'refund', issue_type: 'billing', success: true, environment: 'qa' }),
         });
-        expect(res.status).toBe(400);
+        expect(res.status).toBe(201);
         const body = await res.json() as any;
-        expect(body.code).toBe('VALIDATION_ERROR');
+        expect(body.idempotency_replayed).toBe(false);
+    });
+
+    test("normalizes unknown environment 'unknown_env' to 'production' and returns 201", async () => {
+        const res = await app.request('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: crypto.randomUUID(), action_name: 'refund', issue_type: 'billing', success: true, environment: 'unknown_env' }),
+        });
+        expect(res.status).toBe(201);
     });
 
     test('accepts valid minimal payload', async () => {

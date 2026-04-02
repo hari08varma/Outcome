@@ -264,15 +264,15 @@ async function verifyOutcome(body: any, customerId: string, agentId: string) {
     );
 
     if (verification.discrepancy_detected) {
-        Promise.resolve(
-            supabase.from('degradation_alert_events').insert({
-                customer_id: customerId,
-                agent_id: agentId,
-                alert_type: 'success_hallucination',
-                severity: 'critical',
-                message: `Agent self-reported success=true but verifier(${body.verifier_signal?.source}) returned failure. Outcome corrected to success=false. Scoring engine protected.`,
-            })
-        ).catch(() => { });
+        void supabase.from('degradation_alert_events').insert({
+            customer_id: customerId,
+            agent_id: agentId,
+            alert_type: 'success_hallucination',
+            severity: 'critical',
+            message: `Agent self-reported success=true but verifier(${body.verifier_signal?.source}) returned failure. Outcome corrected to success=false. Scoring engine protected.`,
+        }).then(({ error }) => {
+            if (error) console.warn('[log-outcome] degradation alert insert failed:', error.message);
+        });
     }
     return verification;
 }
@@ -749,6 +749,23 @@ const REFRESH_DEBOUNCE_MS = process.env.NODE_ENV === 'production'
     ? Number(process.env.MV_REFRESH_DEBOUNCE_MS ?? 15_000)
     : 2_000;
 
+/**
+ * Debounced materialized view refresh for mv_task_action_performance.
+ *
+ * ⚠️  NEVER AWAIT THIS FUNCTION.
+ * The returned Promise resolves only when the debounce timer fires
+ * (REFRESH_DEBOUNCE_MS = 15s in production). Awaiting it will stall
+ * the HTTP response for up to 15 seconds.
+ *
+ * Always call as fire-and-forget:
+ *   refreshTaskAggregation(customerId).catch(() => {});
+ *
+ * SIGTERM behaviour: timers in _refreshTimers are lost if the process
+ * exits during a debounce window. This is acceptable — mv_task_action_performance
+ * is eventually consistent and will self-heal on the next outcome log.
+ * decision-writer.ts has a SIGTERM flush for decisions (which are durable);
+ * MV refreshes deliberately do not, since they are idempotent and cheap.
+ */
 async function refreshTaskAggregation(customerId: string): Promise<void> {
     const existing = _refreshTimers.get(customerId);
     if (existing) clearTimeout(existing);
