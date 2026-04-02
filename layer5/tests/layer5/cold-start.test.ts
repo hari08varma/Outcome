@@ -8,14 +8,26 @@
  * ══════════════════════════════════════════════════════════════
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../api/lib/supabase.js', () => ({
+    supabase: {
+        from: vi.fn(),
+    },
+}));
+
 import {
     getPolicyDecision,
     DEFAULT_POLICY_CONFIG,
-    DEFAULT_TRUST,
     CustomerPolicyConfig,
 } from '../../api/lib/policy-engine.js';
 import { ScoredAction, MIN_CONFIDENCE } from '../../api/lib/scoring.js';
+
+const EXISTING_TRUST = {
+    trust_score: 0.7,
+    trust_status: 'probation' as const,
+    consecutive_failures: 0,
+};
 
 // ── Test helper: build a ScoredAction ──────────────────────────
 function makeAction(overrides: Partial<ScoredAction> = {}): ScoredAction {
@@ -29,6 +41,7 @@ function makeAction(overrides: Partial<ScoredAction> = {}): ScoredAction {
         trend: 'stable',
         total_attempts: 50,
         is_cold_start: false,
+        is_low_sample: false,
         recommendation: 'recommend',
         ...overrides,
     };
@@ -73,7 +86,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
 
         const result = getPolicyDecision({
             rankedActions: coldStartActions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -113,7 +126,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
 
         const result = getPolicyDecision({
             rankedActions: transferredPriors,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -149,7 +162,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
         // Synthetic priors should still trigger cold_start policy
         const result = getPolicyDecision({
             rankedActions: [syntheticPrior],
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -191,7 +204,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
         // With coldStartActive=false and good confidence, policy should be exploit or explore (NOT cold_start)
         const result = getPolicyDecision({
             rankedActions: maturedActions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.5);  // deterministic random

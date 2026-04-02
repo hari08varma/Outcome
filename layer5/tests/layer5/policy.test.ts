@@ -12,11 +12,16 @@ import { describe, it, expect } from 'vitest';
 import {
     getPolicyDecision,
     DEFAULT_POLICY_CONFIG,
-    DEFAULT_TRUST,
     AgentTrustScore,
     CustomerPolicyConfig,
 } from '../../api/lib/policy-engine.js';
 import { ScoredAction } from '../../api/lib/scoring.js';
+
+const EXISTING_TRUST: AgentTrustScore = {
+    trust_score: 0.7,
+    trust_status: 'probation',
+    consecutive_failures: 0,
+};
 
 // ── Test helper: build a ScoredAction with sensible defaults ──
 function makeAction(overrides: Partial<ScoredAction> = {}): ScoredAction {
@@ -30,6 +35,7 @@ function makeAction(overrides: Partial<ScoredAction> = {}): ScoredAction {
         trend: 'stable',
         total_attempts: 50,
         is_cold_start: false,
+        is_low_sample: false,
         recommendation: 'recommend',
         ...overrides,
     };
@@ -74,7 +80,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -101,7 +107,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
                     makeAction({ action_id: 'top', composite_score: 0.85, confidence: 0.9 }),
                     makeAction({ action_id: 'alt', composite_score: 0.60 }),
                 ],
-                agentTrust: DEFAULT_TRUST,
+                agentTrust: EXISTING_TRUST,
                 customerConfig: conservativeConfig,
                 coldStartActive: false,
             }, () => randomValue);
@@ -121,7 +127,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.04);  // 0.04 < 0.05 epsilon → explore
@@ -141,7 +147,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.96);  // 0.96 > 0.05 epsilon → exploit
@@ -162,7 +168,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,  // escalation_score = 0.20
             coldStartActive: false,
         });

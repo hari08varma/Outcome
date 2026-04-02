@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabase } from '../../lib/supabase.js';
-import { logOutcomeRouter } from '../../routes/log-outcome.js';
 import { getPolicyDecision } from '../../lib/policy-engine.js';
 import { reinstateSandboxRouter } from '../../routes/admin/reinstate-sandbox.js';
+import { orchestrateOutcome } from '../../lib/outcome-orchestrator.js';
 
 vi.mock('../../lib/supabase.js', () => ({
     supabase: {
-        from: vi.fn()
+        from: vi.fn(),
+        rpc: vi.fn(),
     }
 }));
 
@@ -24,109 +25,90 @@ describe('Graduated Sandbox Trust Pipeline', () => {
     });
 
     it('agent drops to sandbox (not suspended) at 5 failures', async () => {
-        const updateMock = vi.fn().mockResolvedValue({ error: null });
-        const fromMock = vi.fn((table: string) => {
+        const makeQuery = (result: { data: any; error: any }) => {
+            const q: any = {};
+            q.select = vi.fn(() => q);
+            q.eq = vi.fn(() => q);
+            q.gte = vi.fn(() => q);
+            q.ilike = vi.fn(() => q);
+            q.order = vi.fn(() => q);
+            q.limit = vi.fn(() => q);
+            q.maybeSingle = vi.fn(async () => ({ data: null, error: null }));
+            q.insert = vi.fn(async () => ({ error: null }));
+            q.update = vi.fn(() => q);
+            q.upsert = vi.fn(async () => ({ error: null }));
+            q.then = (resolve: (v: any) => unknown, reject?: (e: unknown) => unknown) =>
+                Promise.resolve(result).then(resolve, reject);
+            return q;
+        };
+
+        const trustRow = {
+            trust_id: 't-1',
+            trust_score: 0.35,
+            total_decisions: 10,
+            correct_decisions: 6,
+            consecutive_failures: 4,
+            trust_status: 'probation',
+        };
+
+        (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'agent_trust_scores') {
                 return {
-                    select: vi.fn().mockReturnThis(),
-                    eq: vi.fn().mockReturnThis(),
-                    maybeSingle: vi.fn().mockResolvedValue({
-                        data: {
-                            trust_id: 't-1',
-                            trust_score: 0.35,
-                            total_decisions: 10,
-                            correct_decisions: 6,
-                            consecutive_failures: 4,
-                            trust_status: 'probation'
-                        }
-                    }),
-                    update: vi.fn().mockReturnThis(),
+                    select: vi.fn(() => ({
+                        eq: vi.fn(() => ({
+                            maybeSingle: vi.fn(async () => ({ data: trustRow, error: null })),
+                        })),
+                    })),
+                    update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
+                    upsert: vi.fn(async () => ({ error: null })),
                 };
             }
-            // Mocks for fact_outcomes and agent_trust_audit
-            return {
-                insert: vi.fn().mockResolvedValue({
-                    select: vi.fn().mockReturnValue({
-                        single: vi.fn().mockResolvedValue({
-                            data: { outcome_id: 'mock-auth', timestamp: '2025' }
-                        })
-                    })
-                }),
-                select: vi.fn().mockReturnThis(),
-                eq: vi.fn().mockReturnThis(),
-                maybeSingle: vi.fn().mockResolvedValue({ data: null })
-            };
-        });
-
-        // Intercept the `update` command directly against supabase mock to detect status updates
-        const mockedUpdateFn = vi.fn().mockReturnThis();
-        const chainedEq = vi.fn().mockResolvedValue({ error: null });
-
-        fromMock.mockImplementation((table) => {
-            if (table === 'agent_trust_scores') {
+            if (table === 'fact_outcomes') return makeQuery({ data: [], error: null });
+            if (table === 'degradation_alert_events') return makeQuery({ data: [], error: null });
+            if (table === 'dim_contexts') {
                 return {
-                    select: vi.fn().mockReturnThis(),
-                    eq: vi.fn().mockReturnThis(),
-                    maybeSingle: vi.fn().mockResolvedValue({
-                        data: {
-                            trust_id: 't-1',
-                            trust_score: 0.35,
-                            total_decisions: 10,
-                            correct_decisions: 6,
-                            consecutive_failures: 4,
-                            trust_status: 'probation'
-                        }
-                    }),
-                    update: mockedUpdateFn.mockReturnValue({ eq: chainedEq })
+                    select: vi.fn(() => ({
+                        eq: vi.fn(() => ({
+                            eq: vi.fn(() => ({
+                                limit: vi.fn(() => ({
+                                    maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+                                })),
+                            })),
+                        })),
+                    })),
                 };
             }
-            return {
-                insert: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { outcome_id: 'o-1', timestamp: '2025' } }) }) }),
-                select: vi.fn().mockReturnThis(),
-                eq: vi.fn().mockReturnThis(),
-                maybeSingle: vi.fn().mockResolvedValue({ data: null })
-            } as any;
+            if (table === 'agent_trust_snapshots') {
+                return { insert: vi.fn(async () => ({ error: null })) };
+            }
+            return makeQuery({ data: null, error: null });
         });
 
-        (supabase.from as any).mockImplementation(fromMock);
+        (supabase.rpc as any).mockImplementation(async (fn: string, args: any) => {
+            if (fn === 'detect_coordinated_failures') return { data: [], error: null };
+            if (fn === 'update_trust_and_audit') return { data: null, error: null };
+            return { data: null, error: null };
+        });
 
-        const req = {
-            method: 'POST',
-            url: 'http://localhost/v1/log-outcome',
-            json: async () => ({
-                session_id: '123e4567-e89b-12d3-a456-426614174000',
-                action_name: 'test_action',
-                issue_type: 'bug',
-                success: false // Triggers failure increase
-            })
-        } as unknown as Request;
+        await orchestrateOutcome({
+            agentId: 'agent-1',
+            customerId: 'customer-1',
+            outcomeId: 'outcome-1',
+            actionId: 'action-1',
+            actionName: 'test_action',
+            contextId: 'context-1',
+            issueType: 'bug',
+            finalSuccess: false,
+            finalOutcomeScore: null,
+        });
 
-        const c = {
-            req,
-            get: (key: string) => {
-                if (key === 'agent_id') return 'agent-1';
-                if (key === 'customer_id') return 'customer-1';
-                if (key === 'parsed_body') return null; // Force raw parse inside function
-                if (key === 'validated_action') return { action_id: 'action-1', action_name: 'test_action', action_category: 'test' };
-                return null;
-            },
-            json: (data: any, status: number) => ({ data, status }),
-            header: vi.fn()
-        } as any;
+        const rpcArgs = (supabase.rpc as any).mock.calls
+            .find((call: any[]) => call[0] === 'update_trust_and_audit')?.[1];
 
-        const handler = logOutcomeRouter.routes.find((r: any) => r.method === 'POST' && r.path === '/')?.handler as Function;
-        await handler(c, vi.fn());
-
-        // We know updateAgentTrust runs async (fire-and-forget), delay slightly
-        await new Promise(r => setTimeout(r, 10));
-
-        expect(mockedUpdateFn).toHaveBeenCalled();
-        const payload = mockedUpdateFn.mock.calls[0][0];
-
-        // Assert sandbox status at exactly 5th failure
-        expect(payload.trust_status).toBe('sandbox');
-        expect(payload.consecutive_failures).toBe(5);
-        expect(payload.trust_score).toBeLessThan(0.35); // Decreased from 0.35
+        expect(rpcArgs).toBeDefined();
+        expect(rpcArgs.p_trust_status).toBe('sandbox');
+        expect(rpcArgs.p_consecutive_failures).toBe(5);
+        expect(rpcArgs.p_trust_score).toBeLessThan(0.35);
     });
 
     it('sandbox policy returns SANDBOX with human_review_required', () => {
@@ -137,7 +119,19 @@ describe('Graduated Sandbox Trust Pipeline', () => {
         };
 
         const result = getPolicyDecision({
-            rankedActions: [{ action_id: 'a-1', composite_score: 0.8, confidence: 0.9, total_attempts: 10, confidence_tier: 'high', raw_success_rate: 0.8, weighted_success_rate: 0.8, context_similarity: 1.0 }],
+            rankedActions: [{
+                action_id: 'a-1',
+                action_name: 'test_action',
+                action_category: 'test',
+                composite_score: 0.8,
+                confidence: 0.9,
+                trend_delta: 0,
+                trend: 'stable' as const,
+                total_attempts: 10,
+                is_cold_start: false,
+                is_low_sample: false,
+                recommendation: 'recommend' as const,
+            }],
             agentTrust,
             customerConfig: { risk_tolerance: 'balanced', min_confidence: 0.3, exploration_rate: 0.05, escalation_score: 0.2 },
             coldStartActive: false
