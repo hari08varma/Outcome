@@ -2,6 +2,15 @@
 
 All notable changes to the Python SDK are documented here.
 
+## [0.3.1] — 2026-04-02
+
+### Fixed
+- score callback in @li.action() now correctly skips async functions (inspect.iscoroutine guard) instead of passing a coroutine object to the score function
+- li.run() now reads entry.score_fn from ActionEntry and calls it after successful execution, so outcome_score is sent in auto mode (previously omitted)
+- ActionEntry dataclass now stores score_fn: Callable | None
+
+### No breaking changes. Fully backward compatible.
+
 ## [0.3.0] — 2026-03-31
 
 ### Breaking Changes

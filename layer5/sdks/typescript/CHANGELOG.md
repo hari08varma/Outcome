@@ -2,6 +2,15 @@
 
 All notable changes to the TypeScript SDK are documented here.
 
+## [0.3.1] — 2026-04-02
+
+### Fixed
+- ActionOptions<TReturn> type is exported from index.ts for score callback support
+- li.action overloads support both li.action(task, name, fn, options?) and li.action(task, fn, options?)
+- outcome_score is included in payload only when score callback returns a valid finite number in [0.0, 1.0]
+
+### No breaking changes. Fully backward compatible.
+
 ## CI/CD Setup
 Add these secrets to GitHub → Settings → Secrets → Actions:
 - PYPI_API_TOKEN — from pypi.org → Account → API tokens

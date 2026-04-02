@@ -28,7 +28,7 @@ const DEFAULT_BASE_URL = 'https://api.layerinfinite.app';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
-const SDK_VERSION = '0.3.0';
+const SDK_VERSION = '0.3.1';
 const VALID_MODES = ['recommend', 'assist', 'auto'] as const;
 
 /** Internal payload shape for POST /v1/log-outcome (not public API). */
