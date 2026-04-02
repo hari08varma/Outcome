@@ -122,27 +122,44 @@ discrepancyRoute.post('/detect', async (c) => {
             return c.json({ error: 'Failed to scan expired registrations', details: expiredError.message }, 500);
         }
 
-        for (const row of (expiredRows ?? []) as PendingRegistration[]) {
-            const duplicate = await hasUnresolvedDiscrepancy(customerId, row.outcome_id, 'expired_no_signal');
-            if (duplicate) continue;
+        if ((expiredRows ?? []).length > 0) {
+            const expiredOutcomeIds = (expiredRows ?? []).map((r: PendingRegistration) => r.outcome_id);
+            const existingExpiredSet = new Set<string>();
+            if (expiredOutcomeIds.length > 0) {
+                const { data: existingDups } = await supabase
+                    .from('dim_discrepancy_log')
+                    .select('outcome_id')
+                    .eq('customer_id', customerId)
+                    .eq('discrepancy_type', 'expired_no_signal')
+                    .eq('resolved', false)
+                    .in('outcome_id', expiredOutcomeIds.slice(0, 1000));
 
-            const { error: insertError } = await supabase
-                .from('dim_discrepancy_log')
-                .insert({
+                for (const row of existingDups ?? []) {
+                    existingExpiredSet.add((row as any).outcome_id);
+                }
+            }
+
+            const expiredInserts = (expiredRows ?? [])
+                .filter((row: PendingRegistration) => !existingExpiredSet.has(row.outcome_id))
+                .map((row: PendingRegistration) => ({
                     customer_id: customerId,
                     outcome_id: row.outcome_id,
                     registration_id: row.registration_id,
                     action_name: row.event_type,
                     discrepancy_type: 'expired_no_signal',
                     detail: 'Signal registration expired without receiving a webhook',
-                });
+                }));
 
-            if (insertError) {
-                return c.json({ error: 'Failed to write expired discrepancy', details: insertError.message }, 500);
+            if (expiredInserts.length > 0) {
+                const { error: bulkExpiredErr } = await supabase
+                    .from('dim_discrepancy_log')
+                    .insert(expiredInserts);
+                if (bulkExpiredErr) {
+                    return c.json({ error: 'Failed to write expired discrepancies', details: bulkExpiredErr.message }, 500);
+                }
+                expired += expiredInserts.length;
+                detected += expiredInserts.length;
             }
-
-            detected++;
-            expired++;
         }
 
         const { data: allRegistrations, error: registrationError } = await supabase
@@ -155,7 +172,10 @@ discrepancyRoute.post('/detect', async (c) => {
         }
 
         const registrations = (allRegistrations ?? []) as Array<Pick<PendingRegistration, 'registration_id' | 'outcome_id' | 'event_type' | 'platform'>>;
-        const outcomeIds = registrations.map((r) => r.outcome_id);
+        // Cap at 1000 — beyond this, the .in() clause exceeds PostgREST limits.
+        // A scheduled job should handle bulk backlog; the /detect endpoint is for
+        // real-time incremental detection only.
+        const outcomeIds = registrations.map((r) => r.outcome_id).slice(0, 1000);
 
         if (outcomeIds.length > 0) {
             const registrationByOutcome = new Map<string, Pick<PendingRegistration, 'registration_id' | 'event_type' | 'platform'>>();
@@ -215,6 +235,31 @@ discrepancyRoute.post('/detect', async (c) => {
                 return c.json({ error: 'Failed to scan outcomes', details: outcomesError.message }, 500);
             }
 
+            const mismatchCandidates: Array<{
+                customer_id: string;
+                outcome_id: string;
+                registration_id: string;
+                contract_id: string | null;
+                action_name: string;
+                discrepancy_type: 'outcome_mismatch';
+                expected_outcome: boolean;
+                actual_outcome: boolean;
+                signal_confidence: number;
+                detail: string;
+            }> = [];
+            const lowConfidenceCandidates: Array<{
+                customer_id: string;
+                outcome_id: string;
+                registration_id: string;
+                contract_id: string | null;
+                action_name: string;
+                discrepancy_type: 'confidence_below_threshold';
+                actual_outcome: true;
+                signal_confidence: number;
+                threshold_used: number;
+                detail: string;
+            }> = [];
+
             for (const outcome of (outcomes ?? []) as OutcomeSignalRow[]) {
                 const registration = registrationByOutcome.get(outcome.outcome_id);
                 if (!registration || outcome.signal_confidence === null) continue;
@@ -229,58 +274,96 @@ discrepancyRoute.post('/detect', async (c) => {
                 const actualOutcome = Boolean(outcome.success);
 
                 if (actualOutcome !== expectedOutcome) {
-                    const duplicate = await hasUnresolvedDiscrepancy(customerId, outcome.outcome_id, 'outcome_mismatch');
-                    if (!duplicate) {
-                        const { error: insertError } = await supabase
-                            .from('dim_discrepancy_log')
-                            .insert({
-                                customer_id: customerId,
-                                outcome_id: outcome.outcome_id,
-                                registration_id: registration.registration_id,
-                                contract_id: contract?.contract_id ?? null,
-                                action_name: actionName,
-                                discrepancy_type: 'outcome_mismatch',
-                                expected_outcome: expectedOutcome,
-                                actual_outcome: actualOutcome,
-                                signal_confidence: outcome.signal_confidence,
-                                detail: 'Signal outcome contradicts confidence score',
-                            });
-
-                        if (insertError) {
-                            return c.json({ error: 'Failed to write outcome mismatch discrepancy', details: insertError.message }, 500);
-                        }
-
-                        detected++;
-                        mismatch++;
-                    }
+                    mismatchCandidates.push({
+                        customer_id: customerId,
+                        outcome_id: outcome.outcome_id,
+                        registration_id: registration.registration_id,
+                        contract_id: contract?.contract_id ?? null,
+                        action_name: actionName,
+                        discrepancy_type: 'outcome_mismatch',
+                        expected_outcome: expectedOutcome,
+                        actual_outcome: actualOutcome,
+                        signal_confidence: outcome.signal_confidence,
+                        detail: 'Signal outcome contradicts confidence score',
+                    });
                 }
 
                 if (outcome.signal_confidence < 0.4 && actualOutcome === true) {
-                    const duplicate = await hasUnresolvedDiscrepancy(customerId, outcome.outcome_id, 'confidence_below_threshold');
-                    if (!duplicate) {
-                        const { error: insertError } = await supabase
-                            .from('dim_discrepancy_log')
-                            .insert({
-                                customer_id: customerId,
-                                outcome_id: outcome.outcome_id,
-                                registration_id: registration.registration_id,
-                                contract_id: contract?.contract_id ?? null,
-                                action_name: actionName,
-                                discrepancy_type: 'confidence_below_threshold',
-                                actual_outcome: true,
-                                signal_confidence: outcome.signal_confidence,
-                                threshold_used: 0.4,
-                                detail: 'Outcome marked success but confidence is critically low',
-                            });
-
-                        if (insertError) {
-                            return c.json({ error: 'Failed to write low confidence discrepancy', details: insertError.message }, 500);
-                        }
-
-                        detected++;
-                        lowConfidence++;
-                    }
+                    lowConfidenceCandidates.push({
+                        customer_id: customerId,
+                        outcome_id: outcome.outcome_id,
+                        registration_id: registration.registration_id,
+                        contract_id: contract?.contract_id ?? null,
+                        action_name: actionName,
+                        discrepancy_type: 'confidence_below_threshold',
+                        actual_outcome: true,
+                        signal_confidence: outcome.signal_confidence,
+                        threshold_used: 0.4,
+                        detail: 'Outcome marked success but confidence is critically low',
+                    });
                 }
+            }
+
+            const mismatchOutcomeIds = [...new Set(mismatchCandidates.map((row) => row.outcome_id))];
+            const existingMismatchSet = new Set<string>();
+            if (mismatchOutcomeIds.length > 0) {
+                const { data: existingMismatch } = await supabase
+                    .from('dim_discrepancy_log')
+                    .select('outcome_id')
+                    .eq('customer_id', customerId)
+                    .eq('discrepancy_type', 'outcome_mismatch')
+                    .eq('resolved', false)
+                    .in('outcome_id', mismatchOutcomeIds.slice(0, 1000));
+
+                for (const row of existingMismatch ?? []) {
+                    existingMismatchSet.add((row as any).outcome_id);
+                }
+            }
+
+            const mismatchInserts = mismatchCandidates
+                .filter((row) => !existingMismatchSet.has(row.outcome_id));
+            if (mismatchInserts.length > 0) {
+                const { error: bulkMismatchErr } = await supabase
+                    .from('dim_discrepancy_log')
+                    .insert(mismatchInserts);
+
+                if (bulkMismatchErr) {
+                    return c.json({ error: 'Failed to write outcome mismatch discrepancy', details: bulkMismatchErr.message }, 500);
+                }
+
+                detected += mismatchInserts.length;
+                mismatch += mismatchInserts.length;
+            }
+
+            const lowConfidenceOutcomeIds = [...new Set(lowConfidenceCandidates.map((row) => row.outcome_id))];
+            const existingLowConfidenceSet = new Set<string>();
+            if (lowConfidenceOutcomeIds.length > 0) {
+                const { data: existingLowConfidence } = await supabase
+                    .from('dim_discrepancy_log')
+                    .select('outcome_id')
+                    .eq('customer_id', customerId)
+                    .eq('discrepancy_type', 'confidence_below_threshold')
+                    .eq('resolved', false)
+                    .in('outcome_id', lowConfidenceOutcomeIds.slice(0, 1000));
+
+                for (const row of existingLowConfidence ?? []) {
+                    existingLowConfidenceSet.add((row as any).outcome_id);
+                }
+            }
+
+            const lowConfidenceInserts = lowConfidenceCandidates
+                .filter((row) => !existingLowConfidenceSet.has(row.outcome_id));
+            if (lowConfidenceInserts.length > 0) {
+                const { error: bulkLowConfidenceErr } = await supabase
+                    .from('dim_discrepancy_log')
+                    .insert(lowConfidenceInserts);
+
+                if (bulkLowConfidenceErr) {
+                    return c.json({ error: 'Failed to write low confidence discrepancy', details: bulkLowConfidenceErr.message }, 500);
+                }
+
+                detected += lowConfidenceInserts.length;
+                lowConfidence += lowConfidenceInserts.length;
             }
         }
 
