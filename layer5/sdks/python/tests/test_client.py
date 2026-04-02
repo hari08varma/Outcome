@@ -7,6 +7,7 @@ Run with: pytest tests/test_client.py -v
 
 from __future__ import annotations
 
+import inspect
 import httpx
 import pytest
 import respx
@@ -139,3 +140,62 @@ def test_context_manager_closes_session():
 
     assert client_ref is not None
     assert client_ref._http.is_closed
+
+
+def test_run_uses_entry_score_fn_for_outcome_score(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        mode='auto',
+        auto_register=False,
+    )
+
+    client.register_action(
+        'billing_dispute',
+        'resolve_now',
+        lambda amount: {'ok': True, 'amount': amount},
+        score_fn=lambda result: 0.91 if result['ok'] else 0.15,
+    )
+
+    monkeypatch.setattr(client, '_build_execution_order', lambda task: ['resolve_now'])
+    monkeypatch.setattr(client, '_fetch_scores', lambda task: None)
+
+    logged: dict = {}
+    monkeypatch.setattr(client, '_log_outcome', lambda **kwargs: logged.update(kwargs))
+
+    result = client.run('billing_dispute', amount=42)
+
+    assert result == {'ok': True, 'amount': 42}
+    assert logged['task'] == 'billing_dispute'
+    assert logged['action_name'] == 'resolve_now'
+    assert logged['success'] is True
+    assert logged['outcome_score'] == pytest.approx(0.91)
+
+
+def test_action_wrapper_skips_score_fn_for_async_result(monkeypatch, caplog):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        auto_register=False,
+    )
+
+    logged: dict = {}
+    monkeypatch.setattr(client, '_log_outcome', lambda **kwargs: logged.update(kwargs))
+
+    @client.action(
+        'billing_dispute',
+        score_fn=lambda result: 0.8 if result.get('ok') else 0.2,
+    )
+    async def async_handler(amount: int):
+        return {'ok': amount > 0}
+
+    with caplog.at_level('DEBUG'):
+        coro = async_handler(100)
+
+    assert inspect.iscoroutine(coro)
+    coro.close()
+    assert logged['success'] is True
+    assert logged['outcome_score'] is None
+    assert "is async - score callback skipped" in caplog.text

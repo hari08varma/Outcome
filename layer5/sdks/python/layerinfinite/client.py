@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 import logging
 import threading
 import time
@@ -130,7 +131,12 @@ class Layerinfinite:
     def __exit__(self, *args: Any) -> None:
         self._http.close()
 
-    def action(self, task: str, name: str | None = None) -> Callable:
+    def action(
+        self,
+        task: str,
+        name: str | None = None,
+        score_fn: Callable[[Any], float | None] | None = None,
+    ) -> Callable:
         def decorator(fn: Callable) -> Callable:
             action_name = name or fn.__name__
 
@@ -138,6 +144,7 @@ class Layerinfinite:
                 fn=fn,
                 name=action_name,
                 task=task,
+                score_fn=score_fn,
                 registered_via="decorator",
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
@@ -162,11 +169,18 @@ class Layerinfinite:
                 start = time.monotonic()
                 success = False
                 error_msg: str | None = None
+                outcome_score: float | None = None
                 result: Any = None
 
                 try:
                     result = fn(*args, **kwargs)
                     success = True
+                    outcome_score = self._compute_outcome_score(
+                        task=task,
+                        action_name=action_name,
+                        score_fn=score_fn,
+                        result=result,
+                    )
                     return result
                 except Exception as exc:
                     error_msg = f"{type(exc).__name__}: {exc}"
@@ -179,6 +193,7 @@ class Layerinfinite:
                         success=success,
                         session_id=session_id,
                         latency_ms=latency_ms,
+                        outcome_score=outcome_score,
                         error=error_msg,
                     )
 
@@ -189,7 +204,13 @@ class Layerinfinite:
 
         return decorator
 
-    def register_action(self, task: str, name: str, fn: Callable) -> None:
+    def register_action(
+        self,
+        task: str,
+        name: str,
+        fn: Callable,
+        score_fn: Callable[[Any], float | None] | None = None,
+    ) -> None:
         """
         Manually register an action without the decorator.
 
@@ -201,11 +222,13 @@ class Layerinfinite:
             task: Task name (e.g. "payment_failed")
             name: Action name (e.g. "retry_payment")
             fn:   Callable to register
+            score_fn: Optional callable(result) -> outcome_score in [0.0, 1.0]
         """
         entry = ActionEntry(
             fn=fn,
             name=name,
             task=task,
+            score_fn=score_fn,
             registered_via="manual",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -307,6 +330,12 @@ class Layerinfinite:
 
             try:
                 result = entry.fn(**kwargs)
+                outcome_score = self._compute_outcome_score(
+                    task=task,
+                    action_name=action_name,
+                    score_fn=entry.score_fn,
+                    result=result,
+                )
                 latency_ms = round((time.monotonic() - start) * 1000)
                 logger.info(
                     "[layerinfinite] task=%s action=%s succeeded (%dms)",
@@ -320,6 +349,7 @@ class Layerinfinite:
                     success=True,
                     session_id=session_id,
                     latency_ms=latency_ms,
+                    outcome_score=outcome_score,
                 )
                 return result
             except Exception as exc:
@@ -578,6 +608,7 @@ class Layerinfinite:
         success: bool,
         session_id: str,
         latency_ms: int = 0,
+        outcome_score: float | None = None,
         error: str | None = None,
     ) -> None:
         """
@@ -594,6 +625,8 @@ class Layerinfinite:
             "session_id": session_id,
             "latency_ms": latency_ms,
         }
+        if outcome_score is not None:
+            payload["outcome_score"] = outcome_score
         if error:
             payload["metadata"] = {"error": error}
 
@@ -612,6 +645,60 @@ class Layerinfinite:
             threading.Thread(target=_send, daemon=True).start()
         else:
             _send()
+
+    def _compute_outcome_score(
+        self,
+        task: str,
+        action_name: str,
+        score_fn: Callable[[Any], float | None] | None,
+        result: Any,
+    ) -> float | None:
+        if inspect.iscoroutine(result):
+            logger.debug(
+                "[layerinfinite] '%s/%s' is async - score callback skipped. "
+                "Use the async SDK wrapper for async actions.",
+                task,
+                action_name,
+            )
+            return None
+
+        if score_fn is None:
+            return None
+
+        try:
+            raw_score = score_fn(result)
+        except Exception as exc:
+            logger.warning(
+                "[layerinfinite] score_fn failed for %s/%s: %s",
+                task,
+                action_name,
+                exc,
+            )
+            return None
+
+        if raw_score is None:
+            return None
+
+        if not isinstance(raw_score, (int, float)):
+            logger.warning(
+                "[layerinfinite] score_fn for %s/%s returned non-numeric value %r; skipping outcome_score.",
+                task,
+                action_name,
+                raw_score,
+            )
+            return None
+
+        score = float(raw_score)
+        if score < 0.0 or score > 1.0:
+            logger.warning(
+                "[layerinfinite] score_fn for %s/%s returned out-of-range score %.4f; expected [0.0, 1.0].",
+                task,
+                action_name,
+                score,
+            )
+            return None
+
+        return score
 
     def _register_action_in_dashboard(self, task: str, action_name: str) -> None:
         """

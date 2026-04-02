@@ -6,7 +6,7 @@ Pydantic v2 request/response models.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, List, Literal
+from typing import Any, Callable, List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,7 @@ class ActionEntry:
     fn: Callable
     name: str
     task: str
+    score_fn: Callable[[Any], float | None] | None
     registered_via: str
     created_at: str
 
