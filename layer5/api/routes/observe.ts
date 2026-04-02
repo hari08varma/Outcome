@@ -13,8 +13,8 @@
  *
  * Response shape (matches ObservationSummary in SDK models.py):
  * {
- *   task:             string        — the issue_type queried
- *   total_runs:       number        — sum of total_attempts across all actions
+ *   task:             string        — the task_name queried
+ *   total_runs:       number        — sum of total_count across all actions
  *   success_rate:     number        — overall rate 0.0–1.0 (4 decimal places)
  *   actions_seen:     string[]      — action names, ordered best → worst
  *   best_performing:  string | null — action_name with highest success_rate
@@ -66,10 +66,10 @@ observeRouter.get('/', async (c) => {
 
     // ── Query mv_task_action_performance ─────────────────────
     // Ordered DESC by success_rate so rows[0] is always best.
-    // Filter by both customer_id (tenant) and issue_type (task).
+    // Filter by both customer_id (tenant) and task_name (task).
     let rows: Array<{
         action_name: string;
-        total_attempts: number;
+        total_count: number;
         success_count: number;
         success_rate: number;
         last_seen_at: string | null;
@@ -78,9 +78,9 @@ observeRouter.get('/', async (c) => {
     try {
         const { data, error } = await supabase
             .from('mv_task_action_performance')
-            .select('action_name, total_attempts, success_count, success_rate, last_seen_at')
+            .select('action_name, total_count, success_count, success_rate, last_seen_at')
             .eq('customer_id', customerId)
-            .eq('issue_type', task)
+            .eq('task_name', task)
             .order('success_rate', { ascending: false });
 
         if (error) {
@@ -130,7 +130,7 @@ observeRouter.get('/', async (c) => {
 
     // ── Aggregate totals across all actions for this task ────
     const totalRuns = rows.reduce(
-        (sum, r) => sum + (r.total_attempts ?? 0), 0
+        (sum, r) => sum + (r.total_count ?? 0), 0
     );
     const totalSuccess = rows.reduce(
         (sum, r) => sum + (r.success_count ?? 0), 0
