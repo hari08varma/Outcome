@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { useToast } from '../../hooks/useToast';
+import { getApiBase } from '../../lib/config';
 
 type DiscrepancyRow = {
     discrepancy_id: string;
@@ -11,7 +13,7 @@ type DiscrepancyRow = {
     contract_id?: string | null;
     action_name: string;
     discrepancy_type: 'outcome_mismatch' | 'expired_no_signal' |
-                      'confidence_below_threshold' | 'contract_violation' | string;
+    'confidence_below_threshold' | 'contract_violation' | string;
     expected_outcome?: boolean | null;
     actual_outcome?: boolean | null;
     signal_confidence?: number | null;
@@ -66,12 +68,10 @@ export default function DiscrepanciesPage(): React.ReactElement {
 
     const { showToast, toasts, dismissToast } = useToast();
 
-    const apiBaseUrl = import.meta.env.VITE_API_URL as string | undefined;
-
     const loadDiscrepancies = async (): Promise<void> => {
-        if (!apiBaseUrl) return;
+        const apiBase = getApiBase();
         const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`${apiBaseUrl}/v1/discrepancies`, {
+        const res = await fetch(`${apiBase}/v1/discrepancies`, {
             headers: {
                 Authorization: `Bearer ${session?.access_token}`,
                 'Content-Type': 'application/json',
@@ -83,9 +83,9 @@ export default function DiscrepanciesPage(): React.ReactElement {
     };
 
     const loadSummary = async (): Promise<void> => {
-        if (!apiBaseUrl) return;
+        const apiBase = getApiBase();
         const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`${apiBaseUrl}/v1/discrepancies/summary`, {
+        const res = await fetch(`${apiBase}/v1/discrepancies/summary`, {
             headers: {
                 Authorization: `Bearer ${session?.access_token}`,
                 'Content-Type': 'application/json',
@@ -97,12 +97,6 @@ export default function DiscrepanciesPage(): React.ReactElement {
     };
 
     useEffect(() => {
-        if (!apiBaseUrl) {
-            setError('API URL not configured');
-            setLoading(false);
-            return;
-        }
-
         setLoading(true);
         setError(null);
 
@@ -114,15 +108,15 @@ export default function DiscrepanciesPage(): React.ReactElement {
             .finally(() => {
                 setLoading(false);
             });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const onDetect = async (): Promise<void> => {
-        if (!apiBaseUrl) return;
         setDetecting(true);
         try {
+            const apiBase = getApiBase();
             const { data: { session } } = await supabase.auth.getSession();
-            const res = await fetch(`${apiBaseUrl}/v1/discrepancies/detect`, {
+            const res = await fetch(`${apiBase}/v1/discrepancies/detect`, {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${session?.access_token}`,
@@ -132,7 +126,12 @@ export default function DiscrepanciesPage(): React.ReactElement {
             if (!res.ok) throw new Error(await res.text());
             const body = await res.json() as { detected?: number };
             showToast(`Detected ${body.detected ?? 0} discrepancy(s)`, 'success');
-            await Promise.all([loadDiscrepancies(), loadSummary()]);
+            setLoading(true);
+            try {
+                await Promise.all([loadDiscrepancies(), loadSummary()]);
+            } finally {
+                setLoading(false);
+            }
         } catch {
             showToast('Detection failed', 'critical');
         } finally {
@@ -141,11 +140,11 @@ export default function DiscrepanciesPage(): React.ReactElement {
     };
 
     const onResolve = async (id: string): Promise<void> => {
-        if (!apiBaseUrl) return;
         setResolvingId(id);
         try {
+            const apiBase = getApiBase();
             const { data: { session } } = await supabase.auth.getSession();
-            const res = await fetch(`${apiBaseUrl}/v1/discrepancies/${id}/resolve`, {
+            const res = await fetch(`${apiBase}/v1/discrepancies/${id}/resolve`, {
                 method: 'PATCH',
                 headers: {
                     Authorization: `Bearer ${session?.access_token}`,
@@ -155,7 +154,12 @@ export default function DiscrepanciesPage(): React.ReactElement {
             if (!res.ok) throw new Error(await res.text());
             showToast('Discrepancy resolved', 'success');
             setConfirmResolveId(null);
-            await Promise.all([loadDiscrepancies(), loadSummary()]);
+            setLoading(true);
+            try {
+                await Promise.all([loadDiscrepancies(), loadSummary()]);
+            } finally {
+                setLoading(false);
+            }
         } catch {
             showToast('Failed to resolve', 'critical');
         } finally {
@@ -240,7 +244,10 @@ export default function DiscrepanciesPage(): React.ReactElement {
                                                     {row.discrepancy_type}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-[#a1a1aa] max-w-[240px] truncate">
+                                            <td
+                                                className="px-4 py-3 text-sm text-[#a1a1aa] max-w-[240px] truncate cursor-help"
+                                                title={row.detail ?? ''}
+                                            >
                                                 {row.detail ?? '—'}
                                             </td>
                                             <td className="px-4 py-3 text-sm">
@@ -287,8 +294,8 @@ export default function DiscrepanciesPage(): React.ReactElement {
                 </div>
             </section>
 
-            {toasts.length > 0 && (
-                <div className="fixed right-4 top-4 z-50 space-y-2">
+            {toasts.length > 0 && createPortal(
+                <div className="fixed right-4 top-4 z-50 space-y-2 pointer-events-none">
                     {toasts.map((toast) => (
                         <button
                             key={toast.id}
@@ -296,11 +303,13 @@ export default function DiscrepanciesPage(): React.ReactElement {
                                 ? 'block text-left bg-green-500/10 border border-green-500/30 text-green-400 px-3 py-2 rounded-lg text-sm'
                                 : 'block text-left bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm'}
                             onClick={() => dismissToast(toast.id)}
+                            style={{ pointerEvents: 'auto' }}
                         >
                             {toast.message}
                         </button>
                     ))}
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

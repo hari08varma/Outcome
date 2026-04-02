@@ -43,7 +43,10 @@ function getConfidence(row: SignalRow): number | null {
     return null;
 }
 
-function getResolvedOutcome(row: SignalRow): 'SUCCESS' | 'FAILURE' {
+function getResolvedOutcome(row: SignalRow): 'SUCCESS' | 'FAILURE' | 'UNKNOWN' {
+    if (row.outcome_derived == null && getConfidence(row) === null) {
+        return 'UNKNOWN';
+    }
     if (row.outcome_derived === true) return 'SUCCESS';
     if (row.outcome_derived === false) return 'FAILURE';
     const confidence = getConfidence(row);
@@ -97,27 +100,16 @@ export default function SignalsPage(): React.ReactElement {
                     throw new Error(userError?.message ?? 'Unable to resolve user');
                 }
 
-                let customerId: string | null = null;
-
-                const primaryProfile = await supabase
-                    .from('userprofiles')
+                const { data: profileData, error: profileError } = await supabase
+                    .from('user_profiles')
                     .select('customer_id')
                     .eq('id', user.id)
                     .maybeSingle();
 
-                customerId = primaryProfile.data?.customer_id ?? null;
+                const customerId = profileData?.customer_id ?? null;
 
-                if (!customerId) {
-                    const fallbackProfile = await supabase
-                        .from('user_profiles')
-                        .select('customer_id')
-                        .eq('id', user.id)
-                        .maybeSingle();
-                    customerId = fallbackProfile.data?.customer_id ?? null;
-                }
-
-                if (!customerId) {
-                    throw new Error('Missing customer context');
+                if (profileError || !customerId) {
+                    throw new Error(profileError?.message ?? 'Missing customer context');
                 }
 
                 const query = await supabase
@@ -152,7 +144,9 @@ export default function SignalsPage(): React.ReactElement {
         void fetchSignals(true);
 
         const interval = window.setInterval(() => {
-            void fetchSignals();
+            if (document.visibilityState === 'visible') {
+                void fetchSignals();
+            }
         }, 10000);
 
         return () => {
@@ -172,6 +166,10 @@ export default function SignalsPage(): React.ReactElement {
                 return bt - at;
             }),
         [rows],
+    );
+    const webhookResolvedRows = useMemo(
+        () => resolvedRows.filter((row) => !!row.contract_id),
+        [resolvedRows],
     );
 
     const filteredRows = useMemo(() => {
@@ -347,7 +345,7 @@ export default function SignalsPage(): React.ReactElement {
                                 <div key={i} className="h-10 bg-[#1a1a24] rounded-lg" />
                             ))}
                         </div>
-                    ) : resolvedRows.length === 0 ? (
+                    ) : webhookResolvedRows.length === 0 ? (
                         <div className="p-8 text-center text-[#a1a1aa] text-sm">
                             No webhook resolutions yet.
                         </div>
@@ -363,7 +361,7 @@ export default function SignalsPage(): React.ReactElement {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {resolvedRows.map((row, index) => {
+                                    {webhookResolvedRows.map((row, index) => {
                                         const key = row.id ?? row.registration_id ?? `${index}`;
                                         const outcome = getResolvedOutcome(row);
                                         const confidence = getConfidence(row);
@@ -377,10 +375,14 @@ export default function SignalsPage(): React.ReactElement {
                                                             <CheckCircle size={12} />
                                                             SUCCESS
                                                         </span>
-                                                    ) : (
+                                                    ) : outcome === 'FAILURE' ? (
                                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
                                                             <XCircle size={12} />
                                                             FAILURE
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#1a1a24] text-[#a1a1aa] border border-[#1a1a24]">
+                                                            —
                                                         </span>
                                                     )}
                                                 </td>

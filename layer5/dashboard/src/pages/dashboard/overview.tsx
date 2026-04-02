@@ -14,6 +14,7 @@ import {
 import { format, parseISO } from 'date-fns';
 import { useOverviewMetrics } from '../../hooks/useOverviewMetrics';
 import { useSuccessRateTrend } from '../../hooks/useSuccessRateTrend';
+import { useCustomerContext } from '../../hooks/useCustomerContext';
 import { supabase } from '../../supabaseClient';
 
 interface TrendTooltipProps {
@@ -40,15 +41,44 @@ function SkeletonCard(): React.ReactElement {
 export default function Overview(): React.ReactElement {
   const navigate = useNavigate();
   const [selectedContext, setSelectedContext] = useState('');
+  const [contexts, setContexts] = useState<string[]>([]);
   const [secondsSinceRefresh, setSecondsSinceRefresh] = useState(0);
 
   const metrics = useOverviewMetrics();
-  const trend   = useSuccessRateTrend(selectedContext || undefined);
+  const { data: ctx } = useCustomerContext();
+  const trend = useSuccessRateTrend(selectedContext || undefined);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setSecondsSinceRefresh((p) => p + 5), 5000);
+    const timer = window.setInterval(() => setSecondsSinceRefresh((p) => p + 1), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!metrics.loading) {
+      setSecondsSinceRefresh(0);
+    }
+  }, [metrics.loading]);
+
+  useEffect(() => {
+    const customerId = ctx?.customerId;
+    if (metrics.loading || !customerId) return;
+
+    void (async () => {
+      const { data } = await supabase
+        .from('dim_contexts')
+        .select('issue_type')
+        .eq('customer_id', customerId)
+        .limit(100);
+
+      const nextContexts = [...new Set(
+        (data ?? [])
+          .map((r: { issue_type: string | null }) => r.issue_type)
+          .filter((issueType): issueType is string => Boolean(issueType))
+      )];
+
+      setContexts(nextContexts);
+    })();
+  }, [metrics.loading, ctx?.customerId]);
 
   const onRefresh = (): void => {
     metrics.refetch();
@@ -56,17 +86,17 @@ export default function Overview(): React.ReactElement {
     setSecondsSinceRefresh(0);
   };
 
-  const isLoading              = metrics.loading || trend.loading;
-  const error                  = metrics.error ?? trend.error;
+  const isLoading = metrics.loading || trend.loading;
+  const error = metrics.error ?? trend.error;
   const isApiNotConfigured = error?.includes('VITE_LAYERINFINITE_API_URL') ?? false;
   const isAccountSetupIncomplete = (error?.includes('Account setup incomplete') ?? false)
     && !isApiNotConfigured;
-  const showEmptyState         = !isLoading && !error && !metrics.hasScores;
-  const chartData              = useMemo(() => trend.data, [trend.data]);
+  const showEmptyState = !isLoading && !error && !metrics.hasScores;
+  const chartData = useMemo(() => trend.data, [trend.data]);
 
-  const healthColor  = metrics.agentHealthScore >= 75 ? '#00cc66' : metrics.agentHealthScore >= 40 ? '#ffaa00' : '#ff4444';
+  const healthColor = metrics.agentHealthScore >= 75 ? '#00cc66' : metrics.agentHealthScore >= 40 ? '#ffaa00' : '#ff4444';
   const successColor = metrics.successRate7d * 100 >= 80 ? '#00cc66' : metrics.successRate7d * 100 >= 60 ? '#ffaa00' : '#ff4444';
-  const alertsColor  = metrics.activeAlerts > 0 ? '#ff4444' : '#00cc66';
+  const alertsColor = metrics.activeAlerts > 0 ? '#ff4444' : '#00cc66';
 
   const xTickFormatter = (value: string, index: number): string => {
     if (index === 0) return '30 days ago';
@@ -194,6 +224,9 @@ export default function Overview(): React.ReactElement {
                 onChange={(e) => setSelectedContext(e.target.value)}
               >
                 <option value="">All Contexts</option>
+                {contexts.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
               </select>
             </div>
             <div className="p-5 h-[320px]">

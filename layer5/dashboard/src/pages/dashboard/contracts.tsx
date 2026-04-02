@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, FileText, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { useToast } from '../../hooks/useToast';
+import { getApiBase } from '../../lib/config';
 
 type ContractRow = {
     id?: string;
@@ -69,20 +71,16 @@ export default function ContractsPage(): React.ReactElement {
 
     const { showToast, toasts, dismissToast } = useToast();
 
-    const apiBaseUrl = import.meta.env.VITE_API_URL as string | undefined;
-
     const loadContracts = async (): Promise<void> => {
         setLoading(true);
         setError(null);
 
         try {
-            if (!apiBaseUrl) {
-                throw new Error('VITE_API_URL is not configured');
-            }
+            const apiBase = getApiBase();
 
             const { data: { session } } = await supabase.auth.getSession();
 
-            const res = await fetch(`${apiBaseUrl}/v1/contracts`, {
+            const res = await fetch(`${apiBase}/v1/contracts`, {
                 method: 'GET',
                 headers: {
                     Authorization: `Bearer ${session?.access_token}`,
@@ -128,21 +126,20 @@ export default function ContractsPage(): React.ReactElement {
         setSubmitting(true);
 
         try {
-            if (!apiBaseUrl) {
-                throw new Error('VITE_API_URL is not configured');
-            }
+            const apiBase = getApiBase();
 
             const { data: { session } } = await supabase.auth.getSession();
 
             const payload = {
                 action_name: form.action_name.trim(),
+                source: form.source,
                 success_condition: form.success_condition.trim(),
                 score_expression: form.score_expression.trim(),
                 timeout_hours: form.timeout_hours ? Number(form.timeout_hours) : 24,
                 fallback_strategy: mapTimeoutFallbackToApi(form.timeout_fallback),
             };
 
-            const res = await fetch(`${apiBaseUrl}/v1/contracts`, {
+            const res = await fetch(`${apiBase}/v1/contracts`, {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${session?.access_token}`,
@@ -169,13 +166,11 @@ export default function ContractsPage(): React.ReactElement {
     const onDelete = async (id: string): Promise<void> => {
         setDeletingId(id);
         try {
-            if (!apiBaseUrl) {
-                throw new Error('VITE_API_URL is not configured');
-            }
+            const apiBase = getApiBase();
 
             const { data: { session } } = await supabase.auth.getSession();
 
-            const res = await fetch(`${apiBaseUrl}/v1/contracts/${id}`, {
+            const res = await fetch(`${apiBase}/v1/contracts/${id}`, {
                 method: 'DELETE',
                 headers: {
                     Authorization: `Bearer ${session?.access_token}`,
@@ -375,9 +370,12 @@ export default function ContractsPage(): React.ReactElement {
                                 max={8760}
                                 value={form.timeout_hours}
                                 onChange={(e) => setForm((prev) => ({ ...prev, timeout_hours: e.target.value }))}
-                                placeholder="e.g. 24"
+                                placeholder="Default: 24"
                                 className="w-full bg-[#111118] border border-[#1a1a24] rounded-lg px-3 py-2 text-white text-sm placeholder-[#52525b] focus:outline-none focus:border-[#b8ff00] transition-colors"
                             />
+                            <p className="text-xs text-[#52525b] mt-1">
+                                Leave blank to use the default 24-hour timeout
+                            </p>
                         </div>
 
                         <div>
@@ -405,8 +403,8 @@ export default function ContractsPage(): React.ReactElement {
                 </div>
             </section>
 
-            {toasts.length > 0 && (
-                <div className="fixed right-4 top-4 z-50 space-y-2">
+            {toasts.length > 0 && createPortal(
+                <div className="fixed right-4 top-4 z-50 space-y-2 pointer-events-none">
                     {toasts.map((toast) => (
                         <button
                             key={toast.id}
@@ -414,11 +412,13 @@ export default function ContractsPage(): React.ReactElement {
                                 ? 'block text-left bg-green-500/10 border border-green-500/30 text-green-400 px-3 py-2 rounded-lg text-sm'
                                 : 'block text-left bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm'}
                             onClick={() => dismissToast(toast.id)}
+                            style={{ pointerEvents: 'auto' }}
                         >
                             {toast.message}
                         </button>
                     ))}
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

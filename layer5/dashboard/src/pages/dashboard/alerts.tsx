@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { AlertsFilter, useAlerts } from '../../hooks/useAlerts';
 
@@ -25,6 +25,14 @@ export default function Alerts(): React.ReactElement {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [fadingIds, setFadingIds] = useState<Set<string>>(new Set());
+  const mountedRef = React.useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const { alerts, resolveAlert, loading, error, refetch } = useAlerts(activeFilter, showResolved);
 
@@ -42,13 +50,15 @@ export default function Alerts(): React.ReactElement {
       try {
         await resolveAlert(id);
       } finally {
-        setResolvingId(null);
-        setConfirmingId(null);
-        setFadingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+        if (mountedRef.current) {
+          setResolvingId(null);
+          setConfirmingId(null);
+          setFadingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }
       }
     }, 300);
   };
@@ -94,6 +104,14 @@ export default function Alerts(): React.ReactElement {
 
       {loading ? (
         <div className="mt-6 h-[260px] rounded-xl bg-[#111118] border border-[#1a1a24] animate-pulse" />
+      ) : alerts.length === 0 ? (
+        <section className="mt-20 flex flex-col items-center text-center py-24">
+          <div className="text-5xl mb-4 opacity-20">🔔</div>
+          <h2 className="text-white font-semibold text-lg mb-2">No alerts — all clear</h2>
+          <p className="text-[#52525b] text-sm max-w-sm">
+            Degradation alerts, latency spikes, and coordinated failures appear here when detected.
+          </p>
+        </section>
       ) : unresolvedOnlyCount === 0 && !showResolved ? (
         <section className="mt-20 flex flex-col items-center text-center py-24">
           <div className="text-5xl mb-4 opacity-20">🔔</div>
@@ -115,68 +133,68 @@ export default function Alerts(): React.ReactElement {
                 : '-';
 
               return (
-            <article
-              key={alert.id}
-              className={`bg-[#111118] border border-[#1a1a24] rounded-xl p-4 flex gap-4 transition-opacity duration-300 ${fadingIds.has(alert.id) ? 'opacity-0' : 'opacity-100'}`}
-            >
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
-                {alert.severity === 'critical' ? (
-                  <span className="w-8 h-8 rounded-full bg-[#ff4444]/20 text-[#ff4444] flex items-center justify-center">!</span>
-                ) : (
-                  <span className="w-8 h-8 rounded-full bg-[#ffaa00]/20 text-[#ffaa00] flex items-center justify-center">!</span>
-                )}
-              </div>
+                <article
+                  key={alert.id}
+                  className={`bg-[#111118] border border-[#1a1a24] rounded-xl p-4 flex gap-4 transition-opacity duration-300 ${fadingIds.has(alert.id) ? 'opacity-0' : 'opacity-100'}`}
+                >
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+                    {alert.severity === 'critical' ? (
+                      <span className="w-8 h-8 rounded-full bg-[#ff4444]/20 text-[#ff4444] flex items-center justify-center">!</span>
+                    ) : (
+                      <span className="w-8 h-8 rounded-full bg-[#ffaa00]/20 text-[#ffaa00] flex items-center justify-center">!</span>
+                    )}
+                  </div>
 
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <span className="uppercase text-[10px] font-bold px-2 py-1 rounded-full bg-[#1a1a24] text-[#a1a1aa] border border-[#2a2a34]">
-                    {alertTypeLabel(alert.alertType)}
-                  </span>
-                  <span className={`uppercase text-[10px] font-bold px-2 py-1 rounded-full ${alert.severity === 'critical' ? 'bg-[#ff4444]/20 text-[#ff4444] border border-[#ff4444]/40' : 'bg-[#ffaa00]/20 text-[#ffaa00] border border-[#ffaa00]/40'}`}>
-                    {alert.severity}
-                  </span>
-                </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span className="uppercase text-[10px] font-bold px-2 py-1 rounded-full bg-[#1a1a24] text-[#a1a1aa] border border-[#2a2a34]">
+                        {alertTypeLabel(alert.alertType)}
+                      </span>
+                      <span className={`uppercase text-[10px] font-bold px-2 py-1 rounded-full ${alert.severity === 'critical' ? 'bg-[#ff4444]/20 text-[#ff4444] border border-[#ff4444]/40' : 'bg-[#ffaa00]/20 text-[#ffaa00] border border-[#ffaa00]/40'}`}>
+                        {alert.severity}
+                      </span>
+                    </div>
 
-                <p className="text-white text-sm font-medium mt-2">{alert.message}</p>
+                    <p className="text-white text-sm font-medium mt-2">{alert.message}</p>
 
-                <div className="flex flex-wrap gap-2 mt-2 items-center">
-                  <span className="font-mono text-xs bg-[#1a1a24] px-2 py-0.5 rounded text-[#a1a1aa]">{alert.actionName}</span>
-                  <span className="text-[#52525b] text-xs">{relativeTime}</span>
-                  {alert.alertType === 'latency_spike' && alert.currentValue != null && alert.baselineValue != null && (
-                    <span className="text-[#ffaa00] text-xs font-mono">{(alert.currentValue / 1000).toFixed(1)}s vs baseline {(alert.baselineValue / 1000).toFixed(1)}s</span>
-                  )}
-                  {alert.alertType === 'coordinated_failure' && alert.currentValue != null && alert.baselineValue != null && (
-                    <span className="text-[#ff4444] text-xs font-mono">{(alert.currentValue * 100).toFixed(1)}% failure vs baseline {(alert.baselineValue * 100).toFixed(1)}%</span>
-                  )}
-                </div>
+                    <div className="flex flex-wrap gap-2 mt-2 items-center">
+                      <span className="font-mono text-xs bg-[#1a1a24] px-2 py-0.5 rounded text-[#a1a1aa]">{alert.actionName}</span>
+                      <span className="text-[#52525b] text-xs">{relativeTime}</span>
+                      {alert.alertType === 'latency_spike' && alert.currentValue != null && alert.baselineValue != null && (
+                        <span className="text-[#ffaa00] text-xs font-mono">{(alert.currentValue / 1000).toFixed(1)}s vs baseline {(alert.baselineValue / 1000).toFixed(1)}s</span>
+                      )}
+                      {alert.alertType === 'coordinated_failure' && alert.currentValue != null && alert.baselineValue != null && (
+                        <span className="text-[#ff4444] text-xs font-mono">{(alert.currentValue * 100).toFixed(1)}% failure vs baseline {(alert.baselineValue * 100).toFixed(1)}%</span>
+                      )}
+                    </div>
 
-                <div className="text-[#52525b] text-xs mt-2">{absoluteTime}</div>
-              </div>
+                    <div className="text-[#52525b] text-xs mt-2">{absoluteTime}</div>
+                  </div>
 
-              {!alert.resolved && (
-                <div className="flex-shrink-0 self-center">
-                  {confirmingId !== alert.id ? (
-                    <button
-                      className="border border-[#1a1a24] text-[#a1a1aa] hover:text-white hover:border-[#2a2a34] rounded-lg text-sm px-3 py-1.5"
-                      onClick={() => setConfirmingId(alert.id)}
-                    >
-                      Resolve
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <button className="text-[#52525b] text-xs" onClick={() => setConfirmingId(null)}>Cancel</button>
-                      <button
-                        className="border border-[#ffaa00] text-[#ffaa00] rounded-lg text-sm px-3 py-1.5 min-w-[90px]"
-                        onClick={() => onResolve(alert.id)}
-                        disabled={resolvingId === alert.id}
-                      >
-                        {resolvingId === alert.id ? '...' : 'Confirm?'}
-                      </button>
+                  {!alert.resolved && (
+                    <div className="flex-shrink-0 self-center">
+                      {confirmingId !== alert.id ? (
+                        <button
+                          className="border border-[#1a1a24] text-[#a1a1aa] hover:text-white hover:border-[#2a2a34] rounded-lg text-sm px-3 py-1.5"
+                          onClick={() => setConfirmingId(alert.id)}
+                        >
+                          Resolve
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <button className="text-[#52525b] text-xs" onClick={() => setConfirmingId(null)}>Cancel</button>
+                          <button
+                            className="border border-[#ffaa00] text-[#ffaa00] rounded-lg text-sm px-3 py-1.5 min-w-[90px]"
+                            onClick={() => onResolve(alert.id)}
+                            disabled={resolvingId === alert.id}
+                          >
+                            {resolvingId === alert.id ? '...' : 'Confirm?'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-            </article>
+                </article>
               );
             })()
           ))}
