@@ -12,6 +12,7 @@ import {
 import type {
     ActionEntry,
     ActionFunction,
+    ActionOptions,
     GetScoresResponse,
     LayerinfiniteConfig,
     LogOutcomeRequest,
@@ -40,6 +41,7 @@ interface InternalLogPayload {
     session_id: string;
     latency_ms: number;
     metadata?: { error: string };
+    outcome_score?: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -84,7 +86,7 @@ export class Layerinfinite {
             );
         }
 
-        // ── Assign ───────────────────────────────────────────────
+        // ── Assign ───────────────────────────────────────────
         this.apiKey = config.apiKey;
         this.agentId = config.agentId.trim();
         this.mode = mode;
@@ -110,27 +112,45 @@ export class Layerinfinite {
      * const retryPayment = li.action('payment_failed', 'retry_payment', async (id: string) => {
      *   return gateway.charge(id);
      * });
+     *
+     * // With score callback (enables silent failure detection):
+     * const retryPayment = li.action('payment_failed', async (id: string) => {
+     *   return gateway.charge(id);
+     * }, { score: (result) => result.status === 'succeeded' ? 1.0 : 0.0 });
+     *
+     * // With explicit name + score callback:
+     * const retryPayment = li.action('payment_failed', 'retry_payment', async (id: string) => {
+     *   return gateway.charge(id);
+     * }, { score: (result) => result.amountRefunded / result.amountRequested });
      */
     action<TArgs extends any[], TReturn>(
         task: string,
         nameOrFn: string | ActionFunction<TArgs, TReturn>,
-        maybeFn?: ActionFunction<TArgs, TReturn>,
+        maybeFnOrOptions?: ActionFunction<TArgs, TReturn> | ActionOptions<TReturn>,
+        maybeOptions?: ActionOptions<TReturn>,
     ): WrappedActionFunction<TArgs, TReturn> {
-        // Resolve name and function from overloaded args
+        // Resolve name, function, and options from overloaded args
         let actionName: string | null;
         let fn: ActionFunction<TArgs, TReturn>;
+        let scoreFn: ((result: TReturn) => number) | undefined;
 
         if (typeof nameOrFn === 'string') {
+            // li.action('task', 'name', fn, options?)
             actionName = nameOrFn;
-            if (!maybeFn) {
+            if (!maybeFnOrOptions || typeof maybeFnOrOptions !== 'function') {
                 throw new LayerinfiniteError(
-                    `li.action('${task}', '${nameOrFn}', fn) — fn is missing.`
+                    `li.action('${task}', '${nameOrFn}', fn) — fn is missing or not a function.`
                 );
             }
-            fn = maybeFn;
+            fn = maybeFnOrOptions as ActionFunction<TArgs, TReturn>;
+            scoreFn = maybeOptions?.score;
         } else {
+            // li.action('task', fn, options?)
             fn = nameOrFn;
             actionName = fn.name || null;
+            // maybeFnOrOptions here is ActionOptions (not a function)
+            const opts = maybeFnOrOptions as ActionOptions<TReturn> | undefined;
+            scoreFn = opts?.score;
         }
 
         if (!actionName) {
@@ -161,16 +181,38 @@ export class Layerinfinite {
         const self = this;
         const capturedActionName = actionName;
         const capturedTask = task;
+        const capturedScoreFn = scoreFn;
 
         const wrapped = async function (...args: TArgs): Promise<TReturn> {
             const sessionId = crypto.randomUUID();
             const start = performance.now();
             let success = false;
             let errorMsg: string | undefined;
+            let outcomeScore: number | undefined;
 
             try {
                 const result = await fn(...args);
                 success = true;
+                // Score callback: only on success, isolated try/catch so it can never
+                // crash the developer's action. Invalid return values are silently ignored.
+                if (capturedScoreFn) {
+                    try {
+                        const raw = capturedScoreFn(result);
+                        if (typeof raw === 'number' && raw >= 0.0 && raw <= 1.0) {
+                            outcomeScore = raw;
+                        } else {
+                            console.debug(
+                                `[layerinfinite] score callback returned invalid value ${raw} ` +
+                                `for ${capturedTask}/${capturedActionName} — ignoring`
+                            );
+                        }
+                    } catch (scoreErr) {
+                        console.debug(
+                            `[layerinfinite] score callback threw for ${capturedTask}/${capturedActionName}: ` +
+                            `${scoreErr} — ignoring`
+                        );
+                    }
+                }
                 return result;
             } catch (err) {
                 success = false;
@@ -188,6 +230,7 @@ export class Layerinfinite {
                     sessionId,
                     latencyMs,
                     error: errorMsg,
+                    outcomeScore,
                 }).catch(logErr =>
                     console.warn(`[layerinfinite] Failed to log outcome: ${logErr}`)
                 );
@@ -614,7 +657,7 @@ export class Layerinfinite {
         return response.json() as Promise<LogOutcomeResponse>;
     }
 
-    // ── Private: headers ─────────────────────────────────────────
+    // ── Private: headers ───────────────────────────────────────────
 
     private authHeaders(withContentType = false): Record<string, string> {
         const headers: Record<string, string> = {
@@ -640,6 +683,7 @@ export class Layerinfinite {
         sessionId: string;
         latencyMs: number;
         error?: string;
+        outcomeScore?: number;
     }): Promise<void> {
         const payload: InternalLogPayload = {
             agent_id: this.agentId,
@@ -651,6 +695,10 @@ export class Layerinfinite {
         };
         if (params.error) {
             payload.metadata = { error: params.error };
+        }
+        // Only include outcome_score when explicitly provided — never send undefined/null
+        if (params.outcomeScore !== undefined) {
+            payload.outcome_score = params.outcomeScore;
         }
 
         try {
@@ -670,7 +718,7 @@ export class Layerinfinite {
         }
     }
 
-    // ── Private: dashboard registration (NO-OP) ──────────────────
+    // ── Private: dashboard registration (NO-OP) ───────────────────────
 
     /**
      * NO-OP. Action registration is handled automatically by the backend.
@@ -730,7 +778,7 @@ export class Layerinfinite {
         }
     }
 
-    // ── Private: execution order builder ─────────────────────────
+    // ── Private: execution order builder ───────────────────────────
 
     /**
      * Returns action names in execution priority order:
@@ -859,5 +907,5 @@ export class Layerinfinite {
     }
 }
 
-// ── Backward compatibility alias ─────────────────────────────────
+// ── Backward compatibility alias ───────────────────────────────────
 export { Layerinfinite as LayerinfiniteClient };

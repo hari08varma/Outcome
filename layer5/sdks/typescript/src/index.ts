@@ -1,18 +1,19 @@
 // Layerinfinite SDK — index.ts
 // Public barrel export. v0.3.0 — clean rewrite, zero legacy imports.
 
-// ── Primary class ────────────────────────────────────────────────
+// ── Primary class ──────────────────────────────────────────────────
 export { Layerinfinite } from './client.js';
 
-// ── Backward compatibility alias ─────────────────────────────────
+// ── Backward compatibility alias ───────────────────────────────────
 export { LayerinfiniteClient } from './client.js';
 
-// ── All types ────────────────────────────────────────────────────
+// ── All types ──────────────────────────────────────────────────
 export type {
     LayerinfiniteConfig,
     ActionFunction,
     WrappedActionFunction,
     ActionEntry,
+    ActionOptions,
     Suggestion,
     RankedAction,
     Recommendation,

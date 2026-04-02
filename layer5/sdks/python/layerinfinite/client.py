@@ -130,7 +130,37 @@ class Layerinfinite:
     def __exit__(self, *args: Any) -> None:
         self._http.close()
 
-    def action(self, task: str, name: str | None = None) -> Callable:
+    def action(self, task: str, name: str | None = None, score: Callable[[Any], float] | None = None) -> Callable:
+        """
+        Decorator that registers and wraps an action function with auto-logging.
+
+        Args:
+            task:  Issue type / task name (e.g. "payment_failed")
+            name:  Optional explicit action name. Defaults to fn.__name__.
+            score: Optional callback that receives the return value and returns
+                   a float 0.0–1.0 quality score. Called only on success.
+                   If it throws or returns an invalid value, it is silently ignored.
+
+        Usage::
+
+            # No score — existing behaviour unchanged
+            @li.action("payment_failed")
+            def retry_payment(ticket_id):
+                return gateway.charge(ticket_id)
+
+            # Score from return value field
+            @li.action("payment_failed", score=lambda r: r.amount_refunded / r.amount_requested)
+            def retry_payment(ticket_id):
+                return gateway.charge(ticket_id)
+
+            # Binary score from status field
+            @li.action("payment_failed", score=lambda r: 1.0 if r.status == "succeeded" else 0.0)
+            def retry_payment(ticket_id):
+                return gateway.charge(ticket_id)
+        """
+        # Capture score in closure so wrapper can reference it
+        score_fn = score
+
         def decorator(fn: Callable) -> Callable:
             action_name = name or fn.__name__
 
@@ -162,11 +192,29 @@ class Layerinfinite:
                 start = time.monotonic()
                 success = False
                 error_msg: str | None = None
+                outcome_score: float | None = None
                 result: Any = None
 
                 try:
                     result = fn(*args, **kwargs)
                     success = True
+                    # Score callback: only called on success, never crashes the action
+                    if score_fn is not None:
+                        try:
+                            raw_score = score_fn(result)
+                            if isinstance(raw_score, (int, float)) and 0.0 <= raw_score <= 1.0:
+                                outcome_score = float(raw_score)
+                            else:
+                                logger.debug(
+                                    "[layerinfinite] score callback returned invalid value %r "
+                                    "for %s/%s — ignoring",
+                                    raw_score, task, action_name,
+                                )
+                        except Exception as score_exc:
+                            logger.debug(
+                                "[layerinfinite] score callback raised for %s/%s: %s — ignoring",
+                                task, action_name, score_exc,
+                            )
                     return result
                 except Exception as exc:
                     error_msg = f"{type(exc).__name__}: {exc}"
@@ -180,6 +228,7 @@ class Layerinfinite:
                         session_id=session_id,
                         latency_ms=latency_ms,
                         error=error_msg,
+                        outcome_score=outcome_score,
                     )
 
             wrapper._li_task = task
@@ -579,6 +628,7 @@ class Layerinfinite:
         session_id: str,
         latency_ms: int = 0,
         error: str | None = None,
+        outcome_score: float | None = None,
     ) -> None:
         """
         POST /v1/log-outcome.
@@ -596,6 +646,9 @@ class Layerinfinite:
         }
         if error:
             payload["metadata"] = {"error": error}
+        # Only include outcome_score when explicitly provided — never send null
+        if outcome_score is not None:
+            payload["outcome_score"] = outcome_score
 
         def _send() -> None:
             try:

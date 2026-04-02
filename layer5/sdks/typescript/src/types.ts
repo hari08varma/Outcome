@@ -75,6 +75,32 @@ export interface LayerinfiniteConfig {
     maxRetries?: number;
 }
 
+// ── Action Options ─────────────────────────────────────────────────
+
+/**
+ * Options for li.action() registration.
+ *
+ * @example
+ * // Score from return value field
+ * li.action('payment_failed', fn, {
+ *   score: (result) => result.amountRefunded / result.amountRequested,
+ * });
+ *
+ * // Binary score from status
+ * li.action('payment_failed', fn, {
+ *   score: (result) => result.status === 'succeeded' ? 1.0 : 0.0,
+ * });
+ */
+export interface ActionOptions<TReturn = any> {
+    /**
+     * Optional quality score callback. Receives the function's return value
+     * and must return a float 0.0–1.0. Called only on success. If it throws
+     * or returns an invalid value, it is silently ignored — it will never
+     * crash the decorated action.
+     */
+    score?: (result: TReturn) => number;
+}
+
 // ── Action Registry ────────────────────────────────────────────────
 
 export type ActionFunction<TArgs extends any[] = any[], TReturn = any> =
