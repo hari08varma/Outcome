@@ -14,6 +14,20 @@ interface AgentRow {
   trust_score: number | null;
 }
 
+interface DimAgentRow {
+  agent_id: string;
+  agent_name: string | null;
+  agent_type: string | null;
+  is_active: boolean;
+  created_at: string;
+  llm_model: string | null;
+}
+
+interface TrustScoreRow {
+  agent_id: string;
+  trust_score: number | null;
+}
+
 export default function AgentsSettings(): React.ReactElement {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentRow[]>([]);
@@ -33,8 +47,10 @@ export default function AgentsSettings(): React.ReactElement {
       if (agentError) throw agentError;
       if (!agentData || agentData.length === 0) { setAgents([]); return; }
 
+      const typedAgentData = (agentData ?? []) as DimAgentRow[];
+
       // Fetch trust scores separately
-      const agentIds = agentData.map((a: any) => a.agent_id);
+      const agentIds = typedAgentData.map((a) => a.agent_id);
       const { data: trustData } = await supabase
         .from('agent_trust_scores')
         .select('agent_id, trust_score')
@@ -42,20 +58,22 @@ export default function AgentsSettings(): React.ReactElement {
 
       const trustMap: Record<string, number> = {};
       if (trustData) {
-        for (const t of trustData as any[]) trustMap[t.agent_id] = t.trust_score;
+        for (const t of (trustData ?? []) as TrustScoreRow[]) {
+          if (t.trust_score != null) trustMap[t.agent_id] = t.trust_score;
+        }
       }
 
-      setAgents(agentData.map((a: any) => ({
-        agent_id:   a.agent_id,
+      setAgents(typedAgentData.map((a) => ({
+        agent_id: a.agent_id,
         agent_name: a.agent_name ?? '',
         agent_type: a.agent_type ?? null,
-        is_active:  Boolean(a.is_active),
+        is_active: Boolean(a.is_active),
         created_at: a.created_at ?? '',
-        llm_model:  a.llm_model ?? null,
+        llm_model: a.llm_model ?? null,
         trust_score: trustMap[a.agent_id] ?? null,
       })));
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch agents');
     } finally {
       setLoading(false);
     }

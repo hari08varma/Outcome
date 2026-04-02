@@ -76,6 +76,7 @@ export default function ApiKeysSettings(): React.ReactElement {
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [revealedWarning, setRevealedWarning] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedPrefixId, setCopiedPrefixId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -86,6 +87,8 @@ export default function ApiKeysSettings(): React.ReactElement {
     if (!revealedKey) return;
     const timer = window.setTimeout(() => {
       setRevealedKey(null);
+      setRevealedWarning(null);
+      setCopiedKey(false);
     }, 30_000);
     return () => window.clearTimeout(timer);
   }, [revealedKey]);
@@ -134,6 +137,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     }
 
     if (!newKeyName.trim()) {
+      setError('Key name is required.');
       return;
     }
 
@@ -219,7 +223,7 @@ export default function ApiKeysSettings(): React.ReactElement {
     void fetchKeys();
   };
 
-  const copyPrefixToClipboard = async (prefix: string | null, name: string): Promise<void> => {
+  const copyPrefixToClipboard = async (prefix: string | null, name: string, keyId: string): Promise<void> => {
     if (!prefix) {
       showToast('No prefix available for this key.', 'warning', 3000);
       return;
@@ -227,6 +231,8 @@ export default function ApiKeysSettings(): React.ReactElement {
 
     const cleanPrefix = prefix.replace(/\.+$/, '');
     await navigator.clipboard.writeText(cleanPrefix);
+    setCopiedPrefixId(keyId);
+    window.setTimeout(() => setCopiedPrefixId(null), 2000);
     showToast(`Copied prefix for "${name}".`, 'info', 2500);
   };
 
@@ -302,7 +308,10 @@ export default function ApiKeysSettings(): React.ReactElement {
                 placeholder="e.g. production-agent"
                 required
                 value={newKeyName}
-                onChange={(event) => setNewKeyName(event.target.value)}
+                onChange={(event) => {
+                  setNewKeyName(event.target.value);
+                  if (error) setError(null);
+                }}
               />
             </div>
             <div className="flex items-center gap-3">
@@ -368,10 +377,10 @@ export default function ApiKeysSettings(): React.ReactElement {
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-[#a1a1aa]">{keyItem.prefix ?? '-'}</span>
                         <button
-                          onClick={() => void copyPrefixToClipboard(keyItem.prefix, keyItem.name)}
+                          onClick={() => void copyPrefixToClipboard(keyItem.prefix, keyItem.name, keyItem.key_id)}
                           className="text-xs text-[#b8ff00] hover:underline"
                         >
-                          Copy Prefix
+                          {copiedPrefixId === keyItem.key_id ? 'Copied!' : 'Copy Prefix'}
                         </button>
                       </div>
                     </td>

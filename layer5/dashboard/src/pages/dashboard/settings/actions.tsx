@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { format } from 'date-fns';
+import { Link } from 'react-router-dom';
 import { useToastContext } from '../../../components/Toast';
 import { supabase } from '../../../supabaseClient';
 
@@ -83,7 +84,7 @@ export default function ActionsSettings(): React.ReactElement {
     action_category: string;
     action_description: string;
     validation_mode: string;
-  }) => {
+  }): Promise<void> => {
     const { error: insertError } = await supabase
       .from('dim_actions')
       .insert({
@@ -93,8 +94,7 @@ export default function ActionsSettings(): React.ReactElement {
       });
 
     if (insertError) {
-      setError(insertError.message);
-      return;
+      throw new Error(insertError.message);
     }
     setShowForm(false);
     await fetchActions();
@@ -237,12 +237,12 @@ export default function ActionsSettings(): React.ReactElement {
               logs outcomes via the SDK. Connect your agent to
               get started, or register an action manually.
             </p>
-            <a href="/dashboard/settings/api-keys"
+            <Link to="/dashboard/settings/api-keys"
               className="bg-[#b8ff00] text-black font-semibold
                 px-5 py-2 rounded-lg text-sm hover:bg-[#a0e600]
                 transition-colors">
               Create API Key →
-            </a>
+            </Link>
           </div>
         ) : (
           <div className="overflow-x-auto">

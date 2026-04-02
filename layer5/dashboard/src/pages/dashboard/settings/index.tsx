@@ -27,10 +27,10 @@ export default function SettingsLayout(): React.ReactElement {
   }
 
   return (
-    <div className="flex gap-8">
-      <aside className="w-[200px] shrink-0">
-        <h1 className="text-lg font-semibold text-white mb-6">Settings</h1>
-        <nav className="flex flex-col gap-1">
+    <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
+      <aside className="lg:w-[200px] lg:shrink-0">
+        <h1 className="hidden lg:block text-lg font-semibold text-white mb-6">Settings</h1>
+        <nav className="flex flex-row flex-wrap gap-1 lg:flex-col">
           {ITEMS.map((item) => {
             const active = isActive(location.pathname, item.path);
             return (
@@ -48,7 +48,7 @@ export default function SettingsLayout(): React.ReactElement {
           })}
         </nav>
       </aside>
-      <section className="flex-1 pl-8 min-w-0">
+      <section className="flex-1 lg:pl-8 min-w-0">
         <Outlet />
       </section>
     </div>
