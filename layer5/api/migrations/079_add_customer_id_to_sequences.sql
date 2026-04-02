@@ -15,6 +15,25 @@ FROM dim_agents AS a
 WHERE seq.agent_id = a.agent_id
   AND seq.customer_id IS NULL;
 
+-- Guardrail: fail early with a clear error if orphaned action_sequences rows
+-- still have NULL customer_id after backfill (e.g., missing dim_agents rows).
+DO $$
+DECLARE
+  null_customer_id_count bigint;
+BEGIN
+  SELECT COUNT(*)
+  INTO null_customer_id_count
+  FROM action_sequences
+  WHERE customer_id IS NULL;
+
+  IF null_customer_id_count > 0 THEN
+    RAISE EXCEPTION
+      'Migration 079 aborted: % action_sequences rows still have NULL customer_id after backfill. Delete or reassign orphaned action_sequences rows before re-running this migration.',
+      null_customer_id_count;
+  END IF;
+END
+$$;
+
 -- 3. Add NOT NULL constraint after backfill
 ALTER TABLE action_sequences
   ALTER COLUMN customer_id SET NOT NULL;
