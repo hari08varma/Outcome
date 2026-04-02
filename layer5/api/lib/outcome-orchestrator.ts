@@ -192,8 +192,8 @@ async function upsertLiveTrustScore(
     // Canonical order: check suspended first, then sandbox, then probation, then trusted.
     const trustStatus =
         (consecutiveFailures >= 10 || weightedScore < 0.1) ? 'suspended' :
-        (consecutiveFailures >= 5  || weightedScore < 0.3) ? 'sandbox' :
-        weightedScore >= 0.6 ? 'trusted' : 'probation';
+            (consecutiveFailures >= 5 || weightedScore < 0.3) ? 'sandbox' :
+                weightedScore >= 0.6 ? 'trusted' : 'probation';
 
     const { data: currentTrust } = await supabase
         .from('agent_trust_scores')
