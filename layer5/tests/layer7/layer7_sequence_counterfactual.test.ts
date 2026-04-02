@@ -142,6 +142,7 @@ describe('Sequence Tracker', () => {
         const result = await upsertSequence({
             episodeId: 'ep-001',
             agentId: 'agent-001',
+            customerId: 'customer-001',
             contextHash: 'ctx:hash',
             actionName: 'retry_transaction',
         });
@@ -177,6 +178,7 @@ describe('Sequence Tracker', () => {
         const result = await upsertSequence({
             episodeId: 'ep-002',
             agentId: 'agent-001',
+            customerId: 'customer-001',
             contextHash: 'ctx:hash',
             actionName: 'action_b',
             responseMs: 200,
@@ -220,6 +222,7 @@ describe('Sequence Tracker', () => {
         await upsertSequence({
             episodeId: 'ep-003',
             agentId: 'agent-001',
+            customerId: 'customer-001',
             contextHash: 'ctx:hash',
             actionName: 'action_b',
             responseMs: 250,
@@ -245,7 +248,7 @@ describe('Sequence Tracker', () => {
             update: updateFn,
         }));
 
-        await closeSequence({ episodeId: 'ep-004', agentId: 'agent-001', finalOutcome: 0.85 });
+        await closeSequence({ episodeId: 'ep-004', agentId: 'agent-001', customerId: 'customer-001', finalOutcome: 0.85 });
 
         expect(updatePayload.resolved).toBe(true);
     });
@@ -267,7 +270,7 @@ describe('Sequence Tracker', () => {
             update: updateFn,
         }));
 
-        await closeSequence({ episodeId: 'ep-005', agentId: 'agent-001', finalOutcome: 0.4 });
+        await closeSequence({ episodeId: 'ep-005', agentId: 'agent-001', customerId: 'customer-001', finalOutcome: 0.4 });
 
         expect(updatePayload.resolved).toBe(false);
     });
@@ -287,7 +290,7 @@ describe('Sequence Tracker', () => {
             update: updateFn,
         }));
 
-        await closeSequence({ episodeId: 'ep-006', agentId: 'agent-001', finalOutcome: 0.9 });
+        await closeSequence({ episodeId: 'ep-006', agentId: 'agent-001', customerId: 'customer-001', finalOutcome: 0.9 });
 
         // Verify .is('closed_at', null) was called
         expect(isFn).toHaveBeenCalledWith('closed_at', null);
@@ -306,8 +309,120 @@ describe('Sequence Tracker', () => {
             update: vi.fn(),
         }));
 
-        const result = await getSequenceForEpisode('ep-nonexistent', 'agent-001');
+        const result = await getSequenceForEpisode('ep-nonexistent', 'agent-001', 'customer-001');
         expect(result).toBeNull();
+    });
+
+    it('upsertSequence scopes reads and updates by customer_id', async () => {
+        const readEqColumns: string[] = [];
+        const updateEqColumns: string[] = [];
+
+        const existingQuery: any = {
+            select: vi.fn(() => existingQuery),
+            eq: vi.fn((column: string) => {
+                readEqColumns.push(column);
+                return existingQuery;
+            }),
+            maybeSingle: vi.fn(async () => ({
+                data: {
+                    id: 'seq-tenant',
+                    action_sequence: ['action_a'],
+                    total_response_ms: 100,
+                },
+                error: null,
+            })),
+        };
+
+        const updateQuery: any = {
+            eq: vi.fn((column: string) => {
+                updateEqColumns.push(column);
+                return updateQuery;
+            }),
+            then: (resolve: (value: { error: null }) => unknown) =>
+                Promise.resolve({ error: null }).then(resolve),
+        };
+
+        mockFrom.mockImplementation(() => ({
+            select: vi.fn(() => existingQuery),
+            insert: vi.fn(),
+            update: vi.fn(() => updateQuery),
+        }));
+
+        await upsertSequence({
+            episodeId: 'ep-tenant',
+            agentId: 'agent-tenant',
+            customerId: 'customer-tenant',
+            contextHash: 'ctx:tenant',
+            actionName: 'retry_transaction',
+            responseMs: 120,
+        });
+
+        expect(readEqColumns).toContain('customer_id');
+        expect(updateEqColumns).toContain('customer_id');
+    });
+
+    it('closeSequence and getSequenceForEpisode include customer_id filter', async () => {
+        const closeEqColumns: string[] = [];
+        const getEqColumns: string[] = [];
+
+        let actionSequencesCallCount = 0;
+
+        mockFrom.mockImplementation((table: string) => {
+            if (table !== 'action_sequences') {
+                return {
+                    select: vi.fn(),
+                    insert: vi.fn(),
+                    update: vi.fn(),
+                };
+            }
+
+            actionSequencesCallCount += 1;
+
+            // First call: closeSequence() uses update()
+            if (actionSequencesCallCount === 1) {
+                const updateQuery: any = {
+                    eq: vi.fn((column: string) => {
+                        closeEqColumns.push(column);
+                        return updateQuery;
+                    }),
+                    is: vi.fn(async () => ({ error: null })),
+                };
+
+                return {
+                    select: vi.fn(),
+                    insert: vi.fn(),
+                    update: vi.fn(() => updateQuery),
+                };
+            }
+
+            // Second call: getSequenceForEpisode() uses select().eq(...)
+            const selectQuery: any = {
+                select: vi.fn(() => selectQuery),
+                eq: vi.fn((column: string) => {
+                    getEqColumns.push(column);
+                    return selectQuery;
+                }),
+                maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+            };
+
+            return {
+                select: vi.fn(() => selectQuery),
+                insert: vi.fn(),
+                update: vi.fn(),
+            };
+        });
+
+        await closeSequence({
+            episodeId: 'ep-close',
+            agentId: 'agent-close',
+            customerId: 'customer-close',
+            finalOutcome: 0.9,
+        });
+
+        await getSequenceForEpisode('ep-get', 'agent-get', 'customer-get');
+
+        expect(closeEqColumns).toContain('customer_id');
+        expect(getEqColumns).toContain('customer_id');
     });
 });
 

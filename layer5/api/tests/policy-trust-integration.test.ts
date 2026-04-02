@@ -72,23 +72,6 @@ describe('policy engine trust state contract', () => {
         expect(decision.explorationTarget).not.toBeNull();
     });
 
-    it('degraded trust_status -> SANDBOX with human_review_required', () => {
-        const trust = makeTrust({ trust_status: 'degraded', trust_score: 0.25, consecutive_failures: 6 });
-
-        const decision = getPolicyDecision({
-            rankedActions: makeActions(2),
-            agentTrust: trust,
-            customerConfig: config,
-            coldStartActive: false,
-        });
-
-        expect(decision.policy).toBe('SANDBOX');
-        expect(decision.reason).toBe('agent_degraded');
-        expect(decision.human_review_required).toBe(true);
-        expect(decision.sandbox_message?.toLowerCase()).toContain('degraded');
-        expect(decision.selectedAction).toBe('action-0');
-    });
-
     it('sandbox trust_status -> SANDBOX with human_review_required', () => {
         const trust = makeTrust({ trust_status: 'sandbox', trust_score: 0.15 });
 

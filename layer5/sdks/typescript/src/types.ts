@@ -44,11 +44,18 @@ export interface LogOutcomeRequest {
     feedback_signal?: string;
 }
 
+export type TrustStatus =
+    | 'trusted'
+    | 'probation'
+    | 'sandbox'
+    | 'suspended'
+    | 'new';
+
 export interface LogOutcomeResponse {
     logged: boolean;
     outcome_id: string;
     agent_trust_score: number;
-    trust_status: string;
+    trust_status: TrustStatus;
     policy: string;
 }
 

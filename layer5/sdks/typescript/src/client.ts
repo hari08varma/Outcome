@@ -21,6 +21,7 @@ import type {
     Recommendation,
     ScoredAction,
     Suggestion,
+    TrustStatus,
     WrappedActionFunction,
 } from './types.js';
 
@@ -30,6 +31,16 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
 const SDK_VERSION = '0.3.1';
 const VALID_MODES = ['recommend', 'assist', 'auto'] as const;
+const TRUST_STATUSES: readonly TrustStatus[] = ['trusted', 'probation', 'sandbox', 'suspended', 'new'];
+
+function normalizeTrustStatus(value: unknown): TrustStatus {
+    const normalized = String(value ?? '').toLowerCase();
+    if (normalized === 'degraded') return 'sandbox';
+    if (TRUST_STATUSES.includes(normalized as TrustStatus)) {
+        return normalized as TrustStatus;
+    }
+    return 'probation';
+}
 
 /** Internal payload shape for POST /v1/log-outcome (not public API). */
 interface InternalLogPayload {
@@ -611,7 +622,14 @@ export class Layerinfinite {
             },
             code => code >= 500,
         );
-        return response.json() as Promise<LogOutcomeResponse>;
+        const payload = await response.json() as Partial<LogOutcomeResponse>;
+        return {
+            logged: Boolean(payload.logged),
+            outcome_id: String(payload.outcome_id ?? ''),
+            agent_trust_score: Number(payload.agent_trust_score ?? 0),
+            trust_status: normalizeTrustStatus(payload.trust_status),
+            policy: String(payload.policy ?? ''),
+        };
     }
 
     // ── Private: headers ─────────────────────────────────────────

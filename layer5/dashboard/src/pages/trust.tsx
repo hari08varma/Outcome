@@ -11,11 +11,22 @@ import { useRealtimeTrust } from '../hooks/useRealtimeTrust';
 import type { TrustRow as RealtimeTrustRow } from '../hooks/useRealtimeTrust';
 import { useToastContext } from '../components/Toast';
 
+type TrustStatus = 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new';
+
+function normalizeTrustStatus(value: string | null | undefined): TrustStatus {
+    const normalized = (value ?? '').toLowerCase();
+    if (normalized === 'degraded') return 'sandbox';
+    if (normalized === 'trusted' || normalized === 'probation' || normalized === 'sandbox' || normalized === 'suspended' || normalized === 'new') {
+        return normalized;
+    }
+    return 'probation';
+}
+
 interface TrustRow {
     trust_id: string;
     agent_id: string;
     trust_score: number;
-    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded';
+    trust_status: TrustStatus;
     consecutive_failures: number;
     total_decisions: number;
     correct_decisions: number;
@@ -52,11 +63,15 @@ export default function TrustStatus() {
             if (idx >= 0) {
                 // UPDATE: replace in-place
                 const updated = [...prev];
-                updated[idx] = { ...updated[idx], ...incoming };
+                updated[idx] = { ...updated[idx], ...incoming, trust_status: normalizeTrustStatus(incoming.trust_status) };
                 return updated;
             }
             // INSERT: new agent
-            return [...prev, { ...incoming, agent_name: incoming.agent_id.slice(0, 8) }];
+            return [...prev, {
+                ...incoming,
+                trust_status: normalizeTrustStatus(incoming.trust_status),
+                agent_name: incoming.agent_id.slice(0, 8),
+            }];
         });
 
         // Flash the gauge
@@ -91,6 +106,7 @@ export default function TrustStatus() {
         if (trustData) {
             setAgents(trustData.map((r: any) => ({
                 ...r,
+                trust_status: normalizeTrustStatus(r.trust_status),
                 agent_name: r.dim_agents?.agent_name ?? r.agent_id.slice(0, 8),
             })));
         }

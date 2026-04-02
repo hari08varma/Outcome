@@ -130,6 +130,39 @@ def test_log_outcome_returns_typed_response():
     assert response.outcome_id == "out-uuid-1"
 
 
+@respx.mock
+def test_log_outcome_normalizes_legacy_degraded_status_to_sandbox():
+    legacy_response = {
+        "logged": True,
+        "outcome_id": "out-uuid-legacy",
+        "agent_trust_score": 0.21,
+        "trust_status": "degraded",
+        "policy": "SANDBOX",
+    }
+
+    respx.post(f"{BASE_URL}/v1/log-outcome").mock(
+        return_value=httpx.Response(200, json=legacy_response)
+    )
+
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+    request = LogOutcomeRequest(
+        agent_id="my-agent",
+        action_name="escalate_to_senior",
+        action_id="act-uuid-legacy",
+        context_id="ctx-uuid-legacy",
+        issue_type="billing_dispute",
+        success=False,
+        outcome_score=0.2,
+        business_outcome="failed",
+    )
+
+    response = client.log_outcome(request)
+
+    assert isinstance(response, LogOutcomeResponse)
+    assert response.outcome_id == "out-uuid-legacy"
+    assert response.trust_status == "sandbox"
+
+
 # ── Test 5: context manager properly closes session ────────────
 def test_context_manager_closes_session():
     client_ref = None

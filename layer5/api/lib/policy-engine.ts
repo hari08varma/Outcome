@@ -17,7 +17,7 @@ import { ScoredAction } from './scoring.js';
 
 export interface AgentTrustScore {
     trust_score: number;       // 0.0–1.0
-    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded';
+    trust_status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new';
     consecutive_failures: number;
 }
 
@@ -109,24 +109,7 @@ export function getPolicyDecision(
         };
     }
 
-    // ── Rule 1.4: Degraded agent → sandbox-like (review required)
-    // 'degraded' sits between probation and sandbox: still executes but
-    // every action requires human review until the score recovers.
-    if (agentTrust.trust_status === 'degraded') {
-        return {
-            policy: 'SANDBOX',
-            reason: 'agent_degraded',
-            selectedAction: topAction?.action_id ?? null,
-            explorationTarget: null,
-            human_review_required: true,
-            sandbox_message: 'Agent is in degraded state. ' +
-                'Actions will execute but require human review. ' +
-                `Trust score: ${agentTrust.trust_score.toFixed(3)}. ` +
-                `Threshold to exit degraded: 0.3`,
-        };
-    }
-
-    // ── Rule 1.5: Sandbox agent → flag for review but execute top action
+    // ── Rule 1.4: Sandbox agent → flag for review but execute top action
     if (agentTrust.trust_status === 'sandbox') {
         return {
             policy: 'SANDBOX',

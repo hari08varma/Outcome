@@ -8,21 +8,19 @@ import { createAgentFetch } from '../../lib/api';
 import { AGENT_API_KEY_STORAGE_KEY } from '../../hooks/useAgentApiKey';
 import { useToastContext } from '../../components/Toast';
 
-function statusBadge(status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded'): string {
-  if (status === 'new')       return 'bg-[#52525b]/10 text-[#52525b] border border-[#52525b]/30';
-  if (status === 'trusted')   return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
+function statusBadge(status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new'): string {
+  if (status === 'new') return 'bg-[#52525b]/10 text-[#52525b] border border-[#52525b]/30';
+  if (status === 'trusted') return 'bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30';
   if (status === 'probation') return 'bg-[#ffaa00]/10 text-[#ffaa00] border border-[#ffaa00]/30';
-  if (status === 'sandbox')   return 'bg-[#eab308]/10 text-[#eab308] border border-[#eab308]/30';
-  if (status === 'degraded')  return 'bg-[#a855f7]/10 text-[#a855f7] border border-[#a855f7]/30';
+  if (status === 'sandbox') return 'bg-[#eab308]/10 text-[#eab308] border border-[#eab308]/30';
   return 'bg-[#ff4444]/10 text-[#ff4444] border border-[#ff4444]/30';
 }
 
-function trustColor(status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded'): string {
-  if (status === 'new')       return '#52525b';
-  if (status === 'trusted')   return '#00cc66';
+function trustColor(status: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new'): string {
+  if (status === 'new') return '#52525b';
+  if (status === 'trusted') return '#00cc66';
   if (status === 'probation') return '#ffaa00';
-  if (status === 'sandbox')   return '#eab308';
-  if (status === 'degraded')  return '#a855f7';
+  if (status === 'sandbox') return '#eab308';
   return '#ff4444';
 }
 
@@ -212,44 +210,44 @@ export default function Agent(): React.ReactElement {
                 </p>
               </div>
             ) : (
-            <div className="space-y-4">
-              {agent.trustHistory.map((event) => {
-                // ── Resolve display label ─────────────────────────────
-                // Priority:
-                //   1. actionName already resolved by the hook (future-proof)
-                //   2. Parse action from "Outcome ... via SDK: X" reason
-                //   3. Parse label from status-change reason strings
-                //   4. Generic fallback — never shows "Action unavailable"
-                const displayName =
-                  event.actionName
-                  ?? parseActionFromReason(event.reason)
-                  ?? parseStatusLabel(event.reason)
-                  ?? 'Policy event';
+              <div className="space-y-4">
+                {agent.trustHistory.map((event) => {
+                  // ── Resolve display label ─────────────────────────────
+                  // Priority:
+                  //   1. actionName already resolved by the hook (future-proof)
+                  //   2. Parse action from "Outcome ... via SDK: X" reason
+                  //   3. Parse label from status-change reason strings
+                  //   4. Generic fallback — never shows "Action unavailable"
+                  const displayName =
+                    event.actionName
+                    ?? parseActionFromReason(event.reason)
+                    ?? parseStatusLabel(event.reason)
+                    ?? 'Policy event';
 
-                // Sub-label: show reason only for non-action rows
-                const subLabel =
-                  event.notes
-                  ?? (parseActionFromReason(event.reason)
-                    ? `Trust score updated`
-                    : (event.reason ?? 'No details available'));
+                  // Sub-label: show reason only for non-action rows
+                  const subLabel =
+                    event.notes
+                    ?? (parseActionFromReason(event.reason)
+                      ? `Trust score updated`
+                      : (event.reason ?? 'No details available'));
 
-                return (
-                  <div key={event.id} className="relative flex items-start gap-4 pb-4 border-b border-[#1a1a24] last:border-b-0">
-                    <div className={`z-10 w-8 h-8 rounded-full border flex items-center justify-center flex-shrink-0 ${event.eventType === 'success' ? 'bg-[#00cc66]/10 border-[#00cc66]/40 text-[#00cc66]' : 'bg-[#ff4444]/10 border-[#ff4444]/40 text-[#ff4444]'}`}>
-                      {event.eventType === 'success' ? '✓' : '✕'}
+                  return (
+                    <div key={event.id} className="relative flex items-start gap-4 pb-4 border-b border-[#1a1a24] last:border-b-0">
+                      <div className={`z-10 w-8 h-8 rounded-full border flex items-center justify-center flex-shrink-0 ${event.eventType === 'success' ? 'bg-[#00cc66]/10 border-[#00cc66]/40 text-[#00cc66]' : 'bg-[#ff4444]/10 border-[#ff4444]/40 text-[#ff4444]'}`}>
+                        {event.eventType === 'success' ? '✓' : '✕'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-white text-sm font-mono truncate">{displayName}</div>
+                        <div className="text-[#a1a1aa] text-xs mt-1 truncate">{subLabel}</div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className="text-white font-mono text-sm">{event.trustScoreAfter.toFixed(2)}</div>
+                        <div className="text-[#52525b] text-xs mt-1">{formatDistanceToNowStrict(parseISO(event.createdAt), { addSuffix: true })}</div>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-white text-sm font-mono truncate">{displayName}</div>
-                      <div className="text-[#a1a1aa] text-xs mt-1 truncate">{subLabel}</div>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <div className="text-white font-mono text-sm">{event.trustScoreAfter.toFixed(2)}</div>
-                      <div className="text-[#52525b] text-xs mt-1">{formatDistanceToNowStrict(parseISO(event.createdAt), { addSuffix: true })}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 

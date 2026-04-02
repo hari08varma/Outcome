@@ -89,6 +89,7 @@ export async function tier1Predict(
     request.proposedSequence,
     request.contextHash,
     request.agentId,
+    request.customerId,
   );
 }
 
@@ -100,6 +101,7 @@ async function tier1ColdStartFallback(
   sequence: string[],
   _contextHash: string,
   agentId: string,
+  customerId: string,
 ): Promise<SequencePrediction> {
   const firstAction = sequence[0] ?? 'unknown';
 
@@ -108,6 +110,7 @@ async function tier1ColdStartFallback(
     .select('prior_success_rate')
     .eq('action_name', firstAction)
     .eq('agent_id', agentId)
+    .eq('customer_id', customerId)
     .maybeSingle();
 
   const priorScore = prior?.prior_success_rate ?? 0.5;

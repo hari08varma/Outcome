@@ -193,7 +193,7 @@ describe('World Model — predictOutcome', () => {
 
     const { predictOutcome } = await import('../../api/lib/simulation/world-model.js');
     invalidateModelCache();
-    const result = await predictOutcome('restart_service', [], 'ctx:test', 0.5);
+    const result = await predictOutcome('cust-no-model', 'restart_service', [], 'ctx:test', 0.5);
     expect(result).toBeNull();
   });
 
@@ -205,7 +205,7 @@ describe('World Model — predictOutcome', () => {
     const { predictOutcome } = await import('../../api/lib/simulation/world-model.js');
     invalidateModelCache();
 
-    const result = await predictOutcome('totally_unknown_action', [], 'ctx:test', 0.5);
+    const result = await predictOutcome('cust-unknown-action', 'totally_unknown_action', [], 'ctx:test', 0.5);
     expect(result).toBeNull();
   });
 });
@@ -222,21 +222,22 @@ describe('World Model — cache', () => {
     mockFrom.mockReturnValue(loadChain);
 
     const { loadWorldModel, invalidateModelCache: invalidate } = await import('../../api/lib/simulation/world-model.js');
-    invalidate();
+    const customerId = 'cust-reload';
+    invalidate(customerId);
 
-    const first = await loadWorldModel();
+    const first = await loadWorldModel(customerId);
     expect(first).not.toBeNull();
 
     // Now invalidate — next call should hit DB again
-    invalidate();
+    invalidate(customerId);
     const nullChain = buildChain({ data: null, error: { message: 'not found' } });
     mockFrom.mockReturnValue(nullChain);
 
-    const second = await loadWorldModel();
+    const second = await loadWorldModel(customerId);
     expect(second).toBeNull();
   });
 
-  it('coalesces concurrent loadWorldModel calls on cold cache into a single DB query', async () => {
+  it('coalesces 10 concurrent loadWorldModel calls on cold cache into a single DB query', async () => {
     let worldModelQueries = 0;
 
     const delayedModelChain = buildChain({
@@ -263,15 +264,96 @@ describe('World Model — cache', () => {
     const { loadWorldModel, invalidateModelCache: invalidate } = await import('../../api/lib/simulation/world-model.js');
     invalidate('cust-stampede');
 
-    const [first, second] = await Promise.all([
-      loadWorldModel('cust-stampede'),
-      loadWorldModel('cust-stampede'),
-    ]);
+    const requests = Array.from({ length: 10 }, () => loadWorldModel('cust-stampede'));
+    const results = await Promise.all(requests);
+    const first = results[0];
 
     expect(worldModelQueries).toBe(1);
     expect(first).not.toBeNull();
-    expect(second).not.toBeNull();
-    expect(first).toBe(second);
+    results.forEach((result) => {
+      expect(result).not.toBeNull();
+      expect(result).toBe(first);
+    });
+  });
+
+  it('coalesces canary and production loads across 10 concurrent predictOutcome calls', async () => {
+    let productionQueries = 0;
+    let canaryQueries = 0;
+
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.01);
+
+    const buildWorldModelArtifactsQuery = () => {
+      const filters: Record<string, any> = {};
+      const q: any = {};
+
+      q.select = vi.fn(() => q);
+      q.eq = vi.fn((column: string, value: any) => {
+        filters[column] = value;
+        return q;
+      });
+      q.order = vi.fn(() => q);
+      q.limit = vi.fn(() => q);
+      q.maybeSingle = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        if (filters['is_canary'] === true) {
+          canaryQueries += 1;
+          return {
+            data: {
+              model_data: mockModelArtifact,
+              trained_at: '2026-03-01T00:00:00Z',
+              version: 2,
+              training_episodes: 800,
+              canary_traffic_pct: 100,
+            },
+            error: null,
+          };
+        }
+
+        if (filters['is_active'] === true) {
+          productionQueries += 1;
+          return {
+            data: {
+              model_data: mockModelArtifact,
+              trained_at: '2026-03-01T00:00:00Z',
+              version: 1,
+              training_episodes: 500,
+            },
+            error: null,
+          };
+        }
+
+        return { data: null, error: null };
+      });
+
+      return q;
+    };
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'world_model_artifacts') {
+        return buildWorldModelArtifactsQuery();
+      }
+      return buildChain({ data: null, error: null });
+    });
+
+    const { predictOutcome, invalidateModelCache: invalidate } = await import('../../api/lib/simulation/world-model.js');
+    const customerId = 'cust-stampede-canary';
+    invalidate(customerId);
+
+    const requests = Array.from({ length: 10 }, () =>
+      predictOutcome(customerId, 'restart_service', [], 'ctx:test', 0.5),
+    );
+
+    const predictions = await Promise.all(requests);
+
+    expect(productionQueries).toBe(1);
+    expect(canaryQueries).toBe(1);
+    predictions.forEach((prediction) => {
+      expect(prediction).not.toBeNull();
+      expect(prediction?.model_source).toBe('canary');
+    });
+
+    randomSpy.mockRestore();
   });
 });
 
@@ -382,6 +464,7 @@ describe('Tier 1 — tier1Predict', () => {
 
   it('cold-start prior is scoped by agent_id for same action_name across agents', async () => {
     const agentIdFilters: string[] = [];
+    const customerIdFilters: string[] = [];
 
     function buildAgentPriorChain() {
       const filters: Record<string, any> = {};
@@ -390,6 +473,7 @@ describe('Tier 1 — tier1Predict', () => {
       c.eq = vi.fn((column: string, value: any) => {
         filters[column] = value;
         if (column === 'agent_id') agentIdFilters.push(String(value));
+        if (column === 'customer_id') customerIdFilters.push(String(value));
         return c;
       });
       c.maybeSingle = vi.fn(async () => ({
@@ -427,6 +511,7 @@ describe('Tier 1 — tier1Predict', () => {
     expect(resultA.predictedOutcome).toBe(0.9);
     expect(resultB.predictedOutcome).toBe(0.2);
     expect(agentIdFilters).toEqual(['agent-001', 'agent-002']);
+    expect(customerIdFilters).toEqual(['cust-001', 'cust-002']);
   });
 });
 

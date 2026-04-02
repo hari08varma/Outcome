@@ -40,6 +40,14 @@ const MOCK_LOG_OUTCOME_BODY = {
     policy: 'exploit',
 };
 
+const MOCK_LOG_OUTCOME_BODY_LEGACY_DEGRADED = {
+    logged: true,
+    outcome_id: 'out-uuid-legacy',
+    agent_trust_score: 0.21,
+    trust_status: 'degraded',
+    policy: 'SANDBOX',
+};
+
 function mockResponse(
     body: unknown,
     status = 200,
@@ -137,6 +145,25 @@ describe('LayerinfiniteClient', () => {
         expect(response.logged).toBe(true);
         expect(typeof response.agent_trust_score).toBe('number');
         expect(response.outcome_id).toBe('out-uuid-1');
+        expect(response.trust_status).toBe('trusted');
+    });
+
+    it('Test 4b: logOutcome normalizes legacy degraded trust_status to sandbox', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_LOG_OUTCOME_BODY_LEGACY_DEGRADED));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        const response = await client.logOutcome({
+            agent_id: 'my-agent',
+            action_id: 'act-uuid-legacy',
+            context_id: 'ctx-uuid-legacy',
+            issue_type: 'billing_dispute',
+            success: false,
+            outcome_score: 0.2,
+            business_outcome: 'failed',
+        });
+
+        expect(response.outcome_id).toBe('out-uuid-legacy');
+        expect(response.trust_status).toBe('sandbox');
     });
 
     // ── Test 5 ─────────────────────────────────────────────────

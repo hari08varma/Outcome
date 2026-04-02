@@ -3,19 +3,18 @@ import React from 'react';
 interface TrustGaugeProps {
     agentName: string;
     trustScore: number;
-    trustStatus: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new' | 'degraded';
+    trustStatus: 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new';
     consecutiveFailures: number;
     totalDecisions: number;
     correctDecisions: number;
 }
 
 const statusConfig: Record<string, { bg: string; fg: string; label: string }> = {
-    trusted:   { bg: '#f0fdf4', fg: '#16a34a', label: 'TRUSTED' },
+    trusted: { bg: '#f0fdf4', fg: '#16a34a', label: 'TRUSTED' },
     probation: { bg: '#fff7ed', fg: '#ea580c', label: 'PROBATION' },
-    sandbox:   { bg: '#fefce8', fg: '#ca8a04', label: 'SANDBOX' },
+    sandbox: { bg: '#fefce8', fg: '#ca8a04', label: 'SANDBOX' },
     suspended: { bg: '#fef2f2', fg: '#dc2626', label: 'SUSPENDED' },
-    new:       { bg: '#eff6ff', fg: '#3b82f6', label: 'NEW' },
-    degraded:  { bg: '#fdf4ff', fg: '#a855f7', label: 'DEGRADED' },
+    new: { bg: '#eff6ff', fg: '#3b82f6', label: 'NEW' },
 };
 
 export default function TrustGauge({

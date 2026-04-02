@@ -8,7 +8,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+TrustStatus = Literal["trusted", "probation", "sandbox", "suspended", "new"]
 
 
 class ScoredAction(BaseModel):
@@ -57,8 +59,18 @@ class LogOutcomeResponse(BaseModel):
     logged: bool
     outcome_id: str
     agent_trust_score: float
-    trust_status: str
+    trust_status: TrustStatus
     policy: str
+
+    @field_validator("trust_status", mode="before")
+    @classmethod
+    def normalize_trust_status(cls, value: Any) -> TrustStatus:
+        normalized = str(value or "").lower()
+        if normalized == "degraded":
+            return "sandbox"
+        if normalized in {"trusted", "probation", "sandbox", "suspended", "new"}:
+            return normalized  # type: ignore[return-value]
+        return "probation"
 
 
 @dataclass

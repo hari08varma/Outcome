@@ -4,6 +4,31 @@ import { upsertSequence, closeSequence } from './sequence-tracker.js';
 import { backpropagateReward } from './reward-backprop.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+type TrustLifecycleStatus = 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new';
+const PROTECTED_TRUST_STATUSES: readonly TrustLifecycleStatus[] = ['sandbox', 'suspended'];
+
+function isProtectedTrustStatus(status: string | null | undefined): status is TrustLifecycleStatus {
+    return typeof status === 'string' && PROTECTED_TRUST_STATUSES.includes(status as TrustLifecycleStatus);
+}
+
+function shouldPreserveProtectedStatus(
+    currentStatus: string | null | undefined,
+    nextStatus: string,
+): boolean {
+    // Suspended is sticky until explicit manual reinstatement.
+    if (currentStatus === 'suspended') {
+        return nextStatus !== 'suspended';
+    }
+
+    // Sandbox can escalate to suspended automatically, but cannot auto-upgrade
+    // back into probation/trusted without an explicit operator action.
+    if (currentStatus === 'sandbox') {
+        return nextStatus === 'probation' || nextStatus === 'trusted' || nextStatus === 'new';
+    }
+
+    return false;
+}
+
 // ── Shared Types ──
 export interface OrchestratorParams {
     agentId: string;
@@ -78,6 +103,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
                 await closeSequence({
                     episodeId: params.episodeId,
                     agentId: params.agentId,
+                    customerId: params.customerId,
                     finalOutcome: finalScore,
                 });
 
@@ -261,17 +287,11 @@ async function upsertLiveTrustScore(
         .maybeSingle();
     const currentStatus = currentTrust?.trust_status ?? null;
 
-    const PROTECTED_STATUSES = ['suspended', 'sandbox'];
-
-    if (
-        currentStatus !== null &&
-        PROTECTED_STATUSES.includes(currentStatus) &&
-        !PROTECTED_STATUSES.includes(trustStatus)
-    ) {
+    if (shouldPreserveProtectedStatus(currentStatus, trustStatus)) {
         console.warn(
             '[trust] upsertLiveTrustScore: skipping status overwrite. ' +
             `Current protected status=${currentStatus} would be overwritten ` +
-            `with non-protected status=${trustStatus} for agent=${agentId}. ` +
+            `with status=${trustStatus} for agent=${agentId}. ` +
             'The canonical status set by updateAgentTrust is preserved.'
         );
 
@@ -353,7 +373,7 @@ async function updateAgentTrust(
 ): Promise<void> {
     const { data: trust } = await supabase
         .from('agent_trust_scores')
-        .select('trust_id, trust_score, total_decisions, correct_decisions, consecutive_failures, trust_status')
+        .select('trust_id, trust_score, total_decisions, correct_decisions, consecutive_failures, trust_status, suspension_reason')
         .eq('agent_id', agentId)
         .maybeSingle();
 
@@ -373,6 +393,7 @@ async function updateAgentTrust(
     const currentCorrectDecisions = typeof trust.correct_decisions === 'number' ? trust.correct_decisions : 0;
     const currentFailures = typeof trust.consecutive_failures === 'number' ? trust.consecutive_failures : 0;
     const currentStatus = typeof trust.trust_status === 'string' ? trust.trust_status : 'trusted';
+    const currentSuspensionReason = typeof trust.suspension_reason === 'string' ? trust.suspension_reason : null;
 
     // Always capture old values before any mutation.
     // These are written to every audit row so the dashboard can show
@@ -469,6 +490,20 @@ async function updateAgentTrust(
         newStatus = 'probation';
     } else {
         newStatus = 'trusted';
+    }
+
+    if (shouldPreserveProtectedStatus(currentStatus, newStatus)) {
+        console.warn(
+            '[trust] updateAgentTrust: preserving protected status to avoid flip-flop',
+            { agentId, currentStatus, computedStatus: newStatus }
+        );
+
+        newStatus = currentStatus as TrustLifecycleStatus;
+        if (newStatus === 'suspended') {
+            newSuspensionReason = currentSuspensionReason ?? 'manual_reinstatement_required';
+        } else if (newStatus === 'sandbox') {
+            newSuspensionReason = currentSuspensionReason;
+        }
     }
 
     // ── ML-CHECK-2.1-B FIX: atomic trust UPDATE + audit INSERT via RPC ──
