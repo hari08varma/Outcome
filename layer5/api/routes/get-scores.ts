@@ -72,7 +72,10 @@ getScoresRouter.get('/', async (c) => {
     const issueType = c.req.query('issue_type');
     const contextId = c.req.query('context_id');
     const forceRefresh = c.req.query('refresh') === 'true';
-    const topN = parseInt(c.req.query('top_n') ?? '10', 10);
+    const _topNRaw = parseInt(c.req.query('top_n') ?? '10', 10);
+    const topN = Number.isFinite(_topNRaw) && _topNRaw > 0
+        ? Math.min(_topNRaw, 50)
+        : 10;
 
     // ── New optional params (backward compatible) ─────────────
     const episodeId = c.req.query('episode_id') ?? null;
