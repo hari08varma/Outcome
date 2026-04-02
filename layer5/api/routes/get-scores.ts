@@ -84,7 +84,14 @@ getScoresRouter.get('/', async (c) => {
     if (episodeHistoryRaw) {
         try {
             const parsed = JSON.parse(episodeHistoryRaw);
-            if (Array.isArray(parsed)) episodeHistory = parsed;
+            if (Array.isArray(parsed)) {
+                // Hard cap: max 50 items, each truncated to 255 chars
+                // Rationale: no real episode has >50 sequential actions; beyond that
+                // is either a bug or an adversarial payload.
+                episodeHistory = parsed
+                    .slice(0, 50)
+                    .map((item: unknown) => String(item).slice(0, 255));
+            }
         } catch {
             // Invalid JSON — ignore, treat as no history
         }
