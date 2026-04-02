@@ -18,14 +18,13 @@ import crypto from 'node:crypto';
 
 // ── Category-based baseline priors ─────────────────────────
 // Returns a starting avg_success_rate based on action_category.
-// Used when seeding a new auto-registered action.
 function getBaselinePrior(actionCategory: string): number {
     const priors: Record<string, number> = {
-        recovery:          0.70,
-        escalation:        0.45,
-        automation:        0.60,
+        recovery: 0.70,
+        escalation: 0.45,
+        automation: 0.60,
         'auto-discovered': 0.55,
-        custom:            0.55,
+        custom: 0.55,
     };
     return priors[actionCategory] ?? 0.50;
 }
@@ -34,21 +33,21 @@ function getBaselinePrior(actionCategory: string): number {
 // Uses INSERT protected by unique constraint so re-registration never overwrites
 // real accumulated data. Never blocks action registration — errors are only logged.
 async function seedInstitutionalKnowledge(
-    actionId:       string,
+    actionId: string,
     actionCategory: string,
-    contextType:    string | null,
+    contextType: string | null,
 ): Promise<void> {
-    const baseline    = getBaselinePrior(actionCategory);
+    const baseline = getBaselinePrior(actionCategory);
     const contextSeed = contextType ?? 'global';
     try {
         const { error } = await supabase
             .from('dim_institutional_knowledge')
             .insert({
-                pattern_id:       crypto.randomUUID(),
-                action_id:        actionId,
-                context_type:     contextSeed,
+                pattern_id: crypto.randomUUID(),
+                action_id: actionId,
+                context_type: contextSeed,
                 avg_success_rate: baseline,
-                sample_count:     10,
+                sample_count: 10,
             });
         // 23505 = unique_violation (row already exists) — correct, ignore silently
         if (error && error.code !== '23505') {
@@ -164,59 +163,26 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         return c.json({ error: 'customerId is required', code: 'MISSING_CUSTOMER' }, 401);
     }
 
-    // Look up action scoped to this customer
-    const { data: existingAction } = await supabase
-        .from('dim_actions')
-        .select('action_id, action_name, is_active')
-        .eq('action_name', actionName.trim())
-        .eq('customer_id', customerId)
-        .maybeSingle();
+    // ── Cache check (fast path — skip DB on hit) ─────────────────
+    const cacheKey = getActionCacheKey(customerId, actionName.trim());
+    const cachedEntry = actionCache.get(cacheKey);
 
-    if (!existingAction) {
-        // AUTO-REGISTER: silently create on first use
-        // This means users never need to manually register actions
-        const { data: newAction, error: insertError } = await supabase
-            .from('dim_actions')
-            .upsert({
-                action_name:        actionName.trim(),
-                customer_id:        customerId,
-                is_active:          true,
-                action_category:    'auto-discovered',
-                action_description: 'Auto-registered on first use by SDK',
-                required_params:    {},
-                validation_mode:    'advisory',
-            }, {
-                onConflict:       'action_name,customer_id',
-                ignoreDuplicates: false,
-            })
-            .select('action_id, action_name, is_active')
-            .maybeSingle();
-
-        if (insertError || !newAction) {
-            // Only fail if DB itself errors
-            console.error('[validate-action] Auto-register failed', {
-                action_name: actionName,
-                customer_id: customerId,
-                error_code: insertError?.code,
-                error_message: insertError?.message,
-            });
-            return c.json({ error: 'Failed to register action' }, 500);
+    if (cachedEntry && cachedEntry.expires_at > Date.now()) {
+        if (!cachedEntry.is_active) {
+            return c.json(
+                { error: 'Action is disabled', action_name: actionName, code: 'ACTION_DISABLED' },
+                403
+            );
         }
-
-        // Seed institutional knowledge for this new action.
-        // issue_type from body determines which context gets the prior.
-        // void — fire-and-forget, never blocks registration.
-        void seedInstitutionalKnowledge(
-            newAction.action_id,
-            'auto-discovered',
-            (body.issue_type as string | undefined) ?? null,
-        );
-
-        c.set('action', newAction);
+        c.set('action', {
+            action_id: cachedEntry.action_id,
+            action_name: cachedEntry.action_name,
+            is_active: cachedEntry.is_active,
+        });
         c.set('validated_action', {
-            action_id: newAction.action_id,
-            action_name: newAction.action_name,
-            action_category: 'auto-discovered',
+            action_id: cachedEntry.action_id,
+            action_name: cachedEntry.action_name,
+            action_category: cachedEntry.action_category,
             validation_warnings: [],
         });
         c.set('parsed_body', body);
@@ -224,26 +190,105 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         return;
     }
 
-    // Action exists but is disabled — reject
-    if (!existingAction.is_active) {
-        return c.json(
-            {
-                error: 'Action is disabled',
-                action_name: actionName,
-            },
-            403
-        );
+    // ── Cache miss: look up action scoped to this customer ────────
+    const { data: existingAction } = await supabase
+        .from('dim_actions')
+        .select('action_id, action_name, action_category, required_params, validation_mode, is_active')
+        .eq('action_name', actionName.trim())
+        .eq('customer_id', customerId)
+        .maybeSingle();
+
+    if (existingAction) {
+        // Write to cache so subsequent requests skip DB
+        actionCache.set(cacheKey, {
+            ...existingAction,
+            required_params: existingAction.required_params as Record<string, unknown>,
+            expires_at: Date.now() + ACTION_CACHE_TTL_MS,
+        });
+
+        if (!existingAction.is_active) {
+            return c.json(
+                { error: 'Action is disabled', action_name: actionName, code: 'ACTION_DISABLED' },
+                403
+            );
+        }
+
+        c.set('action', {
+            action_id: existingAction.action_id,
+            action_name: existingAction.action_name,
+            is_active: existingAction.is_active,
+        });
+        c.set('validated_action', {
+            action_id: existingAction.action_id,
+            action_name: existingAction.action_name,
+            action_category: existingAction.action_category,
+            validation_warnings: [],
+        });
+        c.set('parsed_body', body);
+        await next();
+        return;
     }
 
-    c.set('action', existingAction);
+    // ── Action not found: AUTO-REGISTER on first use ──────────────
+    // AUTO-REGISTER: silently create on first use
+    // This means users never need to manually register actions
+    const { data: newAction, error: insertError } = await supabase
+        .from('dim_actions')
+        .upsert({
+            action_name: actionName.trim(),
+            customer_id: customerId,
+            is_active: true,
+            action_category: 'auto-discovered',
+            action_description: 'Auto-registered on first use by SDK',
+            required_params: {},
+            validation_mode: 'advisory',
+        }, {
+            onConflict: 'action_name,customer_id',
+            ignoreDuplicates: false,
+        })
+        .select('action_id, action_name, is_active')
+        .maybeSingle();
+
+    if (insertError || !newAction) {
+        // Only fail if DB itself errors
+        console.error('[validate-action] Auto-register failed', {
+            action_name: actionName,
+            customer_id: customerId,
+            error_code: insertError?.code,
+            error_message: insertError?.message,
+        });
+        return c.json({ error: 'Failed to register action' }, 500);
+    }
+
+    // Seed institutional knowledge for this new action.
+    // issue_type from body determines which context gets the prior.
+    // void — fire-and-forget, never blocks registration.
+    void seedInstitutionalKnowledge(
+        newAction.action_id,
+        'auto-discovered',
+        (body.issue_type as string | undefined) ?? null,
+    );
+
+    c.set('action', newAction);
     c.set('validated_action', {
-        action_id: existingAction.action_id,
-        action_name: existingAction.action_name,
-        action_category: 'custom',
+        action_id: newAction.action_id,
+        action_name: newAction.action_name,
+        action_category: 'auto-discovered',
         validation_warnings: [],
     });
-    c.set('parsed_body', body);
 
+    // Cache the newly registered action
+    actionCache.set(cacheKey, {
+        action_id: newAction.action_id,
+        action_name: newAction.action_name,
+        action_category: 'auto-discovered',
+        required_params: {},
+        validation_mode: 'advisory',
+        is_active: true,
+        expires_at: Date.now() + ACTION_CACHE_TTL_MS,
+    });
+
+    c.set('parsed_body', body);
     await next();
 }
 

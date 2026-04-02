@@ -33,6 +33,23 @@ const TIER_LIMITS: Record<string, TierLimits> = {
     enterprise: { maxPerMin: 5000, burstLimit: 200 },
 };
 
+// ── In-memory burst tracker (per-process, per-API-key-hash) ─
+// Burst is a per-second guard — no DB needed, no cross-process sync needed.
+// Intentionally lost on process restart: burst windows are 1s, restart clears them.
+interface BurstWindow {
+    count: number;
+    windowStart: number;  // ms timestamp
+}
+const burstWindows = new Map<string, BurstWindow>();
+
+// Evict stale burst windows every 30s to prevent unbounded growth
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, w] of burstWindows.entries()) {
+        if (now - w.windowStart > 1000) burstWindows.delete(key);
+    }
+}, 30_000).unref();
+
 const DEFAULT_LIMITS: TierLimits = { maxPerMin: 200, burstLimit: 20 };
 const parsedRateLimitDbTimeoutMs = Number.parseInt(process.env.RATE_LIMIT_DB_TIMEOUT_MS ?? '250', 10);
 const RATE_LIMIT_DB_TIMEOUT_MS = Number.isFinite(parsedRateLimitDbTimeoutMs) && parsedRateLimitDbTimeoutMs > 0
@@ -59,6 +76,34 @@ export function rateLimitMiddleware() {
         const tier = (c.get('customer_tier') as string) ?? 'free';
         const limits = TIER_LIMITS[tier] ?? DEFAULT_LIMITS;
         const maxTokens = limits.maxPerMin;
+
+        // ── Enforce per-second burst limit (in-memory, fast path) ────
+        const burstLimit = limits.burstLimit;
+        const burstKey = apiKeyHash;   // already a SHA-256 hash
+        const burstNow = Date.now();
+        const burst = burstWindows.get(burstKey);
+
+        if (burst && burstNow - burst.windowStart < 1000) {
+            if (burst.count >= burstLimit) {
+                c.header('X-RateLimit-Limit', String(maxTokens));
+                c.header('X-RateLimit-Remaining', '0');
+                c.header('Retry-After', '1');
+                c.header('X-RateLimit-Reset', String(Math.ceil((burst.windowStart + 1000) / 1000)));
+                return c.json(
+                    {
+                        error: `Burst limit exceeded. Max ${burstLimit} req/sec for ${tier} tier.`,
+                        code: 'BURST_LIMIT_EXCEEDED',
+                        tier,
+                        retry_after: 1,
+                    },
+                    429
+                );
+            }
+            burst.count++;
+        } else {
+            // New window or expired window — start fresh
+            burstWindows.set(burstKey, { count: 1, windowStart: burstNow });
+        }
 
         const now = Date.now();
         let tokens = maxTokens;
@@ -151,27 +196,28 @@ export function rateLimitMiddleware() {
         // Async fire-and-forget Atomic UPSERT (Latency path offloaded)
         // window_expiry: 60s from now — reaper removes rows where now() > expiry + 2min grace
         const windowExpiry = new Date(now + 60_000).toISOString();
-        Promise.resolve(
-            supabase.from('rate_limit_buckets').upsert({
-                api_key_hash: apiKeyHash,
-                tokens: newTokens,
-                last_refill_at: new Date(now).toISOString(),
-                tier: tier,
-                updated_at: new Date(now).toISOString(),
-                window_expiry: windowExpiry,
-                last_touched: new Date(now).toISOString(),
-            }, { onConflict: 'api_key_hash' })
-        ).then(({ error }) => {
-            if (error) console.error('[rate-limit] Upsert failed:', error.message);
-        }).catch(err => console.error('[rate-limit] Upsert exception:', err));
+        void (supabase.from('rate_limit_buckets').upsert({
+            api_key_hash: apiKeyHash,
+            tokens: newTokens,
+            last_refill_at: new Date(now).toISOString(),
+            tier: tier,
+            updated_at: new Date(now).toISOString(),
+            window_expiry: windowExpiry,
+            last_touched: new Date(now).toISOString(),
+        }, { onConflict: 'api_key_hash' }) as unknown as Promise<{ error: { message: string } | null }>)
+            .then(({ error }) => {
+                if (error) console.error('[rate-limit] Upsert failed:', error.message);
+            })
+            .catch((err: unknown) => console.error('[rate-limit] Upsert exception:', err));
 
-        // Estimate when bucket hits max capacity for reset header
+        // Reset = when the NEXT token will be available (not when bucket is full).
+        // If tokens remain, reset is already in the past — use now as floor.
         const refillRateMs = maxTokens / 60_000;
-        const msToFull = (maxTokens - newTokens) / refillRateMs;
+        const msToNextToken = newTokens >= 1 ? 0 : Math.ceil((1 - newTokens) / refillRateMs);
 
         c.header('X-RateLimit-Limit', String(maxTokens));
         c.header('X-RateLimit-Remaining', String(Math.floor(newTokens)));
-        c.header('X-RateLimit-Reset', String(Math.ceil((now + msToFull) / 1000)));
+        c.header('X-RateLimit-Reset', String(Math.ceil((now + msToNextToken) / 1000)));
 
         await next();
     };
