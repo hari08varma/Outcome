@@ -1,4 +1,4 @@
--- Migration 077 — Guard: ensure dim_contexts unique constraint exists
+-- Migration 086 — Guard: ensure dim_contexts unique constraint exists
 -- 
 -- WHY: resolveContextId() in routes/log-outcome.ts uses upsert with
 -- onConflict: 'customer_id,issue_type,environment'. Postgres requires a
@@ -7,12 +7,22 @@
 -- layer5/api/migrations/, leaving any environment bootstrapped from api/migrations
 -- alone (CI, local, new Railway deploys) with a broken upsert (Postgres 42P10).
 --
--- ADD CONSTRAINT IF NOT EXISTS is idempotent — safe to run against databases
--- that already have the constraint (Supabase prod). No data change occurs.
-
-ALTER TABLE dim_contexts
-    ADD CONSTRAINT IF NOT EXISTS dim_contexts_customer_issue_env_unique
-    UNIQUE (customer_id, issue_type, environment);
+-- PostgreSQL does not support ADD CONSTRAINT IF NOT EXISTS, so guard it
+-- with a catalog check.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'dim_contexts_customer_issue_env_unique'
+          AND conrelid = 'dim_contexts'::regclass
+    ) THEN
+        ALTER TABLE dim_contexts
+            ADD CONSTRAINT dim_contexts_customer_issue_env_unique
+            UNIQUE (customer_id, issue_type, environment);
+    END IF;
+END
+$$;
 
 -- Also add to verify_schema_invariants() so /health/deep will catch future regressions.
 CREATE OR REPLACE FUNCTION verify_schema_invariants()

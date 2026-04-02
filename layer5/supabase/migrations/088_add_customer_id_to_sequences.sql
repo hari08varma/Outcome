@@ -77,7 +77,7 @@ SELECT
           + 1.96*1.96 / (4 * NULLIF(COUNT(*), 0)))
         / NULLIF(COUNT(*), 0)))
   / (1 + 1.96*1.96 / NULLIF(COUNT(*), 0))          AS resolution_rate_lower,
-  AVG(step_count)                                   AS avg_steps
+  AVG(array_length(action_sequence, 1))             AS avg_steps
 FROM action_sequences
 WHERE final_outcome IS NOT NULL
 GROUP BY customer_id, agent_id, context_hash, action_sequence;
