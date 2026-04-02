@@ -447,7 +447,7 @@ async function saveIdempotencyRecord(idempotencyKey: string | undefined, outcome
     }
 }
 
-async function resolveDecisionId(body: any, agentId: string, actionId: string, outcomeId: string) {
+async function resolveDecisionId(body: any, agentId: string, actionId: string, outcomeId: string, customerId: string) {
     if (!body.decision_id) return null;
 
     try {
@@ -455,6 +455,7 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
             .from('fact_decisions')
             .select('*')
             .eq('id', body.decision_id)
+            .eq('customer_id', customerId)
             .single();
 
         if (decErr || !decision) {
@@ -473,7 +474,8 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
                 outcome_id: outcomeId,
                 resolved_at: new Date().toISOString(),
             })
-            .eq('id', body.decision_id);
+            .eq('id', body.decision_id)
+            .eq('customer_id', customerId);
 
         return decision;
     } catch (err: any) {
@@ -639,7 +641,7 @@ logOutcomeRouter.post('/', async (c) => {
         // 6. Post-Insert Synchronous Updates
         await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id, customerId);
         invalidateCache(customerId, contextId);
-        const decisionRecord = await resolveDecisionId(body, agentId, actionId, outcome.outcome_id);
+        const decisionRecord = await resolveDecisionId(body, agentId, actionId, outcome.outcome_id, customerId);
 
         // 7. Fire-and-forget Asynchronous Pipelines via Orchestrator
         orchestrateOutcome({
