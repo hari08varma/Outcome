@@ -237,12 +237,13 @@ async function parseAndSanitizeRequest(c: Context) {
     return body;
 }
 
-async function handleIdempotency(idempotencyKey: string | undefined) {
+async function handleIdempotency(idempotencyKey: string | undefined, customerId: string) {
     if (!idempotencyKey) return null;
     const { data: existing } = await supabase
         .from('fact_outcome_idempotency')
         .select('outcome_id')
         .eq('idempotency_key', idempotencyKey)
+        .eq('customer_id', customerId)
         .maybeSingle();
 
     if (existing) {
@@ -430,13 +431,14 @@ async function insertCoreOutcome(
     return outcome;
 }
 
-async function saveIdempotencyRecord(idempotencyKey: string | undefined, outcomeId: string) {
+async function saveIdempotencyRecord(idempotencyKey: string | undefined, outcomeId: string, customerId: string) {
     if (!idempotencyKey) return;
     const { error: idempErr } = await supabase
         .from('fact_outcome_idempotency')
         .insert({
             idempotency_key: idempotencyKey,
             outcome_id: outcomeId,
+            customer_id: customerId,
         });
 
     if (idempErr) {
@@ -608,7 +610,7 @@ logOutcomeRouter.post('/', async (c) => {
         });
 
         // 2. Idempotency Check
-        const originalOutcome = await handleIdempotency(body.idempotency_key);
+        const originalOutcome = await handleIdempotency(body.idempotency_key, customerId);
         if (originalOutcome) {
             c.header('Idempotent-Replayed', 'true');
             return c.json({
@@ -635,7 +637,7 @@ logOutcomeRouter.post('/', async (c) => {
         const outcome = await insertCoreOutcome(agentId, customerId, actionId, contextId, body, finalSuccess, finalOutcomeScore, verification);
 
         // 6. Post-Insert Synchronous Updates
-        await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id);
+        await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id, customerId);
         invalidateCache(customerId, contextId);
         const decisionRecord = await resolveDecisionId(body, agentId, actionId, outcome.outcome_id);
 
