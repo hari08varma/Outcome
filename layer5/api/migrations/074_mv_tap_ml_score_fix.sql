@@ -59,10 +59,22 @@ CREATE UNIQUE INDEX mv_tap_unique_idx
 CREATE INDEX mv_tap_customer_task_idx
     ON mv_task_action_performance (customer_id, task_name);
 
--- Step 5: Refresh immediately
-SELECT refresh_task_action_performance();
-
 COMMIT;
+
+-- Step 5: Refresh immediately (guard: function may not exist in all envs)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'refresh_task_action_performance'
+          AND n.nspname = 'public'
+    ) THEN
+        PERFORM refresh_task_action_performance();
+    ELSE
+        RAISE NOTICE 'refresh_task_action_performance() not found — skipping refresh. Run REFRESH MATERIALIZED VIEW CONCURRENTLY mv_task_action_performance manually.';
+    END IF;
+END $$;
 
 -- ════════════════════════════════════════════════════════════
 -- VERIFICATION (run after migration)

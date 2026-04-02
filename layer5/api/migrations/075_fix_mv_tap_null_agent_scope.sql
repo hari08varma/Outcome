@@ -78,10 +78,22 @@ FROM mv_task_action_performance
 WHERE agent_id <> '__unattributed__'
 GROUP BY customer_id, task_name;
 
--- Step 6: Refresh so data is live immediately
-SELECT refresh_task_action_performance();
-
 COMMIT;
+
+-- Step 6: Refresh so data is live immediately (guard: function may not exist in all envs)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'refresh_task_action_performance'
+          AND n.nspname = 'public'
+    ) THEN
+        PERFORM refresh_task_action_performance();
+    ELSE
+        RAISE NOTICE 'refresh_task_action_performance() not found — skipping refresh. Run REFRESH MATERIALIZED VIEW CONCURRENTLY mv_task_action_performance manually.';
+    END IF;
+END $$;
 
 -- ════════════════════════════════════════════════════════════
 -- VERIFICATION (run after migration)

@@ -60,6 +60,10 @@ CREATE INDEX mv_tap_customer_task_idx
 
 -- Step 5: Recreate v_task_action_diversity — exclude zero-UUID sentinel
 -- so readiness counts reflect only real attributed agents
+-- Performance note: the WHERE agent_id <> sentinel filter is covered by
+-- mv_tap_unique_idx (customer_id, agent_id, task_name, action_id).
+-- Postgres uses this index for the sentinel exclusion scan.
+-- No additional index is needed for this view.
 CREATE OR REPLACE VIEW v_task_action_diversity AS
 SELECT
     customer_id,
@@ -75,8 +79,20 @@ FROM mv_task_action_performance
 WHERE agent_id <> '00000000-0000-0000-0000-000000000000'::uuid
 GROUP BY customer_id, task_name;
 
--- Step 6: Refresh immediately
-SELECT refresh_task_action_performance();
+-- Step 6: Refresh immediately (guard: function may not exist in all envs)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'refresh_task_action_performance'
+          AND n.nspname = 'public'
+    ) THEN
+        PERFORM refresh_task_action_performance();
+    ELSE
+        RAISE NOTICE 'refresh_task_action_performance() not found — skipping refresh. Run REFRESH MATERIALIZED VIEW CONCURRENTLY mv_task_action_performance manually.';
+    END IF;
+END $$;
 
 COMMIT;
 
