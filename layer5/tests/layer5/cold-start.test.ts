@@ -19,13 +19,14 @@ vi.mock('../../api/lib/supabase.js', () => ({
 import {
     getPolicyDecision,
     DEFAULT_POLICY_CONFIG,
+    AgentTrustScore,
     CustomerPolicyConfig,
 } from '../../api/lib/policy-engine.js';
 import { ScoredAction, MIN_CONFIDENCE } from '../../api/lib/scoring.js';
 
-const EXISTING_TRUST = {
-    trust_score: 0.7,
-    trust_status: 'probation' as const,
+const TRUSTED_AGENT: AgentTrustScore = {
+    trust_score: 0.75,
+    trust_status: 'trusted',
     consecutive_failures: 0,
 };
 
@@ -86,7 +87,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
 
         const result = getPolicyDecision({
             rankedActions: coldStartActions,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -126,7 +127,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
 
         const result = getPolicyDecision({
             rankedActions: transferredPriors,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -162,7 +163,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
         // Synthetic priors should still trigger cold_start policy
         const result = getPolicyDecision({
             rankedActions: [syntheticPrior],
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -204,7 +205,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
         // With coldStartActive=false and good confidence, policy should be exploit or explore (NOT cold_start)
         const result = getPolicyDecision({
             rankedActions: maturedActions,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.5);  // deterministic random

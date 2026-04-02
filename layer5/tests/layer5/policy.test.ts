@@ -17,9 +17,9 @@ import {
 } from '../../api/lib/policy-engine.js';
 import { ScoredAction } from '../../api/lib/scoring.js';
 
-const EXISTING_TRUST: AgentTrustScore = {
-    trust_score: 0.7,
-    trust_status: 'probation',
+const TRUSTED_AGENT: AgentTrustScore = {
+    trust_score: 0.75,
+    trust_status: 'trusted',
     consecutive_failures: 0,
 };
 
@@ -80,7 +80,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -107,7 +107,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
                     makeAction({ action_id: 'top', composite_score: 0.85, confidence: 0.9 }),
                     makeAction({ action_id: 'alt', composite_score: 0.60 }),
                 ],
-                agentTrust: EXISTING_TRUST,
+                agentTrust: TRUSTED_AGENT,
                 customerConfig: conservativeConfig,
                 coldStartActive: false,
             }, () => randomValue);
@@ -127,7 +127,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.04);  // 0.04 < 0.05 epsilon → explore
@@ -147,7 +147,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.96);  // 0.96 > 0.05 epsilon → exploit
@@ -168,7 +168,7 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
 
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: EXISTING_TRUST,
+            agentTrust: TRUSTED_AGENT,
             customerConfig: DEFAULT_POLICY_CONFIG,  // escalation_score = 0.20
             coldStartActive: false,
         });
