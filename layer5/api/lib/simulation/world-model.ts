@@ -18,13 +18,17 @@ import type {
 
 // ── Module-level cache (keyed by customer_id for multi-tenant isolation) ─
 const modelCache = new Map<string, WorldModelArtifact>();
+// In-flight loading promises — prevents cache stampede under
+// concurrent MCTS rollouts. Multiple callers for the same
+// customerId await the same DB fetch instead of each making
+// their own.
+const modelLoadingPromises = new Map<string, Promise<WorldModelArtifact | null>>();
 const modelCacheLoadedAt = new Map<string, Date>();
 const canaryCache = new Map<string, WorldModelArtifact>();
 const canaryCacheLoadedAt = new Map<string, Date>();
 // In-flight sentinels: prevent cache stampede when TTL expires.
 // Multiple concurrent callers (e.g. 10 MCTS rollouts in a batch)
 // share the same Promise instead of each firing a DB query.
-const modelLoadingPromise = new Map<string, Promise<WorldModelArtifact | null>>();
 const canaryLoadingPromise = new Map<string, Promise<WorldModelArtifact | null>>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -40,43 +44,44 @@ export async function loadWorldModel(customerId: string): Promise<WorldModelArti
     return cached;
   }
 
-  const inflight = modelLoadingPromise.get(customerId);
+  const inflight = modelLoadingPromises.get(customerId);
   if (inflight) return inflight;
 
-  const loadPromise = (async () => {
-    const { data, error } = await supabase
-      .from('world_model_artifacts')
-      .select('model_data, trained_at, version, training_episodes')
-      .eq('tier', 2)
-      .eq('is_active', true)
-      .eq('customer_id', customerId)
-      .maybeSingle();
+  const loadPromise = (async (): Promise<WorldModelArtifact | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('world_model_artifacts')
+        .select('model_data, trained_at, version, training_episodes')
+        .eq('tier', 2)
+        .eq('is_active', true)
+        .eq('customer_id', customerId)
+        .maybeSingle();
 
-    if (error || !data) {
+      if (error || !data) {
+        modelCache.delete(customerId);
+        return null;
+      }
+
+      const model = data.model_data as WorldModelArtifact;
+      model.trained_at = data.trained_at;
+      model.version = data.version;
+      model.training_episodes = data.training_episodes;
+      model.is_canary = false;
+      model.canary_traffic_pct = 0;
+
+      modelCache.set(customerId, model);
+      modelCacheLoadedAt.set(customerId, new Date());
+      return model;
+    } catch (err) {
       modelCache.delete(customerId);
-      modelLoadingPromise.delete(customerId);
+      console.error('[world-model] loadWorldModel failed:', (err as Error).message);
       return null;
+    } finally {
+      modelLoadingPromises.delete(customerId);
     }
+  })();
 
-    const model = data.model_data as WorldModelArtifact;
-    model.trained_at = data.trained_at;
-    model.version = data.version;
-    model.training_episodes = data.training_episodes;
-    model.is_canary = false;
-    model.canary_traffic_pct = 0;
-
-    modelCache.set(customerId, model);
-    modelCacheLoadedAt.set(customerId, new Date());
-    modelLoadingPromise.delete(customerId);
-    return model;
-  })().catch((err) => {
-    modelCache.delete(customerId);
-    modelLoadingPromise.delete(customerId);
-    console.error('[world-model] loadWorldModel failed:', (err as Error).message);
-    return null;
-  });
-
-  modelLoadingPromise.set(customerId, loadPromise);
+  modelLoadingPromises.set(customerId, loadPromise);
   return loadPromise;
 }
 
@@ -142,14 +147,14 @@ export function invalidateModelCache(customerId?: string): void {
   if (customerId) {
     modelCache.delete(customerId);
     modelCacheLoadedAt.delete(customerId);
-    modelLoadingPromise.delete(customerId);
+    modelLoadingPromises.delete(customerId);
     canaryCache.delete(customerId);
     canaryCacheLoadedAt.delete(customerId);
     canaryLoadingPromise.delete(customerId);
   } else {
     modelCache.clear();
     modelCacheLoadedAt.clear();
-    modelLoadingPromise.clear();
+    modelLoadingPromises.clear();
     canaryCache.clear();
     canaryCacheLoadedAt.clear();
     canaryLoadingPromise.clear();

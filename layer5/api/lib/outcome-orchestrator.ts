@@ -188,15 +188,12 @@ async function upsertLiveTrustScore(
         return count;
     })();
 
-    // INVARIANT: These thresholds must match updateAgentTrust() exactly.
-    // If thresholds change in updateAgentTrust, update these too.
-    // updateAgentTrust is the canonical source of truth for status transitions.
-    // This function only updates the live score for dashboard display.
-    // Check >= 10 before >= 5 so 'suspended' is reachable
+    // INVARIANT: Must exactly mirror updateAgentTrust() status thresholds.
+    // Canonical order: check suspended first, then sandbox, then probation, then trusted.
     const trustStatus =
-        consecutiveFailures >= 10 ? 'suspended' :
-            consecutiveFailures >= 5 ? 'degraded' :
-                weightedScore >= 0.6 ? 'trusted' : 'probation';
+        (consecutiveFailures >= 10 || weightedScore < 0.1) ? 'suspended' :
+        (consecutiveFailures >= 5  || weightedScore < 0.3) ? 'sandbox' :
+        weightedScore >= 0.6 ? 'trusted' : 'probation';
 
     const { data: currentTrust } = await supabase
         .from('agent_trust_scores')
