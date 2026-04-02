@@ -33,10 +33,21 @@ async function getAgentTrust(agentId: string | undefined): Promise<AgentTrustSco
         .eq('agent_id', agentId)
         .maybeSingle();
     if (error || !data) return DEFAULT_TRUST;
+    const ALLOWED_TRUST_STATUSES: AgentTrustScore['trust_status'][] =
+        ['trusted', 'probation', 'sandbox', 'suspended', 'new', 'degraded'];
+    const normalizedStatus: AgentTrustScore['trust_status'] =
+        ALLOWED_TRUST_STATUSES.includes(data.trust_status as AgentTrustScore['trust_status'])
+            ? (data.trust_status as AgentTrustScore['trust_status'])
+            : DEFAULT_TRUST.trust_status;
+
     return {
-        trust_score: data.trust_score,
-        trust_status: data.trust_status,
-        consecutive_failures: data.consecutive_failures,
+        trust_score: typeof data.trust_score === 'number'
+            ? data.trust_score
+            : DEFAULT_TRUST.trust_score,
+        trust_status: normalizedStatus,
+        consecutive_failures: typeof data.consecutive_failures === 'number'
+            ? data.consecutive_failures
+            : DEFAULT_TRUST.consecutive_failures,
     };
 }
 
