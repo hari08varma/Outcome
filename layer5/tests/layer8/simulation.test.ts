@@ -117,6 +117,26 @@ describe('World Model — evaluateTree', () => {
     const result3 = evaluateTree(deepTree, [0, 7, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(result3).toBe(0.9);
   });
+
+  it('returns 0 and logs error when malformed tree has a cycle', () => {
+    const cyclicTree: LGBMTree = {
+      num_leaves: 1,
+      split_index: [0],
+      split_feature: [0],
+      threshold: [0.5],
+      decision_type: ['<='],
+      left_child: [0],
+      right_child: [-1],
+      leaf_value: [0.2],
+    };
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+    const result = evaluateTree(cyclicTree, [0]);
+
+    expect(result).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe('World Model — predictEnsemble', () => {
@@ -215,6 +235,44 @@ describe('World Model — cache', () => {
     const second = await loadWorldModel();
     expect(second).toBeNull();
   });
+
+  it('coalesces concurrent loadWorldModel calls on cold cache into a single DB query', async () => {
+    let worldModelQueries = 0;
+
+    const delayedModelChain = buildChain({
+      maybeSingle: vi.fn(async () => {
+        worldModelQueries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return {
+          data: {
+            model_data: mockModelArtifact,
+            trained_at: '2026-03-01T00:00:00Z',
+            version: 1,
+            training_episodes: 500,
+          },
+          error: null,
+        };
+      }),
+    });
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'world_model_artifacts') return delayedModelChain;
+      return buildChain({ data: null, error: null });
+    });
+
+    const { loadWorldModel, invalidateModelCache: invalidate } = await import('../../api/lib/simulation/world-model.js');
+    invalidate('cust-stampede');
+
+    const [first, second] = await Promise.all([
+      loadWorldModel('cust-stampede'),
+      loadWorldModel('cust-stampede'),
+    ]);
+
+    expect(worldModelQueries).toBe(1);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).toBe(second);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -225,6 +283,7 @@ import { tier1Predict, tier1FindAlternatives } from '../../api/lib/simulation/ti
 import type { SimulationRequest } from '../../api/lib/simulation/types.js';
 
 const baseRequest: SimulationRequest = {
+  customerId: 'cust-001',
   agentId: 'agent-001',
   context: { issue_type: 'payment_failed' },
   contextHash: 'ctx-001:payment_failed',
@@ -319,6 +378,55 @@ describe('Tier 1 — tier1Predict', () => {
     const result = await tier1Predict(baseRequest);
     expect(result.confidenceWidth).toBe(0.8);
     expect(result.confidence).toBe(0.2);
+  });
+
+  it('cold-start prior is scoped by agent_id for same action_name across agents', async () => {
+    const agentIdFilters: string[] = [];
+
+    function buildAgentPriorChain() {
+      const filters: Record<string, any> = {};
+      const c: any = {};
+      c.select = vi.fn().mockReturnValue(c);
+      c.eq = vi.fn((column: string, value: any) => {
+        filters[column] = value;
+        if (column === 'agent_id') agentIdFilters.push(String(value));
+        return c;
+      });
+      c.maybeSingle = vi.fn(async () => ({
+        data: {
+          prior_success_rate: filters['agent_id'] === 'agent-001' ? 0.9 : 0.2,
+        },
+        error: null,
+      }));
+      c.single = vi.fn(() => {
+        throw new Error('tier1ColdStartFallback must use maybeSingle, not single');
+      });
+      return c;
+    }
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'mv_sequence_scores') return buildChain({ data: [], error: null });
+      if (table === 'dim_actions') return buildAgentPriorChain();
+      return buildChain({ data: null, error: null });
+    });
+
+    const resultA = await tier1Predict({
+      ...baseRequest,
+      customerId: 'cust-001',
+      agentId: 'agent-001',
+      proposedSequence: ['restart_service'],
+    });
+
+    const resultB = await tier1Predict({
+      ...baseRequest,
+      customerId: 'cust-002',
+      agentId: 'agent-002',
+      proposedSequence: ['restart_service'],
+    });
+
+    expect(resultA.predictedOutcome).toBe(0.9);
+    expect(resultB.predictedOutcome).toBe(0.2);
+    expect(agentIdFilters).toEqual(['agent-001', 'agent-002']);
   });
 });
 
@@ -647,6 +755,62 @@ describe('Tier Selector — runSimulation', () => {
     });
     expect(result.alternatives).toBeDefined();
     expect(Array.isArray(result.alternatives)).toBe(true);
+  });
+
+  it('scopes fact_outcomes queries by customer_id in countEpisodes and getContextFrequency', async () => {
+    const factOutcomeFilters: string[][] = [];
+
+    function buildFactOutcomesChain(count: number) {
+      const columns: string[] = [];
+      const c: any = {};
+      c.select = vi.fn().mockReturnValue(c);
+      c.eq = vi.fn((column: string) => {
+        columns.push(column);
+        return c;
+      });
+      c.count = count;
+      factOutcomeFilters.push(columns);
+      return c;
+    }
+
+    let factOutcomesCall = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'fact_outcomes') {
+        factOutcomesCall += 1;
+        if (factOutcomesCall === 1) return buildFactOutcomesChain(300);
+        if (factOutcomesCall === 2) return buildFactOutcomesChain(120);
+        return buildFactOutcomesChain(240);
+      }
+      if (table === 'world_model_artifacts') {
+        return buildChain({
+          data: {
+            model_data: mockModelArtifact,
+            trained_at: '2026-03-01T00:00:00Z',
+            version: 1,
+            training_episodes: 500,
+          },
+          error: null,
+        });
+      }
+      if (table === 'dim_actions') {
+        return buildChain({
+          data: [{ action_name: 'restart_service' }, { action_name: 'update_app' }],
+          error: null,
+        });
+      }
+      if (table === 'mv_sequence_scores') {
+        return buildChain({ data: [], error: null });
+      }
+      return buildChain({ data: null, error: null });
+    });
+
+    const { runSimulation } = await import('../../api/lib/simulation/tier-selector.js');
+    await runSimulation(baseRequest);
+
+    expect(factOutcomeFilters.length).toBeGreaterThanOrEqual(3);
+    expect(factOutcomeFilters[0]).toContain('customer_id');
+    expect(factOutcomeFilters[1]).toContain('customer_id');
+    expect(factOutcomeFilters[2]).toContain('customer_id');
   });
 });
 

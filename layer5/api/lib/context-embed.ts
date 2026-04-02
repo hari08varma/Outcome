@@ -18,6 +18,18 @@ import { supabase } from './supabase.js';
 
 const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER ?? 'supabase';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
+// SIMILARITY_THRESHOLD: cosine similarity floor for context matching.
+// Below this value, findClosestContext returns null ->
+// scoring treats as exact match (1.0 penalty applied).
+//
+// Calibration (gte-small model, 384-dim):
+//   > 0.85 -> near-identical phrasing
+//   0.70-0.85 -> strongly related contexts
+//   0.60-0.70 -> moderately related (current threshold - permissive)
+//   < 0.60 -> loosely related or unrelated
+//
+// At 0.6, false positives (wrong context matched) are more likely than
+// at 0.75. Increase to 0.75 if context mismatches appear in scoring logs.
 const SIMILARITY_THRESHOLD = 0.6;
 
 // Versioning: stamp every stored vector with its origin model + version
@@ -56,14 +68,24 @@ async function generateSupabaseEmbedding(text: string): Promise<number[] | null>
             return null;
         }
 
-        const response = await fetch(`${supabaseUrl}/functions/v1/embedding`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${serviceKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ input: text, model: 'gte-small' }),
-        });
+        // 5s timeout: Supabase AI endpoint cold-starts can hang for 30s+.
+        // On abort, falls through to embed_text SQL RPC fallback below.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        let response: Response;
+        try {
+            response = await fetch(`${supabaseUrl}/functions/v1/embedding`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${serviceKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ input: text, model: 'gte-small' }),
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
             // Fallback: try Supabase's built-in SQL embedding via pg function
@@ -177,71 +199,109 @@ export async function findClosestContext(
     customerId: string
 ): Promise<{ context_id: string; similarity: number } | null> {
     try {
-        // Query dim_contexts with stored embeddings — include model version for compatibility check
-        const { data, error } = await supabase
-            .from('dim_contexts')
-            .select('context_id, context_vector, embedding_model, source_text')
-            .not('context_vector', 'is', null);
+        const { data, error } = await supabase.rpc('match_context_vector', {
+            query_vector: embedding,
+            p_customer_id: customerId,
+            p_model: CURRENT_EMBEDDING_MODEL,
+            p_threshold: SIMILARITY_THRESHOLD,
+            p_limit: 1,
+        });
 
-        if (error || !data || data.length === 0) {
-            return null;
+        if (error) {
+            // RPC not available — fall back to TypeScript scan scoped to customer
+            console.warn(
+                '[context-embed] match_context_vector RPC unavailable, ' +
+                'falling back to in-memory scan:',
+                error.message
+            );
+            return await findClosestContextFallback(embedding, customerId);
         }
 
-        let bestMatch: { context_id: string; similarity: number } | null = null;
+        if (!data || data.length === 0) return null;
 
-        for (const row of data) {
-            if (!row.context_vector) continue;
-
-            // Skip vectors from incompatible embedding models to avoid meaningless scores.
-            // Null embedding_model means legacy row (pre-migration 056) — allow through conservatively.
-            if (row.embedding_model && row.embedding_model !== CURRENT_EMBEDDING_MODEL) {
-                console.warn(
-                    `[context-embed] Skipping context ${row.context_id}: model mismatch ` +
-                    `(stored=${row.embedding_model}, current=${CURRENT_EMBEDDING_MODEL}). ` +
-                    'Run batch re-embedding to migrate.'
-                );
-                continue;
-            }
-
-            // context_vector is stored as a pgvector — parse it
-            const storedVec = typeof row.context_vector === 'string'
-                ? parseVector(row.context_vector)
-                : (row.context_vector as number[]);
-
-            if (!storedVec || storedVec.length === 0) continue;
-
-            // Dimension safety check before computing similarity
-            if (storedVec.length !== embedding.length) {
-                console.warn(
-                    `[context-embed] Skipping context ${row.context_id}: dimension mismatch ` +
-                    `(stored=${storedVec.length}, query=${embedding.length})`
-                );
-                continue;
-            }
-
-            const sim = cosineSimilarity(embedding, storedVec);
-
-            if (sim > SIMILARITY_THRESHOLD && (!bestMatch || sim > bestMatch.similarity)) {
-                bestMatch = { context_id: row.context_id, similarity: sim };
-            }
-        }
-
-        return bestMatch;
+        const best = data[0] as { context_id: string; similarity: number };
+        return best.similarity >= SIMILARITY_THRESHOLD ? best : null;
     } catch (err: any) {
         console.warn('[context-embed] findClosestContext error:', err.message);
         return null;
     }
 }
 
+// FALLBACK: used when match_context_vector RPC is unavailable.
+// Customer-scoped but O(n/customers) — acceptable for dev/small datasets.
+// In production with pgvector RPC deployed, this path should not be hit.
+async function findClosestContextFallback(
+    embedding: number[],
+    customerId: string
+): Promise<{ context_id: string; similarity: number } | null> {
+    const { data, error } = await supabase
+        .from('dim_contexts')
+        .select('context_id, context_vector, embedding_model, source_text, embedding_schema_version')
+        .eq('customer_id', customerId)
+        .eq('embedding_schema_version', CURRENT_EMBEDDING_SCHEMA_VERSION)
+        .not('context_vector', 'is', null);
+
+    if (error || !data || data.length === 0) {
+        return null;
+    }
+
+    let bestMatch: { context_id: string; similarity: number } | null = null;
+
+    for (const row of data) {
+        if (row.context_vector === null || row.context_vector === undefined) continue;
+
+        // Skip vectors from incompatible embedding models to avoid meaningless scores.
+        // Null embedding_model means legacy row (pre-migration 056) — allow through conservatively.
+        if (row.embedding_model && row.embedding_model !== CURRENT_EMBEDDING_MODEL) {
+            console.warn(
+                `[context-embed] Skipping context ${row.context_id}: model mismatch ` +
+                `(stored=${row.embedding_model}, current=${CURRENT_EMBEDDING_MODEL}). ` +
+                'Run batch re-embedding to migrate.'
+            );
+            continue;
+        }
+
+        const storedVec = typeof row.context_vector === 'string'
+            ? parseVector(row.context_vector)
+            : (row.context_vector as number[]);
+
+        if (!storedVec) {
+            console.warn(`[context-embed] Skipping context ${row.context_id}: failed to parse stored vector string.`);
+            continue;
+        }
+        if (storedVec.length === 0) continue;
+
+        // Dimension safety check before computing similarity
+        if (storedVec.length !== embedding.length) {
+            console.warn(
+                `[context-embed] Skipping context ${row.context_id}: dimension mismatch ` +
+                `(stored=${storedVec.length}, query=${embedding.length})`
+            );
+            continue;
+        }
+
+        const sim = cosineSimilarity(embedding, storedVec);
+
+        if (sim > SIMILARITY_THRESHOLD && (!bestMatch || sim > bestMatch.similarity)) {
+            bestMatch = { context_id: row.context_id, similarity: sim };
+        }
+    }
+
+    return bestMatch;
+}
+
 /**
  * Parse pgvector string format "[0.1,0.2,0.3]" → number[]
  */
-function parseVector(v: string): number[] {
+function parseVector(v: string): number[] | null {
     try {
-        const clean = v.replace(/[\[\]]/g, '');
-        return clean.split(',').map(Number);
+        const clean = v.replace(/[\[\]]/g, '').trim();
+        if (!clean) return null;
+        const parsed = clean.split(',').map(Number);
+        if (parsed.some(isNaN)) return null;
+        return parsed;
     } catch {
-        return [];
+        return null;
     }
 }
 

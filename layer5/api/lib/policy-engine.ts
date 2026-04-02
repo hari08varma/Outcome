@@ -46,9 +46,23 @@ export const DEFAULT_POLICY_CONFIG: CustomerPolicyConfig = {
     min_confidence: 0.30,
 };
 
+/**
+ * Fallback trust used when agent_trust_scores row is absent.
+ *
+ * INVARIANT: This fallback should never be reached in normal operation.
+ * The fn_init_agent_trust() DB trigger (migration 058) inserts a
+ * trust_status='new' row at agent creation time (ON CONFLICT DO NOTHING).
+ * If this fallback fires in production, it signals a trigger failure
+ * or manual DB manipulation - the logs will show 'agent_new_no_history'
+ * reason in the policy decision, which is a detectable signal.
+ *
+ * trust_score: 0 - not 0.5. A missing row has no real signal.
+ * trust_status: 'new' - routes to Rule 1.3 exploration, matching
+ * the DB default. Never 'probation' - that implies real history.
+ */
 export const DEFAULT_TRUST: AgentTrustScore = {
-    trust_score: 0.5,
-    trust_status: 'probation',  // 0.5 is in the probation band (0.3–0.6); 'trusted' was overly permissive
+    trust_score: 0,
+    trust_status: 'new',
     consecutive_failures: 0,
 };
 

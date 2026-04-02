@@ -131,33 +131,20 @@ async function getAgentTrustStatus(
     };
 }
 
-async function hasSilentFailureAlert(
+async function hasSilentFailureAlertForActions(
+    actionIds: string[],
     customerId: string,
-    taskName: string,
 ): Promise<boolean> {
-    // FIXED: scope alert lookup to the actions involved in this
-    // specific task. First find action_ids for this task+customer,
-    // then check if any of those actions have a degradation alert.
-    // This prevents cross-task alert bleed (BUG 2).
+    if (actionIds.length === 0) return false;
+
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    // Step 1: Get action_ids for this task scoped to this customer
-    const { data: taskRows, error: taskErr } = await supabase
-        .from('mv_task_action_performance')
-        .select('action_id')
-        .eq('customer_id', customerId)
-        .eq('task_name', taskName);
-
-    if (taskErr || !taskRows || taskRows.length === 0) return false;
-
-    const actionIds = taskRows.map((r: any) => r.action_id as string);
-
-    // Step 2: Check degradation alerts for those specific actions
+    // Check degradation alerts for the qualified actions in this task.
     const { count, error } = await supabase
         .from('degradation_alert_events')
         .select('alert_id', { count: 'exact', head: true })
         .eq('customer_id', customerId)
-        .in('agent_id', actionIds)
+        .in('action_id', actionIds)
         .in('alert_type', ['degradation', 'success_hallucination'])
         .gte('detected_at', since);
 
@@ -227,8 +214,14 @@ export async function getRecommendation(
     }
 
     try {
-        // ISSUE 12: Only outcomes from last 180 days. Prevents stale history
-        // dominating current signal without blanking new customer data.
+        // NOTE: This filter excludes actions that haven't been seen in 180 days
+        // (dormant action suppression). It does NOT window individual outcome counts -
+        // mv_task_action_performance aggregates all-time totals, not rolling windows.
+        // total_count and success_count reflect the full history of any action that
+        // passes this filter. A true rolling window requires a separate MV or
+        // a raw fact_outcomes query with a per-row timestamp filter.
+        // TODO: Add a windowed MV (mv_task_action_performance_180d) that computes
+        // rolling 180-day counts natively in SQL before enabling true windowing here.
         const windowStart = new Date(
             Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000
         ).toISOString();
@@ -247,7 +240,7 @@ export async function getRecommendation(
             // and has no environment column — filtering on it returns zero rows.
             // Re-enable this ONLY after the migration is confirmed in Supabase.
             // .eq('environment', 'production')
-            // ISSUE 12: 180-day rolling window.
+            // Dormant-action suppression filter (not a rolling outcome window).
             .gte('last_seen_at', windowStart);
 
         if (agentId) {
@@ -343,9 +336,10 @@ export async function getRecommendation(
         );
         const best = sorted[0]!;
         const worst = sorted[sorted.length - 1]!;
-        const silentFailureActive = await hasSilentFailureAlert(
+        const qualifiedActionIds = qualifiedActions.map((a) => a.action_id);
+        const silentFailureActive = await hasSilentFailureAlertForActions(
+            qualifiedActionIds,
             customerId,
-            taskName,
         );
 
         const minSamples = Math.min(best.total_count, worst.total_count);
@@ -371,8 +365,7 @@ export async function getRecommendation(
                 min_sample_count: minSamples,
                 _silent_failure_warning: silentFailureActive,
                 registered_actions: registeredActions,
-                action_mismatch: best !== null
-                    && registeredActions.length > 0
+                action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
             };
         }
@@ -392,10 +385,9 @@ export async function getRecommendation(
                 ...makeResult('early_signal', actions, best, worst),
                 confidence: closeConfidence,
                 min_sample_count: minSamples,
-                _silent_failure_warning: false,
+                _silent_failure_warning: silentFailureActive,
                 registered_actions: registeredActions,
-                action_mismatch: best !== null
-                    && registeredActions.length > 0
+                action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
             };
         }
@@ -414,10 +406,9 @@ export async function getRecommendation(
                 ...makeResult('early_signal', actions, best, worst),
                 confidence: closeConfidence2,
                 min_sample_count: minSamples,
-                _silent_failure_warning: false,
+                _silent_failure_warning: silentFailureActive,
                 registered_actions: registeredActions,
-                action_mismatch: best !== null
-                    && registeredActions.length > 0
+                action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
             };
         }
@@ -436,8 +427,7 @@ export async function getRecommendation(
                 min_sample_count: minSamples,
                 _silent_failure_warning: silentFailureActive,
                 registered_actions: registeredActions,
-                action_mismatch: best !== null
-                    && registeredActions.length > 0
+                action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
             };
         }

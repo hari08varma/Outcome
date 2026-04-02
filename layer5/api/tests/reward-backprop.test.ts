@@ -14,6 +14,7 @@ describe('Reward Backpropagation (Temporal Difference Decay)', () => {
 
     test('Test 1: 6-step failure episode: earlier steps get identical bounded penalty', async () => {
         const episode_id = 'ep-fail-1';
+        const customer_id = 'cust-1';
         const mockSteps = [
             { outcome_id: 'o0', backprop_adjusted: false },
             { outcome_id: 'o1', backprop_adjusted: false },
@@ -26,25 +27,27 @@ describe('Reward Backpropagation (Temporal Difference Decay)', () => {
         let updateCalls: any[] = [];
 
         (supabase.from as any).mockImplementation((table: string) => {
+            const selectQuery: any = {
+                eq: vi.fn(() => selectQuery),
+                order: vi.fn().mockResolvedValue({ data: mockSteps, error: null }),
+            };
+
+            const updateQuery: any = {
+                eq: vi.fn(() => updateQuery),
+                select: vi.fn().mockResolvedValue({ data: [{ updated: true }] }),
+            };
+
             return {
                 select: vi.fn().mockReturnThis(),
-                eq: (col: string, val: string) => {
-                    if (col === 'session_id' && val === episode_id) {
-                        return { order: vi.fn().mockResolvedValue({ data: mockSteps, error: null }) };
-                    }
-                    if (col === 'outcome_id') {
-                        return { select: vi.fn().mockResolvedValue({ data: [{ id: val }] }) };
-                    }
-                    return { select: vi.fn().mockResolvedValue({ data: [] }) };
-                },
+                eq: vi.fn(() => selectQuery),
                 update: (payload: any) => {
                     updateCalls.push(payload);
-                    return { eq: vi.fn().mockReturnThis(), select: vi.fn().mockResolvedValue({ data: [{ updated: true }] }) };
+                    return updateQuery;
                 }
             };
         });
 
-        const res = await backpropagateReward({ episode_id, final_outcome: 0.0, gamma: 0.85 });
+        const res = await backpropagateReward({ episode_id, customer_id, final_outcome: 0.0, gamma: 0.85 });
 
         expect(res.steps_adjusted).toBe(6);
         expect(updateCalls.length).toBe(6);
@@ -56,6 +59,7 @@ describe('Reward Backpropagation (Temporal Difference Decay)', () => {
 
     test('Test 2: 6-step success episode: steps get proportional decayed credit', async () => {
         const episode_id = 'ep-success-1';
+        const customer_id = 'cust-1';
         const mockSteps = [
             { outcome_id: 'o0', backprop_adjusted: false },
             { outcome_id: 'o1', backprop_adjusted: false },
@@ -67,22 +71,27 @@ describe('Reward Backpropagation (Temporal Difference Decay)', () => {
 
         let updateCalls: any[] = [];
         (supabase.from as any).mockImplementation((table: string) => {
+            const selectQuery: any = {
+                eq: vi.fn(() => selectQuery),
+                order: vi.fn().mockResolvedValue({ data: mockSteps, error: null }),
+            };
+
+            const updateQuery: any = {
+                eq: vi.fn(() => updateQuery),
+                select: vi.fn().mockResolvedValue({ data: [{}] }),
+            };
+
             return {
                 select: vi.fn().mockReturnThis(),
-                eq: (col: string, val: string) => {
-                    if (col === 'session_id' && val === episode_id) {
-                        return { order: vi.fn().mockResolvedValue({ data: mockSteps, error: null }) };
-                    }
-                    return { select: vi.fn().mockResolvedValue({ data: [{ id: val }] }) };
-                },
+                eq: vi.fn(() => selectQuery),
                 update: (payload: any) => {
                     updateCalls.push(payload);
-                    return { eq: vi.fn().mockReturnThis(), select: vi.fn().mockResolvedValue({ data: [{}] }) };
+                    return updateQuery;
                 }
             };
         });
 
-        const res = await backpropagateReward({ episode_id, final_outcome: 1.0, gamma: 0.85 });
+        const res = await backpropagateReward({ episode_id, customer_id, final_outcome: 1.0, gamma: 0.85 });
 
         expect(res.steps_adjusted).toBe(6);
         // Step 0: 1.0 * 0.85^5 = 0.4437
@@ -93,6 +102,7 @@ describe('Reward Backpropagation (Temporal Difference Decay)', () => {
 
     test('Test 3: Idempotent: already-adjusted steps are not re-adjusted', async () => {
         const episode_id = 'ep-idem-1';
+        const customer_id = 'cust-1';
         const mockSteps = [
             { outcome_id: 'o0', backprop_adjusted: true },
             { outcome_id: 'o1', backprop_adjusted: true },
@@ -101,22 +111,27 @@ describe('Reward Backpropagation (Temporal Difference Decay)', () => {
 
         let updateCalls = 0;
         (supabase.from as any).mockImplementation((table: string) => {
+            const selectQuery: any = {
+                eq: vi.fn(() => selectQuery),
+                order: vi.fn().mockResolvedValue({ data: mockSteps, error: null }),
+            };
+
+            const updateQuery: any = {
+                eq: vi.fn(() => updateQuery),
+                select: vi.fn().mockResolvedValue({ data: [{}] }),
+            };
+
             return {
                 select: vi.fn().mockReturnThis(),
-                eq: (col: string, val: string) => {
-                    if (col === 'session_id' && val === episode_id) {
-                        return { order: vi.fn().mockResolvedValue({ data: mockSteps, error: null }) };
-                    }
-                    return { select: vi.fn().mockResolvedValue({ data: [{}] }) };
-                },
+                eq: vi.fn(() => selectQuery),
                 update: () => {
                     updateCalls++;
-                    return { eq: vi.fn().mockReturnThis(), select: vi.fn().mockResolvedValue({ data: [{}] }) };
+                    return updateQuery;
                 }
             };
         });
 
-        const res = await backpropagateReward({ episode_id, final_outcome: 1.0, gamma: 0.85 });
+        const res = await backpropagateReward({ episode_id, customer_id, final_outcome: 1.0, gamma: 0.85 });
         expect(res.steps_adjusted).toBe(1);
         expect(updateCalls).toBe(1);
     });

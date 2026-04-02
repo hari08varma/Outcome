@@ -240,6 +240,14 @@ async function runTier3MCTS(
   };
 
   // Run MCTS simulations in batches of 10
+  // BATCHED MCTS NOTE: Within each batch, select() calls happen
+  // synchronously before Promise.all — they use UCT scores from the
+  // PREVIOUS batch's backpropagation, not in-batch updates.
+  // Iterations 1-9 within a batch have stale UCT scores relative to
+  // each other. This is the "leaf parallelism" trade-off: we accept
+  // slightly degraded exploration accuracy for throughput.
+  // To mitigate: keep BATCH_SIZE <= 10 (current value is correct).
+  // A virtual-loss mechanism could further improve accuracy if needed.
   const BATCH_SIZE = 10;
   for (let i = 0; i < NUM_SIMS; i += BATCH_SIZE) {
     const promises = [];

@@ -8,6 +8,12 @@ import { describe, it, expect } from 'vitest';
 import { getPolicyDecision, DEFAULT_POLICY_CONFIG, DEFAULT_TRUST, AgentTrustScore, CustomerPolicyConfig } from '../../api/lib/policy-engine.js';
 import { ScoredAction } from '../../api/lib/scoring.js';
 
+const EXISTING_TRUST: AgentTrustScore = {
+    trust_score: 0.5,
+    trust_status: 'probation',
+    consecutive_failures: 0,
+};
+
 function makeAction(overrides: Partial<ScoredAction> = {}): ScoredAction {
     return {
         action_id: 'act-001',
@@ -26,6 +32,31 @@ function makeAction(overrides: Partial<ScoredAction> = {}): ScoredAction {
 
 describe('Policy Engine — Decision Tree', () => {
 
+    it('missing trust row fallback behaves as new agent exploration', () => {
+        const actions = [makeAction({ action_id: 'a1', total_attempts: 5 })];
+
+        const viaDefault = getPolicyDecision({
+            rankedActions: actions,
+            agentTrust: null,
+            customerConfig: DEFAULT_POLICY_CONFIG,
+            coldStartActive: false,
+        });
+
+        const viaExplicitNew = getPolicyDecision({
+            rankedActions: actions,
+            agentTrust: { trust_score: 0, trust_status: 'new', consecutive_failures: 0 },
+            customerConfig: DEFAULT_POLICY_CONFIG,
+            coldStartActive: false,
+        });
+
+        expect(DEFAULT_TRUST.trust_score).toBe(0);
+        expect(DEFAULT_TRUST.trust_status).toBe('new');
+        expect(viaDefault.policy).toBe('explore');
+        expect(viaDefault.reason).toBe('agent_new_no_history');
+        expect(viaExplicitNew.policy).toBe('explore');
+        expect(viaExplicitNew.reason).toBe('agent_new_no_history');
+    });
+
     it('suspended agent always returns escalate', () => {
         const trust: AgentTrustScore = { trust_score: 0.1, trust_status: 'suspended', consecutive_failures: 10 };
         const result = getPolicyDecision({
@@ -41,7 +72,7 @@ describe('Policy Engine — Decision Tree', () => {
     it('cold start returns explore with reason cold_start', () => {
         const result = getPolicyDecision({
             rankedActions: [makeAction({ composite_score: 0.9, confidence: 0.1, total_attempts: 2 })],
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: true,
         });
@@ -57,7 +88,7 @@ describe('Policy Engine — Decision Tree', () => {
         ];
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         });
@@ -71,7 +102,7 @@ describe('Policy Engine — Decision Tree', () => {
         const config: CustomerPolicyConfig = { ...DEFAULT_POLICY_CONFIG, risk_tolerance: 'conservative' };
         const result = getPolicyDecision({
             rankedActions: [makeAction({ composite_score: 0.85, confidence: 0.9 })],
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: config,
             coldStartActive: false,
         });
@@ -86,7 +117,7 @@ describe('Policy Engine — Decision Tree', () => {
         ];
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.04);  // < 0.05 epsilon
@@ -102,7 +133,7 @@ describe('Policy Engine — Decision Tree', () => {
         ];
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.96);  // > 0.05 epsilon
@@ -118,7 +149,7 @@ describe('Policy Engine — Decision Tree', () => {
         ];
         const result = getPolicyDecision({
             rankedActions: actions,
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         });
@@ -129,7 +160,7 @@ describe('Policy Engine — Decision Tree', () => {
     it('medium score (0.5-0.85) uses confidence-weighted exploit', () => {
         const result = getPolicyDecision({
             rankedActions: [makeAction({ composite_score: 0.65, confidence: 0.8 })],
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         }, () => 0.5);  // < 0.8 confidence = exploit
@@ -140,7 +171,7 @@ describe('Policy Engine — Decision Tree', () => {
     it('no actions available returns escalate', () => {
         const result = getPolicyDecision({
             rankedActions: [],
-            agentTrust: DEFAULT_TRUST,
+            agentTrust: EXISTING_TRUST,
             customerConfig: DEFAULT_POLICY_CONFIG,
             coldStartActive: false,
         });

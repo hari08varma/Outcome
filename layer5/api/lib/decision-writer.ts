@@ -43,7 +43,9 @@ export async function flushDecisions(): Promise<void> {
     });
 
     try {
-        const { error } = await supabase.from('fact_decisions').insert(insertRows);
+        const { error } = await supabase
+            .from('fact_decisions')
+            .upsert(insertRows, { onConflict: 'id', ignoreDuplicates: true });
         if (error) throw error;
         failureCount = 0;
     } catch (err: any) {

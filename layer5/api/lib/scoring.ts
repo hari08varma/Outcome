@@ -44,6 +44,19 @@ export const PRIOR_BETA = 1.0;  // Laplace prior failures  (neutral = 1)
 const MIN_CONFIDENCE = 0.30;  // below this → cold-start fallback
 const ESCALATION_SCORE = 0.20;  // below this → escalate_human
 const CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
+// LRU eviction: 1000 entries × ~2KB avg = ~2MB max resident cache size.
+// V8 Map preserves insertion order; oldest key = first key in iterator.
+// At 1000 entries, single-deletion eviction keeps memory bounded without
+// a full LRU linked list implementation.
+const MAX_CACHE_ENTRIES = 1000;
+const IPS_DECISION_CHUNK_SIZE = 50;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+    return Promise.race([
+        promise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+    ]) as Promise<T | null>;
+}
 
 // ── In-Memory Score Cache ─────────────────────────────────────
 interface CacheEntry {
@@ -70,13 +83,20 @@ setInterval(() => {
 }, CLEANUP_INTERVAL_MS).unref();
 
 setInterval(() => {
-    console.info(`[cache-size] scoreCache: ${scoreCache.size} entries`);
+    if (scoreCache.size > 0 && process.env['NODE_ENV'] !== 'production') {
+        console.debug(`[cache-size] scoreCache: ${scoreCache.size} entries`);
+    }
 }, 15 * 60_000).unref();
 
 function cacheKey(customerId: string, contextId: string): string {
     return `${customerId}:${contextId}`;
 }
 
+/**
+ * Call this after any successful outcome write for (customerId, contextId).
+ * Ensures the next getScores() call fetches fresh data from mv_action_scores
+ * instead of serving a cached cold-start fallback.
+ */
 export function invalidateCache(customerId?: string, contextId?: string): void {
     if (customerId && contextId) {
         scoreCache.delete(cacheKey(customerId, contextId));
@@ -110,7 +130,7 @@ export type TrendLabel = 'stable' | 'improving' | 'degrading' | 'critical';
 
 export function trendLabel(trendDelta: number | null): TrendLabel {
     if (trendDelta === null) return 'stable';
-    if (trendDelta < -0.15) return 'critical';
+    if (trendDelta <= -0.15) return 'critical';
     if (trendDelta < -0.05) return 'degrading';
     if (trendDelta > 0.05) return 'improving';
     return 'stable';
@@ -141,7 +161,20 @@ export interface ScoringResult {
     served_from_cache: boolean;
 }
 
-async function fetchIPSSignal(actionId: string, customerId: string): Promise<number | null> {
+interface IPSBatchRow {
+    unchosen_action_id: string | null;
+    counterfactual_est: number | null;
+    ips_weight: number | null;
+    created_at: string | null;
+}
+
+async function batchFetchIPSSignals(
+    actionIds: string[],
+    customerId: string
+): Promise<Map<string, number>> {
+    const uniqueActionIds = [...new Set(actionIds.filter(Boolean))];
+    if (uniqueActionIds.length === 0) return new Map<string, number>();
+
     // Step 1: scope decisions to the tenant via agent ownership.
     const { data: decisions, error: decisionsError } = await supabase
         .from('fact_decisions')
@@ -152,32 +185,78 @@ async function fetchIPSSignal(actionId: string, customerId: string): Promise<num
 
     if (decisionsError) {
         console.warn('[scoring] IPS decision scope lookup failed:', decisionsError.message);
-        return null;
+        return new Map<string, number>();
     }
 
     const decisionIds = (decisions ?? []).map((d: any) => d.id).filter(Boolean);
-    if (decisionIds.length === 0) return null;
+    if (decisionIds.length === 0) return new Map<string, number>();
 
-    // Step 2: collect recent counterfactuals for this unchosen action.
-    const { data, error } = await supabase
-        .from('fact_outcome_counterfactuals')
-        .select('counterfactual_est, ips_weight, created_at')
-        .eq('unchosen_action_id', actionId)
-        .in('decision_id', decisionIds)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-    if (error || !data || data.length === 0) {
-        if (error) {
-            console.warn('[scoring] IPS counterfactual lookup failed:', error.message);
-        }
-        return null;
+    const chunks: string[][] = [];
+    for (let i = 0; i < decisionIds.length; i += IPS_DECISION_CHUNK_SIZE) {
+        chunks.push(decisionIds.slice(i, i + IPS_DECISION_CHUNK_SIZE));
     }
 
-    const avgEstimate = data.reduce((sum, r: any) => sum + (r.counterfactual_est ?? 0), 0) / data.length;
-    const avgWeight = data.reduce((sum, r: any) => sum + (r.ips_weight ?? 0), 0) / data.length;
+    const chunkResults = await Promise.all(chunks.map(async (chunk, i) => {
+        const { data, error } = await supabase
+            .from('fact_outcome_counterfactuals')
+            .select('unchosen_action_id, counterfactual_est, ips_weight, created_at')
+            .in('decision_id', chunk)
+            .in('unchosen_action_id', uniqueActionIds)
+            .order('created_at', { ascending: false })
+            .limit(5 * uniqueActionIds.length);
 
-    return avgEstimate * avgWeight;
+        if (error) {
+            console.warn(
+                `[scoring] IPS batch query failed (chunk ${i}):`,
+                error.message,
+                '| chunk_size:',
+                chunk.length,
+                '| action_count:',
+                uniqueActionIds.length
+            );
+            return [] as IPSBatchRow[];
+        }
+
+        return (data ?? []) as IPSBatchRow[];
+    }));
+
+    const deduped = new Map<string, IPSBatchRow>();
+    for (const row of chunkResults.flat()) {
+        if (!row.unchosen_action_id || !row.created_at) continue;
+        const dedupeKey = `${row.unchosen_action_id}:${row.created_at}`;
+        if (!deduped.has(dedupeKey)) {
+            deduped.set(dedupeKey, row);
+        }
+    }
+
+    if (deduped.size === 0) return new Map<string, number>();
+
+    const grouped = new Map<string, IPSBatchRow[]>();
+    for (const row of deduped.values()) {
+        const actionId = row.unchosen_action_id;
+        if (!actionId) continue;
+        const existing = grouped.get(actionId) ?? [];
+        existing.push(row);
+        grouped.set(actionId, existing);
+    }
+
+    const signals = new Map<string, number>();
+    for (const actionId of uniqueActionIds) {
+        const rows = (grouped.get(actionId) ?? [])
+            .sort(
+                (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+            )
+            .slice(0, 5);
+
+        if (rows.length === 0) continue;
+
+        const avgEstimate = rows.reduce((sum, r) => sum + (r.counterfactual_est ?? 0), 0) / rows.length;
+        const avgWeight = rows.reduce((sum, r) => sum + (r.ips_weight ?? 0), 0) / rows.length;
+        const blendedSignal = Math.max(0, Math.min(1, avgEstimate * avgWeight));
+        signals.set(actionId, blendedSignal);
+    }
+
+    return signals;
 }
 
 // ── 5-Factor scoring formula ─────────────────────────────────
@@ -185,7 +264,11 @@ async function fetchIPSSignal(actionId: string, customerId: string): Promise<num
  * @param contextMatch — cosine similarity from context-embed.ts.
  *   null means exact match (fallback) → treated as 1.0.
  */
-export async function computeCompositeScore(row: ActionScore, contextMatch: number | null = null): Promise<number> {
+export function computeCompositeScore(
+    row: ActionScore,
+    contextMatch: number | null = null,
+    ipsSignal: number | null = null
+): number {
     // Factor 1: Weighted success rate (primary)
     // Applied Bayesian smoothing (Laplace / Beta distribution prior):
     const rawSuccessRate = row.weighted_success_rate ?? row.raw_success_rate ?? 0;
@@ -231,23 +314,12 @@ export async function computeCompositeScore(row: ActionScore, contextMatch: numb
     );
 
     const sampleCount = row.total_attempts ?? 0;
-    if (sampleCount >= 20) {
+    if (sampleCount >= 20 || ipsSignal === null) {
         return Math.max(0, Math.min(1, baseScore * f_context));
     }
-
-    const ipsSignal = await fetchIPSSignal(row.action_id, row.customer_id);
-    if (ipsSignal === null) {
-        return Math.max(0, Math.min(1, baseScore * f_context));
-    }
-
-    // Clamp IPS signal to [0, 1] before blending.
-    // avgEstimate * avgWeight from counterfactuals is not guaranteed
-    // to be bounded. Without clamping, composite_score can exceed 1.0
-    // which breaks the policy engine's threshold checks.
-    const clampedIps = Math.max(0, Math.min(1, ipsSignal));
 
     const blendWeight = Math.min(0.10, ((20 - sampleCount) / 20) * 0.10);
-    const blended = baseScore * (1 - blendWeight) + clampedIps * blendWeight;
+    const blended = baseScore * (1 - blendWeight) + ipsSignal * blendWeight;
 
     // Final clamp: composite_score must ALWAYS be in [0, 1]
     return Math.max(0, Math.min(1, blended * f_context));
@@ -400,8 +472,20 @@ export async function getScores(
 
         scoredActions = fallback;
     } else {
-        scoredActions = (await Promise.all(rawScores.map(async (row): Promise<ScoredAction> => {
-            const score = await computeCompositeScore(row, contextMatch);
+        const lowSampleRows = rawScores.filter(r => (r.total_attempts ?? 0) < 20);
+        const ipsMap = lowSampleRows.length > 0
+            ? await withTimeout(
+                batchFetchIPSSignals(lowSampleRows.map(r => r.action_id), customerId),
+                2000
+            ) ?? new Map<string, number>()
+            : new Map<string, number>();
+
+        scoredActions = rawScores.map((row): ScoredAction => {
+            const score = computeCompositeScore(
+                row,
+                contextMatch,
+                ipsMap.get(row.action_id) ?? null
+            );
             return {
                 action_id: row.action_id,
                 action_name: row.action_name,
@@ -415,11 +499,15 @@ export async function getScores(
                 is_low_sample: row.total_attempts < 3,
                 recommendation: toRecommendation(score, false),
             };
-        }))).sort((a, b) => b.composite_score - a.composite_score);
+        }).sort((a, b) => b.composite_score - a.composite_score);
     }
 
     // Store in cache
     scoreCache.set(key, { scores: scoredActions, expires_at: Date.now() + CACHE_TTL_MS });
+    if (scoreCache.size > MAX_CACHE_ENTRIES) {
+        const oldestKey = scoreCache.keys().next().value as string | undefined;
+        if (oldestKey) scoreCache.delete(oldestKey);
+    }
 
     const top = scoredActions[0] ?? null;
 

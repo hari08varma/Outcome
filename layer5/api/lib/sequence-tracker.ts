@@ -33,7 +33,8 @@ export async function upsertSequence(params: {
         .from('action_sequences')
         .select('id, action_sequence, total_response_ms')
         .eq('episode_id', params.episodeId)
-        .single();
+        .eq('agent_id', params.agentId)
+        .maybeSingle();
 
     if (!existing) {
         // Create new sequence
@@ -64,7 +65,8 @@ export async function upsertSequence(params: {
             total_response_ms: (existing.total_response_ms ?? 0) +
                                (params.responseMs ?? 0),
         })
-        .eq('id', existing.id);
+        .eq('id', existing.id)
+        .eq('agent_id', params.agentId);
 
     if (error) throw new Error(
         `Failed to update action sequence: ${error.message}`
@@ -84,6 +86,7 @@ export async function upsertSequence(params: {
  */
 export async function closeSequence(params: {
     episodeId:    string;
+    agentId:      string;
     finalOutcome: number;  // 0.0–1.0
 }): Promise<void> {
     const { error } = await supabase
@@ -94,6 +97,7 @@ export async function closeSequence(params: {
             closed_at:     new Date().toISOString(),
         })
         .eq('episode_id', params.episodeId)
+        .eq('agent_id', params.agentId)
         .is('closed_at', null);  // only close if not already closed
 
     if (error) {
@@ -112,13 +116,15 @@ export async function closeSequence(params: {
  * Returns null if no sequence exists.
  */
 export async function getSequenceForEpisode(
-    episodeId: string
+    episodeId: string,
+    agentId: string
 ): Promise<string[] | null> {
     const { data } = await supabase
         .from('action_sequences')
         .select('action_sequence')
         .eq('episode_id', episodeId)
-        .single();
+        .eq('agent_id', agentId)
+        .maybeSingle();
 
     return data?.action_sequence ?? null;
 }

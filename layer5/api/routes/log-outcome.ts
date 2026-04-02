@@ -485,6 +485,10 @@ async function computePolicyRecommendation(
     customerId: string, contextId: string, agentId: string, issueType: string
 ): Promise<{ policy: ReturnType<typeof getPolicyDecision>; trust: AgentTrustScore } | null> {
     try {
+        // NOTE: trust will be null only if agent_trust_scores row is missing.
+        // fn_init_agent_trust() trigger (migration 058) prevents this for all
+        // agents created via normal account setup. DEFAULT_TRUST in policy-engine.ts
+        // handles the fallback; its trust_status='new' routes to forced exploration.
         const [scores, agentTrust, customerConfig] = await Promise.all([
             getScores(customerId, contextId, issueType, false),
             getAgentTrust(agentId),

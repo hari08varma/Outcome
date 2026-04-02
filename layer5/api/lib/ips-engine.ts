@@ -13,8 +13,12 @@
 import { supabase } from './supabase.js';
 
 const TEMPERATURE = 1.0;        // softmax temperature
-const IPS_WEIGHT_MIN = 0.0;     // min IPS weight
-const IPS_WEIGHT_CAP = 0.3;     // max IPS weight (conservative cap)
+// IPS_WEIGHT_MIN: matches the filter threshold in writeCounterfactuals.
+// Weights at or below this value are filtered before DB insert.
+// Setting the clamp floor here is redundant with the filter,
+// but makes the intent explicit at the computation level.
+const IPS_WEIGHT_MIN = 0.001;   // min IPS weight
+const IPS_WEIGHT_CAP = 0.3;     // max IPS weight (intentional conservative cap)
 const MIN_PROPENSITY = 0.001;   // floor to prevent division by zero
 
 export interface RankedActionEntry {
@@ -58,20 +62,33 @@ export function computePropensities(
         );
     });
 
+    // Re-normalize after MIN_PROPENSITY floors to restore sum-to-1.
+    // Floor application can shift the total above 1.0 for skewed distributions.
+    const total = Array.from(propensityMap.values()).reduce((a, b) => a + b, 0);
+    if (total > 0) {
+        for (const [key, val] of propensityMap.entries()) {
+            propensityMap.set(key, val / total);
+        }
+    }
+
     return propensityMap;
 }
 
 /**
  * Compute IPS estimate for one unchosen action.
  *
- * Formula (doubly-robust compatible):
- *   weight   = clip(p_unchosen / p_chosen, IPS_WEIGHT_MIN, IPS_WEIGHT_CAP)
- *   estimate = clip(real_outcome * weight, 0, 1)
+ * Formula:
+ *   ratio    = p_unchosen / p_chosen
+ *   estimate = clip(real_outcome * ratio, 0, real_outcome)
+ *   weight   = clip(p_unchosen * (1 - |estimate - real_outcome|),
+ *                   IPS_WEIGHT_MIN, IPS_WEIGHT_CAP)
  *
- * The conservative propensity-ratio cap from the old implementation
- * has been removed — IPS weights now span [0.01, 100.0] to provide
- * sufficient signal range for the DR estimator in Python training.
- * DR corrects variance: reward_hat + weight * (observed - reward_hat).
+ * Weight cap of 0.3 is intentional and conservative. This bounds
+ * the variance contribution of any single counterfactual in the
+ * Python DR training pipeline. The Python trainer must be aware
+ * of this cap when computing DR corrections.
+ * NOTE: The cap means weights never reach 1.0 — the DR formula
+ * reward_hat + w*(observed - reward_hat) is proportionally dampened.
  */
 export function computeIPSEstimate(
     realOutcome: number,
@@ -82,6 +99,35 @@ export function computeIPSEstimate(
     const unclippedEstimate = realOutcome * ratio;
     const estimate = Math.min(Math.max(unclippedEstimate, 0.0), realOutcome);
 
+    // CUSTOM WEIGHT FORMULA (not standard IPS):
+    //
+    // Standard IPS: w = p_unchosen / p_chosen  (importance ratio)
+    // Standard DR:  w = 1 / p_chosen
+    //
+    // This implementation uses a custom confidence-adjusted weight:
+    //   weight = p_unchosen * (1 - |estimate - real_outcome|)
+    //
+    // Rationale:
+    //   - p_unchosen: scales weight by how likely the unchosen action was.
+    //     Rare actions (low p_unchosen) get lower weight, reducing variance.
+    //   - (1 - |estimate - real_outcome|): proximity penalty. Downweights
+    //     counterfactuals where the IPS estimate diverges from the real
+    //     outcome — a heuristic signal that the ratio extrapolation is
+    //     unreliable for this action.
+    //
+    // LIMITATION: estimate depends on real_outcome (estimate = clip(real *
+    // ratio, 0, real)), so the weight is partially circular. When ratio ~= 1,
+    // estimate ~= real_outcome, proximity = 1.0 -> maximum weight. This
+    // means actions close in propensity to the chosen action get the
+    // highest weights — opposite of standard IPS where rare actions
+    // get high weights.
+    //
+    // This weight is used by the Python DR pipeline as a soft confidence
+    // score, NOT as a standard importance ratio. The Python trainer must
+    // NOT use this weight in the standard DR formula:
+    //   reward_hat + w * (observed - reward_hat)
+    // Instead it uses it as a sample weight / reliability score.
+    // See: python/training/dr_estimator.py for the exact usage.
     const rawWeight = propensityUnchosen * (1.0 - Math.abs(estimate - realOutcome));
     const weight = Math.min(Math.max(rawWeight, IPS_WEIGHT_MIN), IPS_WEIGHT_CAP);
 
@@ -140,15 +186,25 @@ export async function writeCounterfactuals(
                 episode_position: input.episodePosition,
             };
         })
-        .filter(c => c.ips_weight > 0.001);  // skip negligible weights
+        .filter(c => c.ips_weight > IPS_WEIGHT_MIN);  // skip negligible weights
 
     if (counterfactuals.length === 0) {
         return;  // nothing to write
     }
 
+    // Idempotent upsert: retries (Railway restart, HTTP timeout) are safe.
+    // First write wins on (decision_id, unchosen_action_id) conflict.
+    // Requires UNIQUE constraint — see migration TODO above.
+    // TODO(migration):
+    // ALTER TABLE fact_outcome_counterfactuals
+    // ADD CONSTRAINT uq_counterfactual_decision_action
+    // UNIQUE (decision_id, unchosen_action_id);
     const { error } = await supabase
         .from('fact_outcome_counterfactuals')
-        .insert(counterfactuals);
+        .upsert(counterfactuals, {
+            onConflict: 'decision_id,unchosen_action_id',
+            ignoreDuplicates: true,
+        });
 
     if (error) {
         // Log but do not throw — counterfactual failure must never

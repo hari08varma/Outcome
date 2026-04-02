@@ -2,6 +2,7 @@ import { supabase } from './supabase.js';
 
 export interface BackpropInput {
     episode_id: string;
+    customer_id: string;
     final_outcome: number;
     gamma?: number;
 }
@@ -21,6 +22,7 @@ export async function backpropagateReward(input: BackpropInput): Promise<Backpro
             .from('fact_outcomes')
             .select('outcome_id, backprop_adjusted')
             .eq('session_id', input.episode_id)
+            .eq('customer_id', input.customer_id)
             .order('timestamp', { ascending: true });
 
         if (error || !steps || steps.length === 0) {
@@ -58,6 +60,7 @@ export async function backpropagateReward(input: BackpropInput): Promise<Backpro
                     backprop_episode_id: input.episode_id
                 })
                 .eq('outcome_id', step.outcome_id)
+                .eq('customer_id', input.customer_id)
                 .select();
 
             if (data && data.length > 0) {

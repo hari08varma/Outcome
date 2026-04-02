@@ -35,10 +35,12 @@ const TIER2_CONFIDENCE_MAX_WIDTH = 0.25;
 async function countEpisodes(
   agentId: string,
   contextHash: string,
+  customerId: string,
 ): Promise<number> {
   const { count } = await supabase
     .from('fact_outcomes')
     .select('*', { count: 'exact', head: true })
+    .eq('customer_id', customerId)
     .eq('agent_id', agentId)
     .eq('context_hash', contextHash);
 
@@ -49,7 +51,7 @@ async function countEpisodes(
  * Get context frequency (normalized, 0–1) for model features.
  */
 async function getContextFrequency(
-  _agentId: string,
+  customerId: string,
   contextHash: string,
 ): Promise<number> {
   const [{ count: contextCount }, { count: totalCount }] =
@@ -57,10 +59,12 @@ async function getContextFrequency(
       supabase
         .from('fact_outcomes')
         .select('*', { count: 'exact', head: true })
+        .eq('customer_id', customerId)
         .eq('context_hash', contextHash),
       supabase
         .from('fact_outcomes')
-        .select('*', { count: 'exact', head: true }),
+        .select('*', { count: 'exact', head: true })
+        .eq('customer_id', customerId),
     ]);
 
   if (!totalCount || totalCount === 0) return 0.5;
@@ -129,8 +133,8 @@ export async function runSimulation(
   try {
     const [episodeCount, contextFreq, allActions, model] =
       await Promise.all([
-        countEpisodes(request.agentId, request.contextHash),
-        getContextFrequency(request.agentId, request.contextHash),
+        countEpisodes(request.agentId, request.contextHash, request.customerId),
+        getContextFrequency(request.customerId, request.contextHash),
         getAgentActions(request.agentId),
         loadWorldModel(request.customerId),
       ]);
@@ -174,7 +178,11 @@ export async function runSimulation(
         // No model artifact returned. Only try MCTS if this is the first time attempting
         // it — i.e., tier was originally 2 (MCTS not yet tried). If tier was 3, MCTS
         // already ran and failed above, so retrying it here is redundant and will fail again.
-        if (tier === 2) {
+        // modelLoaded check: loadWorldModel returned null in the initial
+        // Promise.all above. MCTS also requires a world model — attempting
+        // it when modelLoaded=false would return null immediately.
+        // Skip straight to Tier 1 fallback.
+        if (tier === 2 && modelLoaded) {
           console.info('[tier-selector] No world model for customer — falling back to Tier 3 MCTS', {
             customerId: request.customerId,
           });

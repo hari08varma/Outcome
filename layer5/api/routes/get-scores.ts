@@ -88,6 +88,10 @@ getScoresRouter.get('/', async (c) => {
     }
 
     // ── Fetch real trust + customer config in parallel ────────
+    // NOTE: trust will be null only if agent_trust_scores row is missing.
+    // fn_init_agent_trust() trigger (migration 058) prevents this for all
+    // agents created via normal account setup. DEFAULT_TRUST in policy-engine.ts
+    // handles the fallback; its trust_status='new' routes to forced exploration.
     const [agentTrust, customerConfig] = await Promise.all([
         getAgentTrust(agentId),
         getCustomerConfig(customerId),
@@ -143,16 +147,16 @@ getScoresRouter.get('/', async (c) => {
             // If still no context found → cold start (200, not 404)
             if (!resolvedContextId) {
                 return c.json({
-                    ranked_actions:    [],
-                    top_action:        null,
-                    cold_start:        true,
-                    context_id:        '',
-                    agent_id:          agentId ?? '',
-                    policy:            'explore',
-                    policy_reason:     'No prior context — cold start active',
+                    ranked_actions: [],
+                    top_action: null,
+                    cold_start: true,
+                    context_id: '',
+                    agent_id: agentId ?? '',
+                    policy: 'explore',
+                    policy_reason: 'No prior context — cold start active',
                     served_from_cache: false,
                     cold_start_warning: {
-                        message:        `No context found for issue_type="${issueType}". Cold-start active.`,
+                        message: `No context found for issue_type="${issueType}". Cold-start active.`,
                         recommendation: 'Log at least one outcome to seed this context.',
                     },
                     signal_contract: null,
@@ -217,7 +221,7 @@ getScoresRouter.get('/', async (c) => {
         let decisionId: string | null = null;
         const contextHash = `${resolvedContextId}:${issueType ?? ''}`;
         const episodePosition = episodeHistory ? episodeHistory.length : 0;
-        
+
         if (episodeId) {
             decisionId = bufferDecision({
                 agent_id: agentId ?? null,

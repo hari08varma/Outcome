@@ -36,16 +36,17 @@ export async function tier1Predict(
     ...request.proposedSequence,
   ];
 
-  // Query sequences that match the context.
-  // TODO: Add .eq('customer_id', request.customerId) once customer_id is added to
-  // action_sequences and mv_sequence_scores via schema migration. Current isolation
-  // is implicit: context_hash = `${context_id}:${issue_type}` and context_id is
-  // customer-scoped (migration 044), so cross-tenant hash collisions are unlikely
-  // but not guaranteed at the DB level.
+  // FIX: agent_id filter provides implicit customer isolation until
+  // customer_id is added to action_sequences and mv_sequence_scores
+  // (migration TBD). This prevents cross-customer context_hash
+  // collisions from leaking sequence history across tenants.
+  // TODO: Replace with .eq('customer_id', request.customerId) once
+  // the migration adds customer_id to these tables.
   const { data: sequences } = await supabase
     .from('mv_sequence_scores')
     .select('*')
     .eq('context_hash', request.contextHash)
+    .eq('agent_id', request.agentId)
     .gte('observations', MIN_CONFIDENCE_OBSERVATIONS)
     .order('mean_outcome', { ascending: false })
     .limit(500);
@@ -90,6 +91,7 @@ export async function tier1Predict(
   return await tier1ColdStartFallback(
     request.proposedSequence,
     request.contextHash,
+    request.agentId,
   );
 }
 
@@ -100,6 +102,7 @@ export async function tier1Predict(
 async function tier1ColdStartFallback(
   sequence: string[],
   _contextHash: string,
+  agentId: string,
 ): Promise<SequencePrediction> {
   const firstAction = sequence[0] ?? 'unknown';
 
@@ -107,7 +110,8 @@ async function tier1ColdStartFallback(
     .from('dim_actions')
     .select('prior_success_rate')
     .eq('action_name', firstAction)
-    .single();
+    .eq('agent_id', agentId)
+    .maybeSingle();
 
   const priorScore = prior?.prior_success_rate ?? 0.5;
 
@@ -134,10 +138,17 @@ export async function tier1FindAlternatives(
   proposedOutcome: number,
   limit: number,
 ): Promise<SequencePrediction[]> {
+  // FIX: agent_id filter provides implicit customer isolation until
+  // customer_id is added to action_sequences and mv_sequence_scores
+  // (migration TBD). This prevents cross-customer context_hash
+  // collisions from leaking sequence history across tenants.
+  // TODO: Replace with .eq('customer_id', request.customerId) once
+  // the migration adds customer_id to these tables.
   const { data: sequences } = await supabase
     .from('mv_sequence_scores')
     .select('*')
     .eq('context_hash', request.contextHash)
+    .eq('agent_id', request.agentId)
     .gte('observations', MIN_CONFIDENCE_OBSERVATIONS)
     .gte('mean_outcome', proposedOutcome)
     .order('resolution_rate_lower', { ascending: false })

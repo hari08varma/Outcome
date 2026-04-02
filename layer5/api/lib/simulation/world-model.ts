@@ -21,6 +21,11 @@ const modelCache = new Map<string, WorldModelArtifact>();
 const modelCacheLoadedAt = new Map<string, Date>();
 const canaryCache = new Map<string, WorldModelArtifact>();
 const canaryCacheLoadedAt = new Map<string, Date>();
+// In-flight sentinels: prevent cache stampede when TTL expires.
+// Multiple concurrent callers (e.g. 10 MCTS rollouts in a batch)
+// share the same Promise instead of each firing a DB query.
+const modelLoadingPromise = new Map<string, Promise<WorldModelArtifact | null>>();
+const canaryLoadingPromise = new Map<string, Promise<WorldModelArtifact | null>>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
@@ -35,29 +40,44 @@ export async function loadWorldModel(customerId: string): Promise<WorldModelArti
     return cached;
   }
 
-  const { data, error } = await supabase
-    .from('world_model_artifacts')
-    .select('model_data, trained_at, version, training_episodes')
-    .eq('tier', 2)
-    .eq('is_active', true)
-    .eq('customer_id', customerId)
-    .maybeSingle();
+  const inflight = modelLoadingPromise.get(customerId);
+  if (inflight) return inflight;
 
-  if (error || !data) {
+  const loadPromise = (async () => {
+    const { data, error } = await supabase
+      .from('world_model_artifacts')
+      .select('model_data, trained_at, version, training_episodes')
+      .eq('tier', 2)
+      .eq('is_active', true)
+      .eq('customer_id', customerId)
+      .maybeSingle();
+
+    if (error || !data) {
+      modelCache.delete(customerId);
+      modelLoadingPromise.delete(customerId);
+      return null;
+    }
+
+    const model = data.model_data as WorldModelArtifact;
+    model.trained_at = data.trained_at;
+    model.version = data.version;
+    model.training_episodes = data.training_episodes;
+    model.is_canary = false;
+    model.canary_traffic_pct = 0;
+
+    modelCache.set(customerId, model);
+    modelCacheLoadedAt.set(customerId, new Date());
+    modelLoadingPromise.delete(customerId);
+    return model;
+  })().catch((err) => {
     modelCache.delete(customerId);
+    modelLoadingPromise.delete(customerId);
+    console.error('[world-model] loadWorldModel failed:', (err as Error).message);
     return null;
-  }
+  });
 
-  const model = data.model_data as WorldModelArtifact;
-  model.trained_at = data.trained_at;
-  model.version = data.version;
-  model.training_episodes = data.training_episodes;
-  model.is_canary = false;
-  model.canary_traffic_pct = 0;
-
-  modelCache.set(customerId, model);
-  modelCacheLoadedAt.set(customerId, new Date());
-  return model;
+  modelLoadingPromise.set(customerId, loadPromise);
+  return loadPromise;
 }
 
 /**
@@ -71,31 +91,46 @@ async function loadCanaryModel(customerId: string): Promise<WorldModelArtifact |
     return cached;
   }
 
-  const { data, error } = await supabase
-    .from('world_model_artifacts')
-    .select('model_data, trained_at, version, training_episodes, canary_traffic_pct')
-    .eq('tier', 2)
-    .eq('is_canary', true)
-    .eq('customer_id', customerId)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const inflight = canaryLoadingPromise.get(customerId);
+  if (inflight) return inflight;
 
-  if (error || !data) {
+  const loadPromise = (async () => {
+    const { data, error } = await supabase
+      .from('world_model_artifacts')
+      .select('model_data, trained_at, version, training_episodes, canary_traffic_pct')
+      .eq('tier', 2)
+      .eq('is_canary', true)
+      .eq('customer_id', customerId)
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      canaryCache.delete(customerId);
+      canaryLoadingPromise.delete(customerId);
+      return null;
+    }
+
+    const model = data.model_data as WorldModelArtifact;
+    model.trained_at = data.trained_at;
+    model.version = data.version;
+    model.training_episodes = data.training_episodes;
+    model.is_canary = true;
+    model.canary_traffic_pct = data.canary_traffic_pct ?? 0;
+
+    canaryCache.set(customerId, model);
+    canaryCacheLoadedAt.set(customerId, new Date());
+    canaryLoadingPromise.delete(customerId);
+    return model;
+  })().catch((err) => {
     canaryCache.delete(customerId);
+    canaryLoadingPromise.delete(customerId);
+    console.error('[world-model] loadCanaryModel failed:', (err as Error).message);
     return null;
-  }
+  });
 
-  const model = data.model_data as WorldModelArtifact;
-  model.trained_at = data.trained_at;
-  model.version = data.version;
-  model.training_episodes = data.training_episodes;
-  model.is_canary = true;
-  model.canary_traffic_pct = data.canary_traffic_pct ?? 0;
-
-  canaryCache.set(customerId, model);
-  canaryCacheLoadedAt.set(customerId, new Date());
-  return model;
+  canaryLoadingPromise.set(customerId, loadPromise);
+  return loadPromise;
 }
 
 /**
@@ -107,13 +142,17 @@ export function invalidateModelCache(customerId?: string): void {
   if (customerId) {
     modelCache.delete(customerId);
     modelCacheLoadedAt.delete(customerId);
+    modelLoadingPromise.delete(customerId);
     canaryCache.delete(customerId);
     canaryCacheLoadedAt.delete(customerId);
+    canaryLoadingPromise.delete(customerId);
   } else {
     modelCache.clear();
     modelCacheLoadedAt.clear();
+    modelLoadingPromise.clear();
     canaryCache.clear();
     canaryCacheLoadedAt.clear();
+    canaryLoadingPromise.clear();
   }
 }
 
@@ -130,8 +169,21 @@ export function evaluateTree(
   features: number[],
 ): number {
   let nodeIndex = 0; // start at root (index 0)
+  const maxIterations = (tree.split_feature.length + 1) * 2;
+  let iterations = 0;
 
   while (nodeIndex >= 0) {
+    iterations++;
+    if (iterations > maxIterations) {
+      console.error(
+        `[world-model] evaluateTree: max iterations exceeded. ` +
+        `Possible cycle in tree structure. ` +
+        `split_feature.length=${tree.split_feature.length}, ` +
+        `nodeIndex=${nodeIndex}. Returning 0.`
+      );
+      return 0;
+    }
+
     const featureIndex = tree.split_feature[nodeIndex]!;
     const threshold = tree.threshold[nodeIndex] as number;
     const leftChild = tree.left_child[nodeIndex]!;

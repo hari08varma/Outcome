@@ -76,11 +76,13 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
                 const finalScore = params.finalOutcomeScore ?? (params.finalSuccess ? 1.0 : 0.0);
                 await closeSequence({
                     episodeId: params.episodeId,
+                    agentId: params.agentId,
                     finalOutcome: finalScore,
                 });
 
                 await backpropagateReward({
                     episode_id: params.episodeId,
+                    customer_id: params.customerId,
                     final_outcome: finalScore,
                     gamma: 0.85,
                 });
@@ -144,13 +146,27 @@ async function upsertLiveTrustScore(
     }
 
     if (error || !outcomes || outcomes.length === 0) {
-        // Ensure zero-outcome agents stay in 'new' state with no score.
-        // Guards against any race condition or manual call writing a stale score.
-        await supabase
+        // Read current total_decisions from DB — do not infer from fact_outcomes query.
+        // fact_outcomes excludes synthetic/deleted rows; total_decisions counts all.
+        // These two counts legitimately diverge. Trust the DB source of truth.
+        const { data: currentRow } = await supabase
             .from('agent_trust_scores')
-            .update({ trust_status: 'new', trust_score: null })
+            .select('total_decisions, trust_status')
             .eq('agent_id', agentId)
-            .eq('total_decisions', 0);
+            .maybeSingle();
+
+        // Only reset to 'new' if the DB also confirms zero decisions.
+        // If total_decisions > 0, the agent has real signal — do not overwrite.
+        if (!currentRow || currentRow.total_decisions === 0) {
+            await supabase
+                .from('agent_trust_scores')
+                .update({ trust_status: 'new', trust_score: null })
+                .eq('agent_id', agentId)
+                .eq('total_decisions', 0);  // ← still safe: confirmed 0 above
+        }
+        // If total_decisions > 0, there is real signal but no non-synthetic/non-deleted
+        // outcomes in the last 100. This is a rare edge case (all outcomes deleted/synthetic).
+        // Do nothing — trust the existing score rather than resetting to 'new'.
         return;
     }
 
@@ -172,11 +188,50 @@ async function upsertLiveTrustScore(
         return count;
     })();
 
+    // INVARIANT: These thresholds must match updateAgentTrust() exactly.
+    // If thresholds change in updateAgentTrust, update these too.
+    // updateAgentTrust is the canonical source of truth for status transitions.
+    // This function only updates the live score for dashboard display.
     // Check >= 10 before >= 5 so 'suspended' is reachable
     const trustStatus =
         consecutiveFailures >= 10 ? 'suspended' :
-        consecutiveFailures >= 5  ? 'degraded'  :
-        weightedScore >= 0.7      ? 'trusted'   : 'probation';
+            consecutiveFailures >= 5 ? 'degraded' :
+                weightedScore >= 0.6 ? 'trusted' : 'probation';
+
+    const { data: currentTrust } = await supabase
+        .from('agent_trust_scores')
+        .select('trust_status')
+        .eq('agent_id', agentId)
+        .maybeSingle();
+    const currentStatus = currentTrust?.trust_status ?? null;
+
+    const PROTECTED_STATUSES = ['suspended', 'sandbox'];
+
+    if (
+        currentStatus !== null &&
+        PROTECTED_STATUSES.includes(currentStatus) &&
+        !PROTECTED_STATUSES.includes(trustStatus)
+    ) {
+        console.warn(
+            '[trust] upsertLiveTrustScore: skipping status overwrite. ' +
+            `Current protected status=${currentStatus} would be overwritten ` +
+            `with non-protected status=${trustStatus} for agent=${agentId}. ` +
+            'The canonical status set by updateAgentTrust is preserved.'
+        );
+
+        // Still upsert the numeric score and failure count — just preserve the status.
+        await supabase
+            .from('agent_trust_scores')
+            .upsert({
+                agent_id: agentId,
+                trust_score: weightedScore,
+                trust_status: currentStatus,
+                consecutive_failures: consecutiveFailures,
+                total_decisions: total,
+                updated_at: new Date().toISOString(),
+            }, { onConflict: 'agent_id' });
+        return;
+    }
 
     await supabase
         .from('agent_trust_scores')
@@ -246,18 +301,27 @@ async function updateAgentTrust(
         .eq('agent_id', agentId)
         .maybeSingle();
 
-    if (!trust) return;
+    if (!trust) {
+        // The fn_init_agent_trust() trigger (migration 058) should
+        // have created this row. If it's missing, throw so the
+        // orchestrator's allSettled logs a [trust-update] error.
+        // Do NOT silently return - a missing row is a data integrity issue.
+        throw new Error(
+            `[trust] No agent_trust_scores row for agent_id=${agentId}. ` +
+            `Trigger fn_init_agent_trust may have failed at agent creation.`
+        );
+    }
 
-    const currentScore            = typeof trust.trust_score          === 'number' ? trust.trust_score          : 0.7;
-    const currentTotalDecisions   = typeof trust.total_decisions       === 'number' ? trust.total_decisions       : 0;
-    const currentCorrectDecisions = typeof trust.correct_decisions     === 'number' ? trust.correct_decisions     : 0;
-    const currentFailures         = typeof trust.consecutive_failures  === 'number' ? trust.consecutive_failures  : 0;
-    const currentStatus           = typeof trust.trust_status          === 'string'  ? trust.trust_status          : 'trusted';
+    const currentScore = typeof trust.trust_score === 'number' ? trust.trust_score : 0.7;
+    const currentTotalDecisions = typeof trust.total_decisions === 'number' ? trust.total_decisions : 0;
+    const currentCorrectDecisions = typeof trust.correct_decisions === 'number' ? trust.correct_decisions : 0;
+    const currentFailures = typeof trust.consecutive_failures === 'number' ? trust.consecutive_failures : 0;
+    const currentStatus = typeof trust.trust_status === 'string' ? trust.trust_status : 'trusted';
 
     // Always capture old values before any mutation.
     // These are written to every audit row so the dashboard can show
     // the score delta for each event in the Trust History timeline.
-    const oldScore  = currentScore;
+    const oldScore = currentScore;
     const oldStatus = currentStatus;
 
     let newScore: number;
@@ -299,7 +363,7 @@ async function updateAgentTrust(
         }
 
         if (isInfrastructureFailure) {
-            snapshotTrust(agentId, trust, 'pre_incident', `coordinated:${actionName ?? 'unknown'}`).catch(() => {});
+            snapshotTrust(agentId, trust, 'pre_incident', `coordinated:${actionName ?? 'unknown'}`).catch(() => { });
 
             const { error: auditError } = await supabase.from('agent_trust_audit').insert({
                 agent_id: agentId,
@@ -319,9 +383,9 @@ async function updateAgentTrust(
         }
 
         // Normal agent-attributable failure: snapshot then decay
-        snapshotTrust(agentId, trust, 'pre_failure').catch(() => {});
+        snapshotTrust(agentId, trust, 'pre_failure').catch(() => { });
         newFailures = currentFailures + 1;
-        newScore    = currentScore * Math.pow(0.9, newFailures);
+        newScore = currentScore * Math.pow(0.9, newFailures);
     }
 
     let newStatus: string;
@@ -352,7 +416,7 @@ async function updateAgentTrust(
     // Status-change events append a transition note that
     // parseStatusLabel() in agent.tsx picks up separately.
 
-    const action  = actionName?.trim() || 'unknown_action';
+    const action = actionName?.trim() || 'unknown_action';
     const statusChanged = oldStatus !== newStatus;
 
     const baseReason = success
@@ -364,21 +428,21 @@ async function updateAgentTrust(
         : baseReason;
 
     const { error: rpcError } = await supabase.rpc('update_trust_and_audit', {
-        p_agent_id:             agentId,
-        p_customer_id:          customerId,
-        p_trust_score:          newScore,
-        p_total_decisions:      currentTotalDecisions + 1,
-        p_correct_decisions:    newCorrect,
+        p_agent_id: agentId,
+        p_customer_id: customerId,
+        p_trust_score: newScore,
+        p_total_decisions: currentTotalDecisions + 1,
+        p_correct_decisions: newCorrect,
         p_consecutive_failures: newFailures,
-        p_trust_status:         newStatus,
-        p_suspension_reason:    newSuspensionReason,
-        p_updated_at:           new Date().toISOString(),
-        p_event_type:           success ? 'success' : 'failure',
-        p_old_score:            oldScore,
-        p_old_status:           oldStatus,
-        p_new_status:           newStatus,
-        p_performed_by:         'outcome-orchestrator',
-        p_reason:               reason,
+        p_trust_status: newStatus,
+        p_suspension_reason: newSuspensionReason,
+        p_updated_at: new Date().toISOString(),
+        p_event_type: success ? 'success' : 'failure',
+        p_old_score: oldScore,
+        p_old_status: oldStatus,
+        p_new_status: newStatus,
+        p_performed_by: 'outcome-orchestrator',
+        p_reason: reason,
     });
 
     if (rpcError) {
@@ -420,9 +484,13 @@ async function detectContextDrift(
     const { data: recentAlert } = await sb
         .from('degradation_alert_events')
         .select('alert_id')
+        // TODO: Add (customer_id, alert_type, context_type) composite unique constraint
+        // to degradation_alert_events once a context_type column is added (migration TBD).
+        // Until then, message-based ilike dedup is the deduplication mechanism.
         .eq('customer_id', customerId)
         .eq('alert_type', 'context_drift')
         .gte('detected_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .ilike('message', `%"${contextType}"%`)
         .limit(1);
 
     if (recentAlert && recentAlert.length > 0) return;
@@ -453,6 +521,18 @@ async function detectSilentFailure(
         outcome.outcome_score < 0.3;
 
     if (!isSilentFailure) return;
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentAlert } = await sb
+        .from('degradation_alert_events')
+        .select('alert_id')
+        .eq('customer_id', outcome.customer_id)
+        .eq('action_id', outcome.action_id)
+        .eq('alert_type', 'degradation')
+        .gte('detected_at', since24h)
+        .limit(1);
+
+    if (recentAlert && recentAlert.length > 0) return;
 
     await sb.from('degradation_alert_events').insert({
         customer_id: outcome.customer_id,
