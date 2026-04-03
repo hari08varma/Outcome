@@ -257,12 +257,13 @@ export async function getRecommendation(
         // QUALIFIED PAIR FIX: only compare actions with sufficient sample size.
         // Prevents a 2-outcome action from silencing a 62-outcome clear winner.
         const qualifiedActions = actions.filter((a) => a.total_count >= MIN_SAMPLES);
+        const sortedAll = [...actions].sort(
+            (a, b) => rankingScore(b) - rankingScore(a)
+        );
+        const leader = sortedAll[0] ?? null;
+        const trailer = sortedAll[sortedAll.length - 1] ?? null;
 
         if (qualifiedActions.length < 2) {
-            const leader = [...actions].sort(
-                (a, b) => rankingScore(b) - rankingScore(a)
-            )[0] ?? null;
-
             const unqualifiedCount = actions.length - qualifiedActions.length;
             const needMore = actions
                 .filter((a) => a.total_count < MIN_SAMPLES)
@@ -271,6 +272,48 @@ export async function getRecommendation(
                     current: a.total_count,
                     needed: MIN_SAMPLES - a.total_count,
                 }));
+
+            // Production fallback: emit a conservative early signal once the leading
+            // action has enough direct evidence and at least one comparator exists.
+            // This avoids an extended "no_data" state for active tasks while still
+            // preserving low confidence when comparator samples are sparse.
+            const leaderHasMinimumEvidence = !!leader && leader.total_count >= MIN_SAMPLES;
+            const hasComparator = !!leader && !!trailer && leader.action_id !== trailer.action_id;
+
+            if (leaderHasMinimumEvidence && hasComparator) {
+                const best = leader!;
+                const worst = trailer!;
+                const rawConfidence = confidenceFromSamplesAndLift(
+                    best.total_count,
+                    Math.max(1, worst.total_count),
+                    Math.max(0, best.success_rate - worst.success_rate),
+                );
+                const minSamples = Math.min(best.total_count, worst.total_count);
+                const silentFailureActive = await hasSilentFailureAlertForActions(
+                    [best.action_id, worst.action_id],
+                    customerId,
+                );
+
+                return {
+                    ...makeResult('early_signal', actions, best, worst),
+                    confidence: rawConfidence,
+                    min_sample_count: minSamples,
+                    _qualification_context: {
+                        qualified_count: qualifiedActions.length,
+                        unqualified_count: unqualifiedCount,
+                        leading_action: {
+                            name: best.action_name,
+                            total: best.total_count,
+                            rate: best.success_rate,
+                        },
+                        actions_needing_more: needMore,
+                    },
+                    _silent_failure_warning: silentFailureActive,
+                    registered_actions: registeredActions,
+                    action_mismatch: registeredActions.length > 0
+                        && !registeredActions.includes(best.action_name),
+                };
+            }
 
             return {
                 task: taskName,
