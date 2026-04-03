@@ -672,10 +672,10 @@ logOutcomeRouter.post('/', async (c) => {
             // Silent — aggregation refresh failure must NEVER affect outcome logging
         });
 
-        // 8. Policy Engine Wrap-up
-        const policyResultData = await computePolicyRecommendation(customerId, contextId, agentId, body.issue_type);
-        const policyResult = policyResultData?.policy ?? null;
-        const agentTrust = policyResultData?.trust ?? LOCAL_DEFAULT_TRUST;
+        // 8. Response Wrap-up (non-blocking)
+        // Do not synchronously compute policy here: it can read stale MV data
+        // during the refresh debounce window and repopulate cold-start cache.
+        const agentTrust = LOCAL_DEFAULT_TRUST;
         const finalValidatedAction = c.get('validated_action') as any;
 
         const counterfactualsComputed = !!(decisionRecord?.ranked_actions);
@@ -692,12 +692,9 @@ logOutcomeRouter.post('/', async (c) => {
             logged: true,
             agent_trust_score: agentTrust.trust_score,
             trust_status: agentTrust.trust_status,
-            policy: policyResult?.policy ?? 'explore',
-            recommendation: policyResult?.policy ?? null,
-            next_actions: policyResult ? {
-                policy: policyResult.policy, reason: policyResult.reason,
-                selected_action: policyResult.selectedAction, exploration_target: policyResult.explorationTarget,
-            } : null,
+            policy: 'explore',
+            recommendation: null,
+            next_actions: null,
             counterfactuals_computed: counterfactualsComputed,
             sequence_position: sequencePosition,
             idempotency_replayed: false,
@@ -780,16 +777,38 @@ async function refreshTaskAggregation(customerId: string): Promise<void> {
         const timer = setTimeout(async () => {
             _refreshTimers.delete(customerId);
             try {
-                const { error } = await supabase.rpc('refresh_task_action_performance');
-                if (error) {
-                    // Log but never throw — refresh failure must not affect logging
-                    console.warn('[log-outcome] MV refresh RPC failed:', {
-                        customer_id: customerId,
-                        error: error.message,
-                        hint: 'Data is stale - check mv_tap_unique_idx exists in Supabase',
-                    });
+                const [taskPerfRefresh, actionScoresRefresh] = await Promise.allSettled([
+                    supabase.rpc('refresh_task_action_performance'),
+                    supabase.rpc('refresh_action_scores'),
+                ]);
+
+                if (taskPerfRefresh.status === 'fulfilled') {
+                    const { error } = taskPerfRefresh.value;
+                    if (error) {
+                        // Log but never throw — refresh failure must not affect logging
+                        console.warn('[log-outcome] MV refresh RPC failed:', {
+                            customer_id: customerId,
+                            error: error.message,
+                            hint: 'Data is stale - check mv_tap_unique_idx exists in Supabase',
+                        });
+                    } else {
+                        console.info('[log-outcome] MV refresh OK', { customer_id: customerId });
+                    }
                 } else {
-                    console.info('[log-outcome] MV refresh OK', { customer_id: customerId });
+                    console.warn('[log-outcome] MV refresh threw:', (taskPerfRefresh.reason as Error)?.message ?? String(taskPerfRefresh.reason));
+                }
+
+                if (actionScoresRefresh.status === 'fulfilled') {
+                    const { error } = actionScoresRefresh.value;
+                    if (error) {
+                        console.warn('[log-outcome] MV refresh_action_scores RPC failed:', {
+                            customer_id: customerId,
+                            error: error.message,
+                            hint: 'Data is stale - check mv_action_scores unique index exists in Supabase',
+                        });
+                    }
+                } else {
+                    console.warn('[log-outcome] MV refresh_action_scores threw:', (actionScoresRefresh.reason as Error)?.message ?? String(actionScoresRefresh.reason));
                 }
             } catch (err: any) {
                 console.warn('[log-outcome] MV refresh threw:', err.message);

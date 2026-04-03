@@ -195,16 +195,36 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         'latency-spike',
     ];
 
+    const criticalTaskFailures: string[] = [];
+
     results.forEach((result, index) => {
         if (result.status === 'rejected') {
             const taskName = taskNames[index];
+            const errorMessage = (result.reason as Error)?.message ?? String(result.reason);
+
             console.error(`[orchestrator:${taskName}] failed`, {
-                error: (result.reason as Error)?.message,
+                error: errorMessage,
                 outcomeId: params.outcomeId,
                 agentId: params.agentId,
             });
+
+            if (taskName === 'trust-update' || taskName === 'counterfactuals') {
+                criticalTaskFailures.push(
+                    `${taskName} failed for outcome_id=${params.outcomeId} agent_id=${params.agentId}: ${errorMessage}`
+                );
+            }
         }
     });
+
+    if (criticalTaskFailures.length > 0) {
+        void Promise.resolve(supabase.from('degradation_alert_events').insert({
+            customer_id: params.customerId,
+            agent_id: params.agentId,
+            alert_type: 'orchestrator_failure',
+            severity: 'critical',
+            message: criticalTaskFailures.join(' | '),
+        })).catch(() => { });
+    }
 
     // Non-blocking: upsert live trust score so dashboard health card
     // shows real data immediately (not 0 while waiting for backprop engine)
