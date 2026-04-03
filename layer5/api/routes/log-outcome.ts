@@ -429,7 +429,13 @@ async function insertCoreOutcome(
         .select('outcome_id, timestamp')
         .single();
 
-    if (insertErr || !outcome) throw new Error(`INSERT_ERROR:${insertErr?.message}`);
+    if (insertErr || !outcome) {
+        const message = insertErr?.message ?? 'Unknown insert error';
+        const migrationHint = /column .* does not exist/i.test(message)
+            ? ' Run migration layer5/supabase/migrations/075_fix_log_outcome_500.sql to add missing fact_outcomes columns.'
+            : '';
+        throw new Error(`INSERT_ERROR:${message}${migrationHint}`);
+    }
     return outcome;
 }
 

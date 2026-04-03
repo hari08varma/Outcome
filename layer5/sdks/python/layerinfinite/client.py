@@ -389,7 +389,8 @@ class Layerinfinite:
             raise LayerinfiniteError(f"All actions failed for task '{task}'.")
 
         raise LayerinfiniteError(
-            f"All actions failed for task '{task}'. Last error: {last_error}"
+            f"All actions failed for task '{task}'. "
+            f"Last error: {type(last_error).__name__}: {last_error}"
         ) from last_error
 
     def suggest(self, task: str) -> Suggestion:
@@ -423,11 +424,15 @@ class Layerinfinite:
 
         try:
             scores_resp = self._fetch_scores(task)
+        except LayerinfiniteAuthError:
+            raise
         except Exception as exc:
-            raise LayerinfiniteError(
-                f"Cannot reach scoring engine: {exc}. "
-                "Check your network connection and API key."
-            ) from exc
+            logger.warning(
+                "[layerinfinite] suggest() could not reach scoring engine: %s. "
+                "Returning cold-start suggestion (first registered action).",
+                exc,
+            )
+            scores_resp = None
 
         if not scores_resp or not scores_resp.top_action:
             first_action = next(iter(task_actions))
