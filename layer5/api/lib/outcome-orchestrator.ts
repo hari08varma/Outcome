@@ -43,6 +43,7 @@ export interface OrchestratorParams {
     responseMs?: number | null;
     episodeId?: string;
     businessOutcome?: string;
+    errorCode?: string | null;
     decisionId?: string;
     decisionRecord?: any;
     signalConfidence?: number | null;
@@ -69,6 +70,8 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
             action_name: params.actionName,
             success: params.finalSuccess,
             outcome_score: params.finalOutcomeScore,
+            business_outcome: params.businessOutcome ?? null,
+            error_code: params.errorCode ?? null,
         });
     }
 
@@ -636,12 +639,19 @@ async function detectSilentFailure(
         action_name: string;
         success: boolean;
         outcome_score: number | null;
+        business_outcome: string | null;
+        error_code: string | null;
     }
 ): Promise<void> {
     const isSilentFailure =
-        outcome.success === true &&
-        outcome.outcome_score !== null &&
-        outcome.outcome_score < 0.3;
+        outcome.success === true && (
+            // Explicit score signal: low score despite success flag
+            (outcome.outcome_score !== null && outcome.outcome_score < 0.3) ||
+            // Implicit signal: business outcome contradicts success flag
+            (outcome.business_outcome === 'partial' || outcome.business_outcome === 'failed') ||
+            // Implicit signal: error code present despite success=true
+            (outcome.error_code != null && outcome.error_code.trim() !== '')
+        );
 
     if (!isSilentFailure) return;
 

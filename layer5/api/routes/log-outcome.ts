@@ -656,6 +656,7 @@ logOutcomeRouter.post('/', async (c) => {
             agentId, customerId, outcomeId: outcome.outcome_id, actionId, actionName: body.action_name ?? 'unknown',
             contextId, issueType: body.issue_type, finalSuccess, finalOutcomeScore,
             responseMs: body.response_time_ms ?? null, episodeId: body.episode_id,
+            errorCode: body.error_code ?? null,
             businessOutcome: body.business_outcome, decisionId: body.decision_id, decisionRecord,
             signalConfidence: body.causal_confidence ?? null,
         }).catch(err => console.error('[log-outcome] orchestrator failed:', { error: err.message, outcomeId: outcome.outcome_id }));

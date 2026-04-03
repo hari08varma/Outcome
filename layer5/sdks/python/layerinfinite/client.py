@@ -434,7 +434,9 @@ class Layerinfinite:
             )
             scores_resp = None
 
-        if not scores_resp or not scores_resp.top_action:
+        ranked_actions = scores_resp.ranked_actions if scores_resp else []
+
+        if not scores_resp or not scores_resp.top_action or not ranked_actions:
             first_action = next(iter(task_actions))
             suggestion = Suggestion(
                 action_name=first_action,

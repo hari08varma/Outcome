@@ -172,6 +172,7 @@ getScoresRouter.get('/', async (c) => {
                 return c.json({
                     ranked_actions: [],
                     top_action: null,
+                    suggested_action: null,
                     cold_start: true,
                     context_id: '',
                     agent_id: agentId ?? '',
