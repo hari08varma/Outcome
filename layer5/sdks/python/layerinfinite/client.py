@@ -34,7 +34,7 @@ from .models import (
 logger = logging.getLogger("layerinfinite")
 
 _VALID_MODES = ("recommend", "assist", "auto")
-_SDK_VERSION = "0.3.0"
+_SDK_VERSION = "0.3.1"
 _DEFAULT_BASE_URL = "https://api.layerinfinite.app"
 
 
@@ -616,6 +616,8 @@ class Layerinfinite:
         If log_async=True (default): fire in background daemon thread.
         If log_async=False: send synchronously.
         NEVER raises to the caller — logs warnings only.
+
+        Note: The backend expects 'response_ms' (SDK alias for response_time_ms).
         """
         payload: Dict[str, Any] = {
             "agent_id": self._agent_id,
@@ -623,7 +625,7 @@ class Layerinfinite:
             "issue_type": task,
             "success": success,
             "session_id": session_id,
-            "latency_ms": latency_ms,
+            "response_ms": latency_ms,  # backend alias: response_ms → response_time_ms
         }
         if outcome_score is not None:
             payload["outcome_score"] = outcome_score
