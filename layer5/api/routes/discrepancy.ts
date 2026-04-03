@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { authMiddleware, devAuthMiddleware } from '../middleware/auth.js';
-import { rateLimitMiddleware } from '../middleware/rate-limit.js';
 import { supabase } from '../lib/supabase.js';
 
 type PendingRegistration = {
@@ -36,7 +35,7 @@ const primaryAuth = process.env.NODE_ENV === 'production'
     ? authMiddleware
     : devAuthMiddleware;
 
-discrepancyRoute.use('*', primaryAuth, rateLimitMiddleware());
+discrepancyRoute.use('*', primaryAuth);
 
 async function hasUnresolvedDiscrepancy(
     customerId: string,

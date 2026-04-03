@@ -3,7 +3,8 @@
 // See: https://github.com/hari08varma/Outcome/issues/[issue number]
 // Add end-to-end test once fixed.
 
-import { describe, expect, it } from 'vitest';
+import crypto from 'node:crypto';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 
 vi.mock('../lib/supabase.js', () => ({
@@ -14,6 +15,9 @@ vi.mock('../lib/supabase.js', () => ({
 
 import {
     computeCompositeScore,
+    getCachedScore,
+    getScores,
+    invalidateCache,
     PRIOR_ALPHA,
     PRIOR_BETA,
     W_SUCCESS,
@@ -24,8 +28,9 @@ import {
     MIN_CONFIDENCE,
 } from '../lib/scoring.js';
 import type { ActionScore } from '../lib/supabase.js';
+import { supabase } from '../lib/supabase.js';
 
-type TestActionScore = ActionScore & {
+type TestActionScore = Omit<ActionScore, 'weighted_success_rate' | 'raw_success_rate' | 'avg_salience_score' | 'last_outcome_at'> & {
     weighted_success_rate: number | null;
     raw_success_rate: number | null;
     avg_salience_score: number | null;
@@ -173,5 +178,71 @@ describe('computeCompositeScore', () => {
         const stale = computeCompositeScore(makeRow({ last_outcome_at: sixDaysAgo }) as ActionScore);
 
         expect(recent).toBeGreaterThan(stale);
+    });
+});
+
+describe('score cache smoke tests', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        invalidateCache();
+    });
+
+    it('getCachedScore returns null on cold cache', () => {
+        const score = getCachedScore(
+            crypto.randomUUID(),
+            crypto.randomUUID(),
+            crypto.randomUUID()
+        );
+
+        expect(score).toBeNull();
+    });
+
+    it('invalidateCache clears the entry', async () => {
+        const customerId = 'cust-cache';
+        const contextId = 'ctx-cache';
+        const actionId = 'action-cache';
+
+        const mvChain: any = {};
+        mvChain.select = vi.fn().mockReturnValue(mvChain);
+        mvChain.eq = vi.fn().mockReturnValue(mvChain);
+        mvChain.order = vi.fn().mockResolvedValue({
+            data: [
+                {
+                    action_id: actionId,
+                    context_id: contextId,
+                    customer_id: customerId,
+                    action_name: 'cacheable_action',
+                    action_category: 'test',
+                    raw_success_rate: 0.8,
+                    weighted_success_rate: 0.8,
+                    confidence: 0.9,
+                    total_attempts: 25,
+                    total_successes: 20,
+                    total_failures: 5,
+                    trend_delta: 0,
+                    business_hours_rate: null,
+                    after_hours_rate: null,
+                    last_outcome_at: new Date().toISOString(),
+                    view_refreshed_at: new Date().toISOString(),
+                    avg_salience_score: 1.0,
+                },
+            ],
+            error: null,
+        });
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'mv_action_scores') return mvChain;
+            throw new Error(`Unexpected table in cache test: ${table}`);
+        });
+
+        await getScores(customerId, contextId, 'incident_resolution', true);
+
+        const cachedBeforeInvalidate = getCachedScore(actionId, contextId, customerId);
+        expect(cachedBeforeInvalidate).not.toBeNull();
+
+        invalidateCache(customerId, contextId);
+
+        const cachedAfterInvalidate = getCachedScore(actionId, contextId, customerId);
+        expect(cachedAfterInvalidate).toBeNull();
     });
 });

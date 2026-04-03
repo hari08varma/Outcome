@@ -204,7 +204,7 @@ function computeSalience(
 
 // ── LOGICAL CONCERNS ─────────────────────────────────────────
 
-async function parseAndSanitizeRequest(c: Context) {
+export async function parseAndSanitizeRequest(c: Context) {
     let body: z.infer<typeof LogOutcomeBody>;
     try {
         const raw = c.get('parsed_body') ?? await c.req.json();
@@ -717,6 +717,11 @@ logOutcomeRouter.post('/', async (c) => {
                     ? 'Pass outcome_score (0.0-1.0) for richer signal. ' +
                     'Example: partial_success=0.6, full_success=1.0, failure=0.0'
                     : null,
+                silent_failure_explanation: finalSuccess === false && (finalOutcomeScore === null || finalOutcomeScore < 0.3)
+                    ? 'This outcome was logged as a silent failure - the agent reported a result but did not resolve the issue. Silent failures are scored separately and used to detect patterns. See Dashboard -> Alerts -> Silent Failures for aggregated data.'
+                    : null,
+                dashboard_lag_notice:
+                    'Dashboard charts update within 500ms of this log. If data appears missing, wait 1-2 seconds and refresh.',
                 next_milestone: (body as any)._resolved_task_name
                     ? `Keep logging for task "${(body as any)._resolved_task_name}" ` +
                     `to improve recommendation confidence.`

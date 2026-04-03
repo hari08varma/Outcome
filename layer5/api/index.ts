@@ -439,7 +439,6 @@ const primaryAuth = process.env.NODE_ENV === 'production'
 
 const authRoutes = new Hono();
 authRoutes.use('*', userAuthMiddleware);
-authRoutes.use('*', rateLimitMiddleware());
 authRoutes.route('/api-keys', apiKeysRouter);
 authRoutes.route('/keys', apiKeysRouter);
 v1.route('/auth', authRoutes);
@@ -456,29 +455,31 @@ v1.route('/admin/trigger-training', triggerTrainingRoute);
 v1.route('/admin/restore-trust-snapshot', restoreTrustSnapshotRouter);
 v1.route('/admin/embedding-drift', embeddingDriftRouter);
 
-v1.use('/log-outcome', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
-v1.use('/log-outcome/*', primaryAuth, rateLimitMiddleware(), validateActionMiddleware);
-v1.use('/outcome-feedback', primaryAuth, rateLimitMiddleware());
-v1.use('/outcome-feedback/*', primaryAuth, rateLimitMiddleware());
-v1.use('/get-scores', primaryAuth, rateLimitMiddleware());
-v1.use('/get-scores/*', primaryAuth, rateLimitMiddleware());
-v1.use('/recommendations', primaryAuth, rateLimitMiddleware());
-v1.use('/recommendations/*', primaryAuth, rateLimitMiddleware());
-v1.use('/observe', primaryAuth, rateLimitMiddleware());
-v1.use('/observe/*', primaryAuth, rateLimitMiddleware());
-v1.use('/get-patterns', primaryAuth, rateLimitMiddleware());
-v1.use('/get-patterns/*', primaryAuth, rateLimitMiddleware());
-v1.use('/audit', primaryAuth, rateLimitMiddleware());
-v1.use('/audit/*', primaryAuth, rateLimitMiddleware());
-v1.use('/simulate', primaryAuth, rateLimitMiddleware());
-v1.use('/simulate/*', primaryAuth, rateLimitMiddleware());
-v1.use('/contracts', primaryAuth, rateLimitMiddleware());
-v1.use('/contracts/*', primaryAuth, rateLimitMiddleware());
-v1.use('/discrepancies', primaryAuth, rateLimitMiddleware());
-v1.use('/discrepancies/*', primaryAuth, rateLimitMiddleware());
-v1.use('/pending-signals', primaryAuth, rateLimitMiddleware());
-v1.use('/pending-signals/*', primaryAuth, rateLimitMiddleware());
-v1.use('/webhook/*', primaryAuth, rateLimitMiddleware());
+v1.use('/outcome-feedback', primaryAuth);
+v1.use('/outcome-feedback/*', primaryAuth);
+v1.use('/recommendations', primaryAuth);
+v1.use('/recommendations/*', primaryAuth);
+v1.use('/observe', primaryAuth);
+v1.use('/observe/*', primaryAuth);
+v1.use('/get-patterns', primaryAuth);
+v1.use('/get-patterns/*', primaryAuth);
+v1.use('/audit', primaryAuth);
+v1.use('/audit/*', primaryAuth);
+v1.use('/simulate', primaryAuth);
+v1.use('/simulate/*', primaryAuth);
+v1.use('/contracts', primaryAuth);
+v1.use('/contracts/*', primaryAuth);
+v1.use('/discrepancies', primaryAuth);
+v1.use('/discrepancies/*', primaryAuth);
+v1.use('/pending-signals', primaryAuth);
+v1.use('/pending-signals/*', primaryAuth);
+v1.use('/webhook/*', primaryAuth);
+
+// Apply route-specific rate limiting only after auth has set customer_id.
+app.use('/v1/log-outcome', primaryAuth, rateLimitMiddleware, validateActionMiddleware);
+app.use('/v1/log-outcome/*', primaryAuth, rateLimitMiddleware, validateActionMiddleware);
+app.use('/v1/get-scores', primaryAuth, rateLimitMiddleware);
+app.use('/v1/get-scores/*', primaryAuth, rateLimitMiddleware);
 
 v1.route('/log-outcome', logOutcomeRouter);
 v1.route('/outcome-feedback', outcomeFeedbackRouter);
@@ -529,5 +530,5 @@ serve({
     console.log(`   Dev bypass: ${process.env.LAYERINFINITE_DEV_BYPASS === 'true' ? '⚠️  ACTIVE' : 'disabled'}`);
     console.log(`   Endpoints:  POST /v1/log-outcome | GET /v1/get-scores | GET /v1/get-patterns | GET /v1/audit`);
     console.log(`   Admin:      POST /v1/admin/register-action | GET /v1/admin/actions | POST /v1/admin/reinstate-agent`);
-    console.log(`   Rate limit: Tiered (1K/2K/5K per min by customer tier)\n`);
+    console.log(`   Rate limit: 300/min per customer on log-outcome/get-scores\n`);
 });

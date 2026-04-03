@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { authMiddleware, devAuthMiddleware } from '../middleware/auth.js';
-import { rateLimitMiddleware } from '../middleware/rate-limit.js';
 import { supabase } from '../lib/supabase.js';
 
 const contractsRoute = new Hono();
@@ -10,7 +9,7 @@ const primaryAuth = process.env.NODE_ENV === 'production'
     ? authMiddleware
     : devAuthMiddleware;
 
-contractsRoute.use('*', primaryAuth, rateLimitMiddleware());
+contractsRoute.use('*', primaryAuth);
 
 const ContractBody = z.object({
     action_name: z.string().min(1),
