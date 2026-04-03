@@ -2,6 +2,14 @@
 
 All notable changes to the Python SDK are documented here.
 
+## [0.3.2] — 2026-04-03
+
+### Fixed
+- `_log_outcome()` posts `response_ms` (backend-compatible alias) to `/v1/log-outcome`, avoiding 5xx retries caused by legacy `latency_ms` payloads
+
+### Changed
+- SDK package/version metadata bumped to `0.3.2`
+
 ## [0.3.1] — 2026-04-02
 
 ### Fixed

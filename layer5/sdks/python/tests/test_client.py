@@ -232,3 +232,31 @@ def test_action_wrapper_skips_score_fn_for_async_result(monkeypatch, caplog):
     assert logged['success'] is True
     assert logged['outcome_score'] is None
     assert "is async - score callback skipped" in caplog.text
+
+
+def test_action_wrapper_logs_response_ms_payload(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        auto_register=False,
+        log_async=False,
+    )
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    @client.action('billing_dispute', score_fn=lambda result: 0.75)
+    def resolve_incident(*, incident):
+        return {'ok': True, 'incident': incident}
+
+    resolve_incident(incident={'id': 'INC-TEST'})
+
+    assert 'response_ms' in captured_payload
+    assert isinstance(captured_payload['response_ms'], int)
+    assert 'latency_ms' not in captured_payload

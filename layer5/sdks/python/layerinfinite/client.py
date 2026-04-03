@@ -486,8 +486,20 @@ class Layerinfinite:
         import urllib.parse
 
         encoded = urllib.parse.quote(task)
-        resp = self._request("GET", f"/v1/recommendations?task={encoded}")
-        data = resp.json()
+        try:
+            resp = self._request(
+                "GET",
+                f"/v1/recommendations?task={encoded}",
+                retry_server_errors=False,
+            )
+            data = resp.json()
+        except LayerinfiniteServerError as exc:
+            logger.warning(
+                "[layerinfinite] recommend() backend unavailable: %s. "
+                "Returning no_data recommendation.",
+                exc,
+            )
+            data = {}
 
         rec = Recommendation(
             task=task,
@@ -546,9 +558,28 @@ class Layerinfinite:
         import urllib.parse
 
         encoded = urllib.parse.quote(task)
-        resp = self._request("GET", f"/v1/observe?task={encoded}")
-
-        data = resp.json()
+        try:
+            resp = self._request(
+                "GET",
+                f"/v1/observe?task={encoded}",
+                retry_server_errors=False,
+            )
+            data = resp.json()
+        except LayerinfiniteServerError as exc:
+            logger.warning(
+                "[layerinfinite] observe() backend unavailable: %s. "
+                "Returning cold-start observation.",
+                exc,
+            )
+            data = {
+                "task": task,
+                "total_runs": 0,
+                "success_rate": 0.0,
+                "actions_seen": [],
+                "best_performing": None,
+                "worst_performing": None,
+                "last_run": None,
+            }
 
         obs = ObservationSummary(
             task=data["task"],
@@ -804,11 +835,18 @@ class Layerinfinite:
             for action in scores_resp.ranked_actions
         ]
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        retry_server_errors: bool = True,
+        **kwargs: Any,
+    ) -> httpx.Response:
         """
         HTTP request with retry logic.
         - 429: wait Retry-After header seconds, retry up to max_retries
-        - 5xx: exponential backoff (1s, 2s, 4s), retry up to max_retries
+                - 5xx: exponential backoff (1s, 2s, 4s), retry up to max_retries
+                    unless retry_server_errors=False
         - Timeout: retry up to max_retries
         - Network error: retry up to max_retries
         - 401, 404, other 4xx: raise immediately (no retry)
@@ -831,7 +869,11 @@ class Layerinfinite:
                     time.sleep(retry_after)
                     continue
 
-                if resp.status_code >= 500 and attempt < self._max_retries:
+                if (
+                    retry_server_errors
+                    and resp.status_code >= 500
+                    and attempt < self._max_retries
+                ):
                     wait = 2**attempt
                     logger.warning(
                         "[layerinfinite] Server error %d. Backing off %ds (attempt %d/%d).",

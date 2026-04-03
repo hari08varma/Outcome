@@ -1,4 +1,5 @@
 import { supabase } from '../supabase.js';
+import { fetchTaskActionPerformance } from './task-performance.js';
 
 export const MIN_SAMPLES = 10;
 export const MIN_SAMPLES_STABLE = 20;
@@ -226,57 +227,26 @@ export async function getRecommendation(
             Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000
         ).toISOString();
 
-        let query = supabase
-            .from('mv_task_action_performance')
-            .select(
-                'action_id, action_name, total_count, success_count, ' +
-                'success_rate, ml_score, last_seen_at'
-            )
-            .eq('customer_id', customerId)
-            .eq('task_name', taskName)
-            // ISSUE 10: environment filter is disabled until a DB migration adds
-            // the 'environment' column to mv_task_action_performance's SELECT + GROUP BY.
-            // mv_task_action_performance currently aggregates ALL environments together
-            // and has no environment column — filtering on it returns zero rows.
-            // Re-enable this ONLY after the migration is confirmed in Supabase.
-            // .eq('environment', 'production')
-            // Dormant-action suppression filter (not a rolling outcome window).
-            .gte('last_seen_at', windowStart);
+        const { rows } = await fetchTaskActionPerformance({
+            customerId,
+            taskName,
+            agentId: agentId ?? null,
+            windowStart,
+        });
 
-        if (agentId) {
-            // Agent-scoped: only show outcomes for this specific agent
-            query = query.eq('agent_id', agentId);
-        } else {
-            // Customer-blended (All Agents): exclude zero-UUID sentinel rows
-            // (outcomes logged without an agent_id — stored as 00000000-... by migration 076)
-            query = query.neq('agent_id', '00000000-0000-0000-0000-000000000000');
-        }
-
-        const { data, error } = await query;
-
-        if (error) {
-            console.error(
-                '[engine] DB error fetching task actions:',
-                error.message
-            );
-            return makeResult('no_data', []);
-        }
-
-        const rows = (data ?? []) as unknown as Record<string, unknown>[];
         const actions: ActionPerformance[] = rows.map((row) => {
-            const mlScoreRaw = row['ml_score'];
+            const mlScoreRaw = row.ml_score;
             return {
-                action_id: String(row['action_id']),
-                action_name: String(row['action_name']),
-                total_count: Number(row['total_count']),
-                success_count: Number(row['success_count']),
-                success_rate: Number(row['success_rate']),
+                action_id: String(row.action_id),
+                action_name: String(row.action_name),
+                total_count: Number(row.total_count),
+                success_count: Number(row.success_count),
+                success_rate: Number(row.success_rate),
                 ml_score: mlScoreRaw !== null
                     && mlScoreRaw !== undefined
-                    && mlScoreRaw !== 'null'
                     ? Number(mlScoreRaw)
                     : null,
-                last_seen_at: String(row['last_seen_at'] ?? ''),
+                last_seen_at: String(row.last_seen_at ?? ''),
             };
         });
 

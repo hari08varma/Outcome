@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { getRecommendation } from '../lib/recommendation/engine.js';
 import { buildActionableOutput } from '../lib/recommendation/reason.js';
-import { supabase } from '../lib/supabase.js';
+import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
 
 export const getRecommendationsRouter = new Hono();
 
 // GET /tasks — returns distinct task_names available for a customer (+ optional agent scope)
+// Uses mv_task_action_performance with automatic fallback to fact_outcomes.
 // Must be registered before '/' so Hono matches it first
 getRecommendationsRouter.get('/tasks', async (c) => {
     const customerId = c.get('customer_id') as string | undefined;
@@ -15,25 +16,11 @@ getRecommendationsRouter.get('/tasks', async (c) => {
     const scopedAgentId = c.req.query('agent_id')?.trim() || null;
 
     try {
-        let query = supabase
-            .from('mv_task_action_performance')
-            .select('task_name')
-            .eq('customer_id', customerId)
-            .neq('agent_id', '00000000-0000-0000-0000-000000000000');
-
-        if (scopedAgentId) {
-            query = query.eq('agent_id', scopedAgentId);
-        }
-
-        const { data, error } = await query;
-        if (error) return c.json({ tasks: [] }, 200);
-
-        const tasks = [
-            ...new Set((data ?? []).map((r: any) => r.task_name as string)),
-        ].sort();
+        const { tasks } = await fetchAvailableTasks(customerId, scopedAgentId);
 
         return c.json({ tasks }, 200);
-    } catch {
+    } catch (err: any) {
+        console.warn('[get-recommendations/tasks] fallback query failed:', err.message);
         return c.json({ tasks: [] }, 200);
     }
 });

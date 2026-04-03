@@ -5,8 +5,10 @@
  *
  * Returns per-task outcome statistics for li.observe() in the SDK.
  *
- * Queries mv_task_action_performance which is populated by every
- * POST /v1/log-outcome call via the validateActionMiddleware pipeline.
+ * Uses mv_task_action_performance as the primary source (populated by
+ * POST /v1/log-outcome via the validateActionMiddleware pipeline).
+ * If that MV is unavailable, route falls back to aggregating
+ * fact_outcomes directly so clients do not receive transient 500s.
  *
  * Auth: X-API-Key via authMiddleware (agent key — same as get-scores).
  * Context: customer_id (set by authMiddleware, used for tenant scoping).
@@ -29,7 +31,7 @@
  */
 
 import { Hono } from 'hono';
-import { supabase } from '../lib/supabase.js';
+import { fetchTaskActionPerformance } from '../lib/recommendation/task-performance.js';
 
 export const observeRouter = new Hono();
 
@@ -64,9 +66,10 @@ observeRouter.get('/', async (c) => {
 
     const task = rawTask.trim();
 
-    // ── Query mv_task_action_performance ─────────────────────
-    // Ordered DESC by success_rate so rows[0] is always best.
-    // Filter by both customer_id (tenant) and task_name (task).
+    // ── Query task performance store ──────────────────────────
+    // Primary source is mv_task_action_performance.
+    // Automatic fallback reads and aggregates fact_outcomes when the MV
+    // is missing or temporarily unavailable.
     let rows: Array<{
         action_name: string;
         total_count: number;
@@ -76,31 +79,21 @@ observeRouter.get('/', async (c) => {
     }>;
 
     try {
-        const { data, error } = await supabase
-            .from('mv_task_action_performance')
-            .select('action_name, total_count, success_count, success_rate, last_seen_at')
-            .eq('customer_id', customerId)
-            .eq('task_name', task)
-            .order('success_rate', { ascending: false });
+        const { rows: performanceRows } = await fetchTaskActionPerformance({
+            customerId,
+            taskName: task,
+            agentId: null,
+        });
 
-        if (error) {
-            console.error('[observe] Query failed:', {
-                customer_id: customerId,
-                task,
-                error_code: error.code,
-                error_message: error.message,
-            });
-            return c.json(
-                {
-                    error: 'Failed to fetch observation data',
-                    code: 'DB_ERROR',
-                    details: error.message,
-                },
-                500
-            );
-        }
-
-        rows = data ?? [];
+        rows = performanceRows
+            .map((row) => ({
+                action_name: row.action_name,
+                total_count: row.total_count,
+                success_count: row.success_count,
+                success_rate: row.success_rate,
+                last_seen_at: row.last_seen_at,
+            }))
+            .sort((a, b) => b.success_rate - a.success_rate);
     } catch (err: any) {
         console.error('[observe] Unexpected error:', err.message);
         return c.json(
