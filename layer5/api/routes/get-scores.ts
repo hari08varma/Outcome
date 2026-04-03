@@ -84,7 +84,7 @@ getScoresRouter.get('/', async (c) => {
     // ── Query params ──────────────────────────────────────────
     const issueType = c.req.query('issue_type');
     const contextId = c.req.query('context_id');
-    const forceRefresh = c.req.query('refresh') === 'true';
+    const forceRefresh = c.req.query('force_refresh') === 'true' || c.req.query('refresh') === 'true';
     const _topNRaw = parseInt(c.req.query('top_n') ?? '10', 10);
     const topN = Number.isFinite(_topNRaw) && _topNRaw > 0
         ? Math.min(_topNRaw, 50)
@@ -201,6 +201,35 @@ getScoresRouter.get('/', async (c) => {
 
         // Trim to top_n
         let ranked = result.ranked_actions.slice(0, Math.min(topN, 50));
+        let topActionForResponse: ScoredAction | null = result.top_action ?? null;
+        let forcedColdStartExplore = false;
+
+        // Cold-start guard: if fallback actions are entirely unknown to this customer,
+        // suppress them so SDK clients enter their deterministic local cold-start path.
+        if (result.cold_start && ranked.length > 0) {
+            const { data: registeredActions, error: actionsError } = await supabase
+                .from('dim_actions')
+                .select('action_name')
+                .eq('customer_id', customerId)
+                .eq('is_active', true);
+
+            if (actionsError) {
+                console.warn('[get-scores] dim_actions lookup failed:', actionsError.message);
+            } else {
+                const registeredSet = new Set(
+                    (registeredActions ?? []).map((row: any) => String(row.action_name))
+                );
+                const hasCustomerActionMatch = ranked.some((action) =>
+                    registeredSet.has(action.action_name)
+                );
+
+                if (!hasCustomerActionMatch) {
+                    ranked = [];
+                    topActionForResponse = null;
+                    forcedColdStartExplore = true;
+                }
+            }
+        }
 
         // ── Deprioritize already-tried actions (CHANGE 4) ────
         if (episodeHistory && episodeHistory.length > 0) {
@@ -327,7 +356,7 @@ getScoresRouter.get('/', async (c) => {
 
         return c.json({
             ranked_actions: ranked,
-            top_action: result.top_action,
+            top_action: topActionForResponse,
             should_escalate: result.should_escalate,
             cold_start: result.cold_start,
             context_id: resolvedContextId,
@@ -350,8 +379,10 @@ getScoresRouter.get('/', async (c) => {
                 stale_threshold_minutes: STALE_THRESHOLD_MINUTES,
             },
             served_from_cache: result.served_from_cache,
-            policy: policy.policy,
-            policy_reason: policy.reason,
+            policy: forcedColdStartExplore ? 'explore' : policy.policy,
+            policy_reason: forcedColdStartExplore
+                ? 'cold_start_unregistered_global_fallback'
+                : policy.reason,
             agent_trust: {
                 score: agentTrust.trust_score,
                 status: agentTrust.trust_status,

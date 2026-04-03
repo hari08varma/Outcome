@@ -751,7 +751,8 @@ logOutcomeRouter.post('/', async (c) => {
     }
 });
 
-const _refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const _taskPerfRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const _actionScoresRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // Debounce duration: controlled by env var.
 // Default 15s for production (safe under load), 2s for development.
@@ -759,69 +760,84 @@ const REFRESH_DEBOUNCE_MS = process.env.NODE_ENV === 'production'
     ? Number(process.env.MV_REFRESH_DEBOUNCE_MS ?? 15_000)
     : 2_000;
 
+const ACTION_SCORES_DEBOUNCE_MS = Number(process.env.ACTION_SCORES_DEBOUNCE_MS ?? 500);
+
 /**
- * Debounced materialized view refresh for mv_task_action_performance.
+ * Debounced materialized view refresh coordinator.
+ *
+ * - mv_action_scores refresh: fast debounce (default 500ms) for SDK decision freshness.
+ * - mv_task_action_performance refresh: slower debounce (default 15s in production)
+ *   for dashboard/task aggregation workloads.
  *
  * ⚠️  NEVER AWAIT THIS FUNCTION.
- * The returned Promise resolves only when the debounce timer fires
- * (REFRESH_DEBOUNCE_MS = 15s in production). Awaiting it will stall
- * the HTTP response for up to 15 seconds.
+ * The returned Promise resolves when both debounce timers fire. Awaiting can
+ * stall the HTTP response and must be avoided in request handlers.
  *
  * Always call as fire-and-forget:
  *   refreshTaskAggregation(customerId).catch(() => {});
  *
- * SIGTERM behaviour: timers in _refreshTimers are lost if the process
+ * SIGTERM behaviour: timers in _taskPerfRefreshTimers / _actionScoresRefreshTimers are lost if the process
  * exits during a debounce window. This is acceptable — mv_task_action_performance
  * is eventually consistent and will self-heal on the next outcome log.
  * decision-writer.ts has a SIGTERM flush for decisions (which are durable);
  * MV refreshes deliberately do not, since they are idempotent and cheap.
  */
-async function refreshTaskAggregation(customerId: string): Promise<void> {
-    const existing = _refreshTimers.get(customerId);
+async function refreshTaskPerformance(customerId: string): Promise<void> {
+    const existing = _taskPerfRefreshTimers.get(customerId);
     if (existing) clearTimeout(existing);
 
     return new Promise((resolve) => {
         const timer = setTimeout(async () => {
-            _refreshTimers.delete(customerId);
+            _taskPerfRefreshTimers.delete(customerId);
             try {
-                const [taskPerfRefresh, actionScoresRefresh] = await Promise.allSettled([
-                    supabase.rpc('refresh_task_action_performance'),
-                    supabase.rpc('refresh_action_scores'),
-                ]);
-
-                if (taskPerfRefresh.status === 'fulfilled') {
-                    const { error } = taskPerfRefresh.value;
-                    if (error) {
-                        // Log but never throw — refresh failure must not affect logging
-                        console.warn('[log-outcome] MV refresh RPC failed:', {
-                            customer_id: customerId,
-                            error: error.message,
-                            hint: 'Data is stale - check mv_tap_unique_idx exists in Supabase',
-                        });
-                    } else {
-                        console.info('[log-outcome] MV refresh OK', { customer_id: customerId });
-                    }
+                const { error } = await supabase.rpc('refresh_task_action_performance');
+                if (error) {
+                    // Log but never throw — refresh failure must not affect logging
+                    console.warn('[log-outcome] MV refresh RPC failed:', {
+                        customer_id: customerId,
+                        error: error.message,
+                        hint: 'Data is stale - check mv_tap_unique_idx exists in Supabase',
+                    });
                 } else {
-                    console.warn('[log-outcome] MV refresh threw:', (taskPerfRefresh.reason as Error)?.message ?? String(taskPerfRefresh.reason));
-                }
-
-                if (actionScoresRefresh.status === 'fulfilled') {
-                    const { error } = actionScoresRefresh.value;
-                    if (error) {
-                        console.warn('[log-outcome] MV refresh_action_scores RPC failed:', {
-                            customer_id: customerId,
-                            error: error.message,
-                            hint: 'Data is stale - check mv_action_scores unique index exists in Supabase',
-                        });
-                    }
-                } else {
-                    console.warn('[log-outcome] MV refresh_action_scores threw:', (actionScoresRefresh.reason as Error)?.message ?? String(actionScoresRefresh.reason));
+                    console.info('[log-outcome] MV refresh OK', { customer_id: customerId });
                 }
             } catch (err: any) {
                 console.warn('[log-outcome] MV refresh threw:', err.message);
             }
             resolve();
         }, REFRESH_DEBOUNCE_MS);
-        _refreshTimers.set(customerId, timer);
+        _taskPerfRefreshTimers.set(customerId, timer);
     });
+}
+
+async function refreshActionScores(customerId: string): Promise<void> {
+    const existing = _actionScoresRefreshTimers.get(customerId);
+    if (existing) clearTimeout(existing);
+
+    return new Promise((resolve) => {
+        const timer = setTimeout(async () => {
+            _actionScoresRefreshTimers.delete(customerId);
+            try {
+                const { error } = await supabase.rpc('refresh_action_scores');
+                if (error) {
+                    console.warn('[log-outcome] MV refresh_action_scores RPC failed:', {
+                        customer_id: customerId,
+                        error: error.message,
+                        hint: 'Data is stale - check mv_action_scores unique index exists in Supabase',
+                    });
+                }
+            } catch (err: any) {
+                console.warn('[log-outcome] MV refresh_action_scores threw:', err.message);
+            }
+            resolve();
+        }, ACTION_SCORES_DEBOUNCE_MS);
+        _actionScoresRefreshTimers.set(customerId, timer);
+    });
+}
+
+async function refreshTaskAggregation(customerId: string): Promise<void> {
+    await Promise.allSettled([
+        refreshTaskPerformance(customerId),
+        refreshActionScores(customerId),
+    ]);
 }

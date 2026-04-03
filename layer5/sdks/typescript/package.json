@@ -1,6 +1,6 @@
 {
     "name": "@layerinfinite/sdk",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "description": "Decision intelligence layer for AI agents. No LLMs. Just math.",
     "main": "dist/index.js",
     "module": "dist/index.mjs",

@@ -2,6 +2,11 @@
 
 All notable changes to the TypeScript SDK are documented here.
 
+## [0.3.2] — 2026-04-03
+
+### Fixed
+- fix: renamed latency_ms → response_ms in InternalLogPayload to match backend schema
+
 ## [0.3.1] — 2026-04-02
 
 ### Fixed

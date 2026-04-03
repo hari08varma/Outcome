@@ -29,7 +29,7 @@ const DEFAULT_BASE_URL = 'https://api.layerinfinite.app';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
-const SDK_VERSION = '0.3.1';
+const SDK_VERSION = '0.3.2';
 const VALID_MODES = ['recommend', 'assist', 'auto'] as const;
 const TRUST_STATUSES: readonly TrustStatus[] = ['trusted', 'probation', 'sandbox', 'suspended', 'new'];
 
@@ -49,7 +49,7 @@ interface InternalLogPayload {
     issue_type: string;
     success: boolean;
     session_id: string;
-    latency_ms: number;
+    response_ms: number;
     metadata?: { error: string };
 }
 
@@ -665,7 +665,7 @@ export class Layerinfinite {
             issue_type: params.task,
             success: params.success,
             session_id: params.sessionId,
-            latency_ms: params.latencyMs,
+            response_ms: params.latencyMs,
         };
         if (params.error) {
             payload.metadata = { error: params.error };
