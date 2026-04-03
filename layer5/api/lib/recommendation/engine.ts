@@ -251,7 +251,41 @@ export async function getRecommendation(
         });
 
         if (actions.length < 2) {
-            return makeResult('no_data', actions);
+            const solo = actions[0] ?? null;
+            const soloHasMinimumEvidence = !!solo && solo.total_count >= MIN_SAMPLES;
+
+            return {
+                ...makeResult(
+                    'no_data',
+                    actions,
+                    soloHasMinimumEvidence ? solo : null,
+                    null,
+                ),
+                min_sample_count: solo?.total_count ?? 0,
+                _qualification_context: {
+                    qualified_count: soloHasMinimumEvidence ? 1 : 0,
+                    unqualified_count: solo ? (soloHasMinimumEvidence ? 0 : 1) : 0,
+                    leading_action: solo
+                        ? {
+                            name: solo.action_name,
+                            total: solo.total_count,
+                            rate: solo.success_rate,
+                        }
+                        : null,
+                    actions_needing_more: solo && !soloHasMinimumEvidence
+                        ? [{
+                            action_name: solo.action_name,
+                            current: solo.total_count,
+                            needed: MIN_SAMPLES - solo.total_count,
+                        }]
+                        : [],
+                },
+                _silent_failure_warning: false,
+                registered_actions: registeredActions,
+                action_mismatch: soloHasMinimumEvidence && registeredActions.length > 0
+                    ? !registeredActions.includes(solo!.action_name)
+                    : false,
+            };
         }
 
         // QUALIFIED PAIR FIX: only compare actions with sufficient sample size.
