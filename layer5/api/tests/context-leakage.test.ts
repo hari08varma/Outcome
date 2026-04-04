@@ -24,11 +24,13 @@ type DimContextRow = {
     embedding_model: string;
     source_text: string;
     embedding_schema_version: number;
+    environment: string;
 };
 
 function makeDimContextsQuery(tenantRows: Map<string, DimContextRow[]>) {
     let customerIdFilter: string | null = null;
     let schemaVersionFilter: number | null = null;
+    let environmentFilter: string | null = null;
 
     const q: any = {};
     q.select = vi.fn(() => q);
@@ -36,14 +38,18 @@ function makeDimContextsQuery(tenantRows: Map<string, DimContextRow[]>) {
         eqSpy(column, value);
         if (column === 'customer_id') customerIdFilter = String(value);
         if (column === 'embedding_schema_version') schemaVersionFilter = Number(value);
+        if (column === 'environment') environmentFilter = String(value);
         return q;
     });
     q.not = vi.fn(() => q);
     q.then = (resolve: (value: any) => unknown, reject?: (reason: unknown) => unknown) => {
         const rows = customerIdFilter ? (tenantRows.get(customerIdFilter) ?? []) : [];
-        const filtered = schemaVersionFilter === null
+        const withSchema = schemaVersionFilter === null
             ? rows
             : rows.filter((r) => r.embedding_schema_version === schemaVersionFilter);
+        const filtered = environmentFilter === null
+            ? withSchema
+            : withSchema.filter((r) => r.environment === environmentFilter);
         return Promise.resolve({ data: filtered, error: null }).then(resolve, reject);
     };
     return q;
@@ -57,8 +63,8 @@ describe('findClosestContext tenant isolation', () => {
 
     it('returns context for the correct tenant', async () => {
         const tenantRows = new Map<string, DimContextRow[]>([
-            ['customer_A', [{ context_id: 'ctx-A', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2 }]],
-            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2 }]],
+            ['customer_A', [{ context_id: 'ctx-A', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' }]],
+            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' }]],
         ]);
 
         mockFrom.mockImplementation(() => makeDimContextsQuery(tenantRows));
@@ -71,7 +77,7 @@ describe('findClosestContext tenant isolation', () => {
 
     it('returns null when tenant has no matching context', async () => {
         const tenantRows = new Map<string, DimContextRow[]>([
-            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2 }]],
+            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' }]],
         ]);
 
         mockFrom.mockImplementation(() => makeDimContextsQuery(tenantRows));
@@ -83,7 +89,7 @@ describe('findClosestContext tenant isolation', () => {
 
     it('does not leak customer_B context to customer_A query', async () => {
         const tenantRows = new Map<string, DimContextRow[]>([
-            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2 }]],
+            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' }]],
         ]);
 
         mockFrom.mockImplementation(() => makeDimContextsQuery(tenantRows));
@@ -96,8 +102,8 @@ describe('findClosestContext tenant isolation', () => {
 
     it('same issue_type across two tenants returns correct ctx for each', async () => {
         const tenantRows = new Map<string, DimContextRow[]>([
-            ['customer_A', [{ context_id: 'ctx-A', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2 }]],
-            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2 }]],
+            ['customer_A', [{ context_id: 'ctx-A', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' }]],
+            ['customer_B', [{ context_id: 'ctx-B', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' }]],
         ]);
 
         mockFrom.mockImplementation(() => makeDimContextsQuery(tenantRows));
@@ -107,5 +113,39 @@ describe('findClosestContext tenant isolation', () => {
 
         expect(resultA?.context_id).toBe('ctx-A');
         expect(resultB?.context_id).toBe('ctx-B');
+    });
+
+    it('respects requested environment when finding closest context', async () => {
+        const tenantRows = new Map<string, DimContextRow[]>([
+            ['customer_A', [
+                { context_id: 'ctx-prod', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'production' },
+                { context_id: 'ctx-stage', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'staging' },
+            ]],
+        ]);
+
+        mockFrom.mockImplementation(() => makeDimContextsQuery(tenantRows));
+
+        const result = await findClosestContext([1, 0, 0], 'customer_A', {
+            environment: 'production',
+        });
+
+        expect(result?.context_id).toBe('ctx-prod');
+        expect(eqSpy).toHaveBeenCalledWith('environment', 'production');
+    });
+
+    it('returns null when only non-matching environment contexts exist', async () => {
+        const tenantRows = new Map<string, DimContextRow[]>([
+            ['customer_A', [
+                { context_id: 'ctx-stage', context_vector: '[1,0,0]', embedding_model: 'gte-small', source_text: 'billing', embedding_schema_version: 2, environment: 'staging' },
+            ]],
+        ]);
+
+        mockFrom.mockImplementation(() => makeDimContextsQuery(tenantRows));
+
+        const result = await findClosestContext([1, 0, 0], 'customer_A', {
+            environment: 'production',
+        });
+
+        expect(result).toBeNull();
     });
 });

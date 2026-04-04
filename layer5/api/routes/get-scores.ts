@@ -75,6 +75,24 @@ const STALE_THRESHOLD_MINUTES = 10;
 
 export const getScoresRouter = new Hono();
 
+function normalizeEnvironment(value: string | undefined): 'production' | 'staging' | 'development' {
+    const normalized = (value ?? 'production').trim().toLowerCase();
+    const aliases: Record<string, 'production' | 'staging' | 'development'> = {
+        prod: 'production',
+        production: 'production',
+        stage: 'staging',
+        stg: 'staging',
+        qa: 'staging',
+        test: 'staging',
+        uat: 'staging',
+        staging: 'staging',
+        dev: 'development',
+        develop: 'development',
+        development: 'development',
+    };
+    return aliases[normalized] ?? 'production';
+}
+
 // ── GET /v1/get-scores ────────────────────────────────────────
 getScoresRouter.get('/', async (c) => {
     const customerId = c.get('customer_id') as string;
@@ -85,6 +103,7 @@ getScoresRouter.get('/', async (c) => {
     const issueType = c.req.query('issue_type');
     const contextId = c.req.query('context_id');
     const forceRefresh = c.req.query('force_refresh') === 'true' || c.req.query('refresh') === 'true';
+    const requestedEnvironment = normalizeEnvironment(c.req.query('environment'));
     const _topNRaw = parseInt(c.req.query('top_n') ?? '10', 10);
     const topN = Number.isFinite(_topNRaw) && _topNRaw > 0
         ? Math.min(_topNRaw, 50)
@@ -138,6 +157,7 @@ getScoresRouter.get('/', async (c) => {
             .select('context_id')
             .eq('customer_id', customerId)
             .eq('issue_type', issueType)
+            .eq('environment', requestedEnvironment)
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
@@ -152,11 +172,13 @@ getScoresRouter.get('/', async (c) => {
         } else {
             // Step 2: Try embedding similarity (graceful fallback)
             try {
-                const contextText = buildContextText(issueType);
+                const contextText = buildContextText(issueType, undefined, requestedEnvironment);
                 const embedding = await generateEmbedding(contextText);
 
                 if (embedding) {
-                    const closest = await findClosestContext(embedding, customerId);
+                    const closest = await findClosestContext(embedding, customerId, {
+                        environment: requestedEnvironment,
+                    });
                     if (closest) {
                         resolvedContextId = closest.context_id;
                         contextMatch = closest.similarity;
@@ -363,6 +385,7 @@ getScoresRouter.get('/', async (c) => {
             agent_id: agentId ?? '',
             customer_id: customerId,
             issue_type: issueType ?? null,
+            environment: requestedEnvironment,
             context_match: contextMatch,
             context_warning: isUnknownContext ? {
                 type: 'context_drift',

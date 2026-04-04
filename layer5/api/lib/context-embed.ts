@@ -196,8 +196,13 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  */
 export async function findClosestContext(
     embedding: number[],
-    customerId: string
+    customerId: string,
+    options: { environment?: string | null } = {}
 ): Promise<{ context_id: string; similarity: number } | null> {
+    const environmentFilter = typeof options.environment === 'string'
+        ? options.environment.trim().toLowerCase()
+        : '';
+
     try {
         const { data, error } = await supabase.rpc('match_context_vector', {
             query_vector: embedding,
@@ -215,12 +220,35 @@ export async function findClosestContext(
                 'falling back to in-memory scan:',
                 error.message
             );
-            return await findClosestContextFallback(embedding, customerId);
+            return await findClosestContextFallback(
+                embedding,
+                customerId,
+                environmentFilter || undefined
+            );
         }
 
         if (!data || data.length === 0) return null;
 
         const best = data[0] as { context_id: string; similarity: number };
+
+        if (environmentFilter) {
+            const { data: matchedContext, error: contextError } = await supabase
+                .from('dim_contexts')
+                .select('environment')
+                .eq('customer_id', customerId)
+                .eq('context_id', best.context_id)
+                .maybeSingle();
+
+            if (contextError || !matchedContext) {
+                return await findClosestContextFallback(embedding, customerId, environmentFilter);
+            }
+
+            const matchedEnvironment = String((matchedContext as any).environment ?? '').trim().toLowerCase();
+            if (matchedEnvironment !== environmentFilter) {
+                return await findClosestContextFallback(embedding, customerId, environmentFilter);
+            }
+        }
+
         return best.similarity >= SIMILARITY_THRESHOLD ? best : null;
     } catch (err: any) {
         console.warn('[context-embed] findClosestContext error:', err.message);
@@ -233,14 +261,21 @@ export async function findClosestContext(
 // In production with pgvector RPC deployed, this path should not be hit.
 async function findClosestContextFallback(
     embedding: number[],
-    customerId: string
+    customerId: string,
+    environment?: string
 ): Promise<{ context_id: string; similarity: number } | null> {
-    const { data, error } = await supabase
+    let query = supabase
         .from('dim_contexts')
         .select('context_id, context_vector, embedding_model, source_text, embedding_schema_version')
         .eq('customer_id', customerId)
         .eq('embedding_schema_version', CURRENT_EMBEDDING_SCHEMA_VERSION)
         .not('context_vector', 'is', null);
+
+    if (environment) {
+        query = query.eq('environment', environment);
+    }
+
+    const { data, error } = await query;
 
     if (error || !data || data.length === 0) {
         return null;
