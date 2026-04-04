@@ -48,6 +48,7 @@ describe('context-embed RPC and fallback behavior', () => {
             p_model: 'gte-small',
             p_threshold: 0.6,
             p_limit: 1,
+            p_schema_version: 2,
         });
         expect(mockFrom).not.toHaveBeenCalled();
         expect(result).toEqual({ context_id: 'ctx-1', similarity: 0.93 });

@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Install shared layer5 dependencies
+        run: npm --prefix "layer5" ci
       - name: Install API dependencies
         run: npm --prefix "layer5/api" ci
       - name: Typecheck API
