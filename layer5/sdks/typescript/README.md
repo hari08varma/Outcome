@@ -110,9 +110,45 @@ try {
 | Option | Default | Description |
 |--------|---------|-------------|
 | `apiKey` | required | Your Layerinfinite API key |
-| `baseUrl` | `https://your-app.railway.app` | API base URL |
+| `baseUrl` | `https://api.layerinfinite.app` | Primary API base URL |
+| `baseUrls` | `[]` | Optional fallback API URLs used after network/timeout/5xx failures |
 | `timeout` | `10000` | Request timeout in ms |
-| `maxRetries` | `3` | Max retries on 429/5xx |
+| `maxRetries` | `3` | Max retries on 429/5xx/timeouts/network errors |
+
+You can also provide fallback endpoints with the `LAYERINFINITE_BASE_URLS` environment variable (comma-separated), for example:
+
+`LAYERINFINITE_BASE_URLS="https://api-backup-1.layerinfinite.app,https://api-backup-2.layerinfinite.app"`
+
+## Production Runbook (Railway/Vercel)
+
+Use this endpoint order in production:
+
+1. Primary: stable custom domain (example: `https://api.layerinfinite.app`)
+2. Fallback 1: Railway deployment URL
+3. Fallback 2: Vercel deployment URL
+
+Recommended client setup:
+
+```typescript
+const client = new LayerinfiniteClient({
+  apiKey: process.env.LAYERINFINITE_API_KEY!,
+  baseUrl: 'https://api.layerinfinite.app',
+  baseUrls: [
+    'https://layerinfinite-api-production.up.railway.app',
+    'https://layerinfinite-api.vercel.app',
+  ],
+  timeout: 10_000,
+  maxRetries: 3,
+});
+```
+
+Production checklist:
+
+- Keep all endpoints on the same backend version and schema.
+- Point all endpoints to the same production database/project.
+- Do not use preview URLs as fallbacks.
+- Keep `maxRetries` low (2-3) to reduce latency spikes.
+- Run a failover drill weekly by temporarily blocking the primary URL and confirming fallback succeeds.
 
 ## Links
 

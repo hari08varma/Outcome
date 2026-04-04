@@ -1,0 +1,49 @@
+name: Production Readiness Checks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  endpoint-and-drill-checks:
+    name: Endpoint parity and failover drill
+    runs-on: ubuntu-latest
+    env:
+      PRIMARY_API_URL: ${{ vars.PRIMARY_API_URL || secrets.PRIMARY_API_URL }}
+      FALLBACK_API_URLS: ${{ vars.FALLBACK_API_URLS || secrets.FALLBACK_API_URLS }}
+      ENDPOINT_CHECK_TIMEOUT_MS: ${{ vars.ENDPOINT_CHECK_TIMEOUT_MS || '12000' }}
+      ENDPOINT_CHECK_STRICT_STATUS: ${{ vars.ENDPOINT_CHECK_STRICT_STATUS || 'true' }}
+      DRILL_TIMEOUT_MS: ${{ vars.DRILL_TIMEOUT_MS || '10000' }}
+      DRILL_FORCE_PRIMARY_DOWN: ${{ vars.DRILL_FORCE_PRIMARY_DOWN || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate endpoint config
+        run: |
+          if [ -z "$PRIMARY_API_URL" ]; then
+            echo "Missing PRIMARY_API_URL (set as repository variable or secret)."
+            exit 1
+          fi
+          if [ -z "$FALLBACK_API_URLS" ]; then
+            echo "Missing FALLBACK_API_URLS (set as repository variable or secret)."
+            exit 1
+          fi
+
+      - name: Check endpoint independence
+        run: node layer5/scripts/check-endpoint-independence.js
+
+      - name: Check endpoint parity
+        run: node layer5/scripts/check-endpoint-parity.js
+
+      - name: Run failover drill
+        env:
+          DRILL_FALLBACK_URLS: ${{ env.FALLBACK_API_URLS }}
+          DRILL_PRIMARY_URL: ${{ env.PRIMARY_API_URL }}
+        run: node layer5/scripts/run-failover-drill.js

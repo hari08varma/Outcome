@@ -4,9 +4,15 @@ Run all SQL test cases against live Supabase to verify auth provisioning fixes.
 
 import httpx
 import json
+import os
 
-SUPABASE_PAT = "sbp_e0ca037f0444e4c3d1626541a2e731572c8e0e08"
-PROJECT_REF = "fakomwsewdxazaqawjuv"
+SUPABASE_PAT = os.getenv("SUPABASE_PAT", "")
+PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF", "fakomwsewdxazaqawjuv")
+
+if not SUPABASE_PAT:
+  raise SystemExit(
+    "Missing SUPABASE_PAT. Set SUPABASE_PAT in your environment before running this script."
+  )
 
 def run_sql(label: str, sql: str) -> tuple[bool, str]:
     print(f"\n{'='*62}")

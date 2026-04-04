@@ -1,0 +1,1227 @@
+{
+  "mode": "autonomous",
+  "agent_id": "96a1630d-dafd-4c13-8bce-6bccabc1af87",
+  "episode_id": "0a7d62bf-50e6-432a-8b76-e7b97e9f4879",
+  "num_runs": 20,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "cache_miss_spike",
+      "context": {
+        "repo": "dashboard",
+        "branch": "dev",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 374,
+        "timestamp": "2026-04-03T18:05:33.309399+00:00"
+      },
+      "recommended": null,
+      "chosen": "warm_cache_layer",
+      "success": true,
+      "confidence": 0.77,
+      "score": {
+        "correct_action": "warm_cache_layer",
+        "recommended_action": null,
+        "chosen_action": "warm_cache_layer",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 2,
+      "failure_type": "lint_failure",
+      "context": {
+        "repo": "worker",
+        "branch": "dev",
+        "runner": "ubuntu-22.04",
+        "attempt": 2,
+        "duration_s": 151,
+        "timestamp": "2026-04-03T18:05:39.956487+00:00"
+      },
+      "recommended": null,
+      "chosen": "auto_fix_lint",
+      "success": true,
+      "confidence": 0.935,
+      "score": {
+        "correct_action": "auto_fix_lint",
+        "recommended_action": null,
+        "chosen_action": "auto_fix_lint",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 3,
+      "failure_type": "env_var_missing",
+      "context": {
+        "repo": "sdk",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 353,
+        "timestamp": "2026-04-03T18:05:45.387727+00:00"
+      },
+      "recommended": null,
+      "chosen": "inject_env_from_vault",
+      "success": true,
+      "confidence": 0.906,
+      "score": {
+        "correct_action": "inject_env_from_vault",
+        "recommended_action": null,
+        "chosen_action": "inject_env_from_vault",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 4,
+      "failure_type": "cache_miss_spike",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 32,
+        "timestamp": "2026-04-03T18:05:51.680815+00:00"
+      },
+      "recommended": null,
+      "chosen": "warm_cache_layer",
+      "success": true,
+      "confidence": 0.834,
+      "score": {
+        "correct_action": "warm_cache_layer",
+        "recommended_action": null,
+        "chosen_action": "warm_cache_layer",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 5,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "sdk",
+        "branch": "feature/auth",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 353,
+        "timestamp": "2026-04-03T18:05:59.105258+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.877,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 6,
+      "failure_type": "lint_failure",
+      "context": {
+        "repo": "dashboard",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 390,
+        "timestamp": "2026-04-03T18:06:06.099984+00:00"
+      },
+      "recommended": null,
+      "chosen": "auto_fix_lint",
+      "success": true,
+      "confidence": 0.917,
+      "score": {
+        "correct_action": "auto_fix_lint",
+        "recommended_action": null,
+        "chosen_action": "auto_fix_lint",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 7,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "api-service",
+        "branch": "feature/auth",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 422,
+        "timestamp": "2026-04-03T18:06:11.291656+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.899,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 8,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "worker",
+        "branch": "dev",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 471,
+        "timestamp": "2026-04-03T18:06:16.720326+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.872,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 9,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 346,
+        "timestamp": "2026-04-03T18:06:22.759072+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.979,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 10,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "api-service",
+        "branch": "feature/auth",
+        "runner": "ubuntu-20.04",
+        "attempt": 3,
+        "duration_s": 293,
+        "timestamp": "2026-04-03T18:06:28.348545+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.926,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 11,
+      "failure_type": "test_suite_flaky",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 238,
+        "timestamp": "2026-04-03T18:06:33.725924+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_seed",
+      "success": true,
+      "confidence": 0.734,
+      "score": {
+        "correct_action": "retry_with_seed",
+        "recommended_action": null,
+        "chosen_action": "retry_with_seed",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 12,
+      "failure_type": "test_suite_flaky",
+      "context": {
+        "repo": "api-service",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 245,
+        "timestamp": "2026-04-03T18:06:38.560104+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_backoff",
+      "success": true,
+      "confidence": 0.388,
+      "score": {
+        "correct_action": "retry_with_seed",
+        "recommended_action": null,
+        "chosen_action": "retry_with_backoff",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 13,
+      "failure_type": "docker_build_timeout",
+      "context": {
+        "repo": "api-service",
+        "branch": "dev",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 357,
+        "timestamp": "2026-04-03T18:06:43.856692+00:00"
+      },
+      "recommended": null,
+      "chosen": "increase_docker_timeout",
+      "success": true,
+      "confidence": 0.961,
+      "score": {
+        "correct_action": "increase_docker_timeout",
+        "recommended_action": null,
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 14,
+      "failure_type": "docker_build_timeout",
+      "context": {
+        "repo": "sdk",
+        "branch": "feature/auth",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 232,
+        "timestamp": "2026-04-03T18:06:49.692252+00:00"
+      },
+      "recommended": null,
+      "chosen": "increase_docker_timeout",
+      "success": true,
+      "confidence": 0.835,
+      "score": {
+        "correct_action": "increase_docker_timeout",
+        "recommended_action": null,
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 15,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 75,
+        "timestamp": "2026-04-03T18:06:55.734198+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.989,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 16,
+      "failure_type": "deploy_rollback_triggered",
+      "context": {
+        "repo": "worker",
+        "branch": "dev",
+        "runner": "ubuntu-22.04",
+        "attempt": 2,
+        "duration_s": 220,
+        "timestamp": "2026-04-03T18:07:03.209076+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_backoff",
+      "success": false,
+      "confidence": 0.262,
+      "score": {
+        "correct_action": "pin_previous_image",
+        "recommended_action": null,
+        "chosen_action": "retry_with_backoff",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 17,
+      "failure_type": "network_timeout",
+      "context": {
+        "repo": "sdk",
+        "branch": "dev",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 428,
+        "timestamp": "2026-04-03T18:07:09.249887+00:00"
+      },
+      "recommended": null,
+      "chosen": "increase_docker_timeout",
+      "success": false,
+      "confidence": 0.234,
+      "score": {
+        "correct_action": "retry_with_backoff",
+        "recommended_action": null,
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 18,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "api-service",
+        "branch": "dev",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 189,
+        "timestamp": "2026-04-03T18:07:16.111340+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.984,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 19,
+      "failure_type": "env_var_missing",
+      "context": {
+        "repo": "api-service",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 75,
+        "timestamp": "2026-04-03T18:07:21.538907+00:00"
+      },
+      "recommended": null,
+      "chosen": "inject_env_from_vault",
+      "success": true,
+      "confidence": 0.927,
+      "score": {
+        "correct_action": "inject_env_from_vault",
+        "recommended_action": null,
+        "chosen_action": "inject_env_from_vault",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 20,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "worker",
+        "branch": "feature/auth",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 458,
+        "timestamp": "2026-04-03T18:07:27.067896+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.925,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    }
+  ],
+  "observed_tasks": {
+    "network_timeout": {
+      "observe": {
+        "task": "network_timeout",
+        "total_runs": 9,
+        "success_rate": 0.1111,
+        "actions_seen": [
+          "increase_docker_timeout"
+        ],
+        "best_performing": "increase_docker_timeout",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:07:14.539379+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+            "action_name": "increase_docker_timeout",
+            "action_category": "auto-discovered",
+            "composite_score": 0.5013,
+            "confidence": 0.6429,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 9,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+          "action_name": "increase_docker_timeout",
+          "action_category": "auto-discovered",
+          "composite_score": 0.5013,
+          "confidence": 0.6429,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 9,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "neutral"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "05f58bee-4a0a-4f3b-a7fc-860faf26fd79",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "network_timeout",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:32.628249+00:00",
+        "scores_as_of": "2026-04-03T18:07:32.628249+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:32.628249+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "explore",
+        "policy_reason": "confidence_weighted_explore",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "lint_failure": {
+      "observe": {
+        "task": "lint_failure",
+        "total_runs": 13,
+        "success_rate": 0.9231,
+        "actions_seen": [
+          "auto_fix_lint"
+        ],
+        "best_performing": "auto_fix_lint",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:06:10.043463+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "26c991af-35bb-4383-a249-bc31295e6c5e",
+            "action_name": "auto_fix_lint",
+            "action_category": "auto-discovered",
+            "composite_score": 0.7911,
+            "confidence": 0.7222,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 13,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "26c991af-35bb-4383-a249-bc31295e6c5e",
+          "action_name": "auto_fix_lint",
+          "action_category": "auto-discovered",
+          "composite_score": 0.7911,
+          "confidence": 0.7222,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 13,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "eb534617-3385-4c12-8c99-24e0fbdb9d09",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "lint_failure",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:32.628249+00:00",
+        "scores_as_of": "2026-04-03T18:07:32.628249+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:32.628249+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "db_migration_failed": {
+      "observe": {
+        "task": "db_migration_failed",
+        "total_runs": 16,
+        "success_rate": 0.9375,
+        "actions_seen": [
+          "rollback_migration"
+        ],
+        "best_performing": "rollback_migration",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:07:31.601793+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "e1978e87-65f1-43f3-8f34-74bd0432aa47",
+            "action_name": "rollback_migration",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8079,
+            "confidence": 0.7619,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 16,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "e1978e87-65f1-43f3-8f34-74bd0432aa47",
+          "action_name": "rollback_migration",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8079,
+          "confidence": 0.7619,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 16,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "2c86aea2-f6bd-4179-81d7-8aafed710aa2",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "db_migration_failed",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:32.628249+00:00",
+        "scores_as_of": "2026-04-03T18:07:32.628249+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:32.628249+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "env_var_missing": {
+      "observe": {
+        "task": "env_var_missing",
+        "total_runs": 8,
+        "success_rate": 1,
+        "actions_seen": [
+          "inject_env_from_vault"
+        ],
+        "best_performing": "inject_env_from_vault",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:07:25.849503+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+            "action_name": "inject_env_from_vault",
+            "action_category": "auto-discovered",
+            "composite_score": 0.7831,
+            "confidence": 0.6154,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 8,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+          "action_name": "inject_env_from_vault",
+          "action_category": "auto-discovered",
+          "composite_score": 0.7831,
+          "confidence": 0.6154,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 8,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "cec7d29a-0887-4428-9bb8-d465e56d2969",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "env_var_missing",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+        "scores_as_of": "2026-04-03T18:07:47.139447+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "deploy_rollback_triggered": {
+      "observe": {
+        "task": "deploy_rollback_triggered",
+        "total_runs": 10,
+        "success_rate": 0.2,
+        "actions_seen": [
+          "pin_previous_image",
+          "retry_with_backoff",
+          "rollback_migration"
+        ],
+        "best_performing": "pin_previous_image",
+        "worst_performing": "rollback_migration",
+        "last_run": "2026-04-03T18:07:08.133931+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "f222d893-137a-4808-b4ab-4a6478990715",
+            "action_name": "pin_previous_image",
+            "action_category": "auto-discovered",
+            "composite_score": 0.6,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.5091,
+            "confidence": 0.5455,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 6,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "neutral"
+          },
+          {
+            "action_id": "e1978e87-65f1-43f3-8f34-74bd0432aa47",
+            "action_name": "rollback_migration",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4549,
+            "confidence": 0.375,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 3,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "f222d893-137a-4808-b4ab-4a6478990715",
+          "action_name": "pin_previous_image",
+          "action_category": "auto-discovered",
+          "composite_score": 0.6,
+          "confidence": 0.1667,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 1,
+          "is_cold_start": false,
+          "is_low_sample": true,
+          "recommendation": "neutral"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "b91ebac9-68d4-48b6-8e93-1e31e48df7b9",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "deploy_rollback_triggered",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+        "scores_as_of": "2026-04-03T18:07:47.139447+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "explore",
+        "policy_reason": "confidence_weighted_explore",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 3,
+          "top_n_returned": 3,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "npm_install_failed": {
+      "observe": {
+        "task": "npm_install_failed",
+        "total_runs": 8,
+        "success_rate": 0.875,
+        "actions_seen": [
+          "clear_npm_cache"
+        ],
+        "best_performing": "clear_npm_cache",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:07:20.340845+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "5b8d72cd-ff51-4afa-ae19-6b395543a85a",
+            "action_name": "clear_npm_cache",
+            "action_category": "auto-discovered",
+            "composite_score": 0.743,
+            "confidence": 0.6154,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 8,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "5b8d72cd-ff51-4afa-ae19-6b395543a85a",
+          "action_name": "clear_npm_cache",
+          "action_category": "auto-discovered",
+          "composite_score": 0.743,
+          "confidence": 0.6154,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 8,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "eff87490-29b8-46dd-a568-a38c3a11e7aa",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "npm_install_failed",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+        "scores_as_of": "2026-04-03T18:07:47.139447+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "docker_build_timeout": {
+      "observe": {
+        "task": "docker_build_timeout",
+        "total_runs": 11,
+        "success_rate": 0.7273,
+        "actions_seen": [
+          "increase_docker_timeout"
+        ],
+        "best_performing": "increase_docker_timeout",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:06:54.30444+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+            "action_name": "increase_docker_timeout",
+            "action_category": "auto-discovered",
+            "composite_score": 0.7144,
+            "confidence": 0.6875,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 11,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+          "action_name": "increase_docker_timeout",
+          "action_category": "auto-discovered",
+          "composite_score": 0.7144,
+          "confidence": 0.6875,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 11,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "c85c9fef-bc61-4e11-8118-65e3209587e8",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "docker_build_timeout",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+        "scores_as_of": "2026-04-03T18:07:47.139447+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "cache_miss_spike": {
+      "observe": {
+        "task": "cache_miss_spike",
+        "total_runs": 18,
+        "success_rate": 1,
+        "actions_seen": [
+          "warm_cache_layer"
+        ],
+        "best_performing": "warm_cache_layer",
+        "worst_performing": null,
+        "last_run": "2026-04-03T18:05:56.652647+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "e0183a6e-21ef-4ecf-8d96-14cc113be2a1",
+            "action_name": "warm_cache_layer",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8365,
+            "confidence": 0.7826,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 18,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "e0183a6e-21ef-4ecf-8d96-14cc113be2a1",
+          "action_name": "warm_cache_layer",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8365,
+          "confidence": 0.7826,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 18,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "214fccfd-5670-4c21-b401-bb0ebf322265",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "cache_miss_spike",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+        "scores_as_of": "2026-04-03T18:07:47.139447+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "test_suite_flaky": {
+      "observe": {
+        "task": "test_suite_flaky",
+        "total_runs": 9,
+        "success_rate": 0.8889,
+        "actions_seen": [
+          "retry_with_seed",
+          "retry_with_backoff"
+        ],
+        "best_performing": "retry_with_seed",
+        "worst_performing": "retry_with_backoff",
+        "last_run": "2026-04-03T18:06:42.39692+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "9661f951-be0e-4af3-a0cd-618479bcd91d",
+            "action_name": "retry_with_seed",
+            "action_category": "auto-discovered",
+            "composite_score": 0.7722,
+            "confidence": 0.5833,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 7,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.5572,
+            "confidence": 0.25,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 2,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "9661f951-be0e-4af3-a0cd-618479bcd91d",
+          "action_name": "retry_with_seed",
+          "action_category": "auto-discovered",
+          "composite_score": 0.7722,
+          "confidence": 0.5833,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 7,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "63143b7d-833d-4893-a1f6-a2fb8bc3ad1e",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "test_suite_flaky",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+        "scores_as_of": "2026-04-03T18:07:47.139447+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T18:07:47.139447+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "explore",
+        "policy_reason": "confidence_weighted_explore",
+        "agent_trust": {
+          "score": 0.794,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 2,
+          "top_n_returned": 2,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    }
+  }
+}

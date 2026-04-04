@@ -182,4 +182,37 @@ describe('LayerinfiniteClient', () => {
         const headers = init.headers as Record<string, string>;
         expect(headers['X-API-Key']).toBeUndefined();
     });
+
+    it('Test 6: getScores fails over to secondary endpoint on DNS/network error', async () => {
+        const primaryBaseUrl = 'https://primary.layerinfinite.ai';
+        const secondaryBaseUrl = 'https://secondary.layerinfinite.ai';
+
+        fetchSpy
+            .mockRejectedValueOnce(new TypeError('fetch failed: getaddrinfo ENOTFOUND primary.layerinfinite.ai'))
+            .mockResolvedValueOnce(mockResponse(MOCK_GET_SCORES_BODY));
+
+        const client = new LayerinfiniteClient({
+            apiKey: API_KEY,
+            agentId: 'my-agent',
+            baseUrl: primaryBaseUrl,
+            baseUrls: [secondaryBaseUrl],
+            maxRetries: 1,
+        });
+
+        const result = await client.getScores({
+            agentId: 'my-agent',
+            issueType: 'billing_dispute',
+        });
+
+        expect(result.top_action?.action_name).toBe('escalate_to_senior');
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+        const [firstUrl] = fetchSpy.mock.calls[0] as [string, RequestInit];
+        const [secondUrl] = fetchSpy.mock.calls[1] as [string, RequestInit];
+
+        expect(new URL(firstUrl).origin).toBe(primaryBaseUrl);
+        expect(new URL(secondUrl).origin).toBe(secondaryBaseUrl);
+        expect(new URL(secondUrl).pathname).toBe('/v1/get-scores');
+        expect(new URL(secondUrl).searchParams.get('issue_type')).toBe('billing_dispute');
+    });
 });

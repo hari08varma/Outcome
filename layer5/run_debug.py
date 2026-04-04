@@ -1,8 +1,16 @@
 """Fast targeted checks — each query is independent and runs quickly."""
+import os
+
 import httpx
 
-PAT = "sbp_e0ca037f0444e4c3d1626541a2e731572c8e0e08"
-REF = "fakomwsewdxazaqawjuv"
+PAT = os.getenv("SUPABASE_PAT", "")
+REF = os.getenv("SUPABASE_PROJECT_REF", "fakomwsewdxazaqawjuv")
+
+if not PAT:
+    raise SystemExit(
+        "Missing SUPABASE_PAT. Set SUPABASE_PAT in your environment before running this script."
+    )
+
 API = f"https://api.supabase.com/v1/projects/{REF}/database/query"
 HDR = {"Content-Type": "application/json", "Authorization": f"Bearer {PAT}"}
 

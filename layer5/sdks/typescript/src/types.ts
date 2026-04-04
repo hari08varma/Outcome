@@ -76,9 +76,11 @@ export interface LayerinfiniteConfig {
     autoRegister?: boolean;
     /** Default: 'https://api.layerinfinite.app' */
     baseUrl?: string;
+    /** Optional fallback API URLs (used after baseUrl on network/server failures). */
+    baseUrls?: string[];
     /** Request timeout in ms. Default: 10000. */
     timeout?: number;
-    /** Max retries on 429/5xx. Default: 3. */
+    /** Max retries on 429/5xx/timeouts/network errors. Default: 3. */
     maxRetries?: number;
 }
 

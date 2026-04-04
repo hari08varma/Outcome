@@ -531,7 +531,7 @@ def run_recommend_phase(scenarios: list, num_rounds: int = 3) -> dict:
 
     # Show what Layerinfinite learned
     print("\n  ── Checking what Layerinfinite learned ──")
-    time.sleep(5)  # Let backend process final batch
+    time.sleep(20)  # Allow 15s debounce + refresh completion buffer
 
     try:
         li.observe(TASK_NAME)
@@ -607,8 +607,19 @@ def run_assist_phase(scenarios: list) -> dict:
 
     for i, sc in enumerate(scenarios):
         # Ask Layerinfinite what to do
+        suggestion = None
+        confidence = 0.0
         try:
             suggestion = li.suggest(TASK_NAME)
+        except Exception as e:
+            print(f"[assist] li.suggest() failed: {e}. Falling back to default action.")
+            suggestion = None
+
+        if suggestion is None:
+            # Baseline default action selection logic
+            action_name = random.choice(ACTION_NAMES)
+            cold_starts += 1
+        else:
             suggested_action = suggestion.action_name
             confidence = suggestion.confidence
 
@@ -616,11 +627,8 @@ def run_assist_phase(scenarios: list) -> dict:
                 action_name = suggested_action
                 suggestions_followed += 1
             else:
+                # Baseline default action selection logic
                 action_name = random.choice(ACTION_NAMES)
-        except Exception as e:
-            action_name = random.choice(ACTION_NAMES)
-            confidence = 0.0
-            cold_starts += 1
 
         action_choices[action_name] = action_choices.get(action_name, 0) + 1
         fn = decorated[action_name]

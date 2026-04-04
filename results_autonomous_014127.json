@@ -1,0 +1,583 @@
+{
+  "mode": "autonomous",
+  "agent_id": "96a1630d-dafd-4c13-8bce-6bccabc1af87",
+  "episode_id": "a2c23fb5-540e-4953-a95d-a5305c5b1a1e",
+  "num_runs": 15,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "docker_build_timeout",
+      "context": {
+        "repo": "dashboard",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 441,
+        "timestamp": "2026-04-03T19:59:48.779699+00:00"
+      },
+      "recommended": "increase_docker_timeout",
+      "chosen": "increase_docker_timeout",
+      "success": true,
+      "confidence": 0.859,
+      "score": {
+        "correct_action": "increase_docker_timeout",
+        "recommended_action": "increase_docker_timeout",
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 2,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "worker",
+        "branch": "main",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 153,
+        "timestamp": "2026-04-03T19:59:55.003825+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.834,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    },
+    {
+      "run": 3,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "dashboard",
+        "branch": "main",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 322,
+        "timestamp": "2026-04-03T20:00:30.390535+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.99,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    },
+    {
+      "run": 4,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "dashboard",
+        "branch": "dev",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 76,
+        "timestamp": "2026-04-03T20:01:35.300991+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.911,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    },
+    {
+      "run": 5,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "dashboard",
+        "branch": "feature/auth",
+        "runner": "ubuntu-20.04",
+        "attempt": 3,
+        "duration_s": 235,
+        "timestamp": "2026-04-03T20:02:40.329938+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.896,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    },
+    {
+      "run": 6,
+      "failure_type": "test_suite_flaky",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 302,
+        "timestamp": "2026-04-03T20:03:45.090638+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_seed",
+      "success": false,
+      "confidence": 0.773,
+      "score": {
+        "correct_action": "retry_with_seed",
+        "recommended_action": null,
+        "chosen_action": "retry_with_seed",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    },
+    {
+      "run": 7,
+      "failure_type": "env_var_missing",
+      "context": {
+        "repo": "api-service",
+        "branch": "main",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 136,
+        "timestamp": "2026-04-03T20:05:24.150818+00:00"
+      },
+      "recommended": "inject_env_from_vault",
+      "chosen": "inject_env_from_vault",
+      "success": true,
+      "confidence": 0.925,
+      "score": {
+        "correct_action": "inject_env_from_vault",
+        "recommended_action": "inject_env_from_vault",
+        "chosen_action": "inject_env_from_vault",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 8,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "api-service",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 164,
+        "timestamp": "2026-04-03T20:05:31.276032+00:00"
+      },
+      "recommended": null,
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.968,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": null,
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 9,
+      "failure_type": "network_timeout",
+      "context": {
+        "repo": "sdk",
+        "branch": "main",
+        "runner": "ubuntu-20.04",
+        "attempt": 3,
+        "duration_s": 154,
+        "timestamp": "2026-04-03T20:05:37.916968+00:00"
+      },
+      "recommended": null,
+      "chosen": "increase_docker_timeout",
+      "success": false,
+      "confidence": 0.169,
+      "score": {
+        "correct_action": "retry_with_backoff",
+        "recommended_action": null,
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 10,
+      "failure_type": "network_timeout",
+      "context": {
+        "repo": "api-service",
+        "branch": "feature/auth",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 105,
+        "timestamp": "2026-04-03T20:05:44.034198+00:00"
+      },
+      "recommended": "increase_docker_timeout",
+      "chosen": "increase_docker_timeout",
+      "success": false,
+      "confidence": 0.13,
+      "score": {
+        "correct_action": "retry_with_backoff",
+        "recommended_action": "increase_docker_timeout",
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": false,
+        "choice_correct": false,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 11,
+      "failure_type": "network_timeout",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 2,
+        "duration_s": 344,
+        "timestamp": "2026-04-03T20:05:49.265097+00:00"
+      },
+      "recommended": "increase_docker_timeout",
+      "chosen": "increase_docker_timeout",
+      "success": false,
+      "confidence": 0.157,
+      "score": {
+        "correct_action": "retry_with_backoff",
+        "recommended_action": "increase_docker_timeout",
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": false,
+        "choice_correct": false,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 12,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "dashboard",
+        "branch": "main",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 273,
+        "timestamp": "2026-04-03T20:05:54.852844+00:00"
+      },
+      "recommended": "clear_npm_cache",
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.828,
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": "clear_npm_cache",
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 13,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 436,
+        "timestamp": "2026-04-03T20:05:59.889111+00:00"
+      },
+      "recommended": "rollback_migration",
+      "chosen": "rollback_migration",
+      "success": false,
+      "confidence": 0.888,
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": "rollback_migration",
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 14,
+      "failure_type": "lint_failure",
+      "context": {
+        "repo": "worker",
+        "branch": "main",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 122,
+        "timestamp": "2026-04-03T20:06:05.151047+00:00"
+      },
+      "recommended": "auto_fix_lint",
+      "chosen": "auto_fix_lint",
+      "success": true,
+      "confidence": 0.958,
+      "score": {
+        "correct_action": "auto_fix_lint",
+        "recommended_action": "auto_fix_lint",
+        "chosen_action": "auto_fix_lint",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": true
+      },
+      "log_ok": true
+    },
+    {
+      "run": 15,
+      "failure_type": "test_suite_flaky",
+      "context": {
+        "repo": "worker",
+        "branch": "feature/auth",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 229,
+        "timestamp": "2026-04-03T20:06:10.276790+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_seed",
+      "success": true,
+      "confidence": 0.848,
+      "score": {
+        "correct_action": "retry_with_seed",
+        "recommended_action": null,
+        "chosen_action": "retry_with_seed",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    }
+  ],
+  "observed_tasks": {
+    "docker_build_timeout": {
+      "observe": {
+        "task": "docker_build_timeout",
+        "total_runs": 14,
+        "success_rate": 0.7143,
+        "actions_seen": [
+          "increase_docker_timeout"
+        ],
+        "best_performing": "increase_docker_timeout",
+        "worst_performing": null,
+        "last_run": "2026-04-03T19:59:52.699299+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+            "action_name": "increase_docker_timeout",
+            "action_category": "auto-discovered",
+            "composite_score": 0.7222,
+            "confidence": 0.7368,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 14,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+          "action_name": "increase_docker_timeout",
+          "action_category": "auto-discovered",
+          "composite_score": 0.7222,
+          "confidence": 0.7368,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 14,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "c85c9fef-bc61-4e11-8118-65e3209587e8",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "docker_build_timeout",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T20:06:27.828375+00:00",
+        "scores_as_of": "2026-04-03T20:06:27.828375+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T20:06:27.828375+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "exploit",
+        "policy_reason": "confidence_weighted_exploit",
+        "agent_trust": {
+          "score": 0.73,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "network_timeout": {
+      "observe": {
+        "task": "network_timeout",
+        "total_runs": 12,
+        "success_rate": 0.0833,
+        "actions_seen": [
+          "increase_docker_timeout"
+        ],
+        "best_performing": "increase_docker_timeout",
+        "worst_performing": null,
+        "last_run": "2026-04-03T20:05:52.618324+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+            "action_name": "increase_docker_timeout",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4981,
+            "confidence": 0.7059,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 12,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+          "action_name": "increase_docker_timeout",
+          "action_category": "auto-discovered",
+          "composite_score": 0.4981,
+          "confidence": 0.7059,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 12,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "neutral"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "05f58bee-4a0a-4f3b-a7fc-860faf26fd79",
+        "agent_id": "04d0a79a-79c5-415e-b53a-550573ea86a6",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "network_timeout",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-03T20:06:27.828375+00:00",
+        "scores_as_of": "2026-04-03T20:06:27.828375+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-03T20:06:27.828375+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "explore",
+        "policy_reason": "default_exploration",
+        "agent_trust": {
+          "score": 0.73,
+          "status": "trusted"
+        },
+        "meta": {
+          "total_actions_scored": 1,
+          "top_n_returned": 1,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "env_var_missing": {
+      "observe": {
+        "task": "env_var_missing",
+        "total_runs": 11,
+        "success_rate": 1,
+        "actions_seen": [
+          "inject_env_from_vault"
+        ],
+        "best_performing": "inject_env_from_vault",
+        "worst_performing": null,
+        "last_run": "2026-04-03T20:05:28.943127+00:00"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      }
+    },
+    "lint_failure": {
+      "observe": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      }
+    },
+    "npm_install_failed": {
+      "observe": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      }
+    },
+    "test_suite_flaky": {
+      "observe": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      }
+    },
+    "db_migration_failed": {
+      "observe": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed> (attempts=9)"
+      }
+    }
+  }
+}

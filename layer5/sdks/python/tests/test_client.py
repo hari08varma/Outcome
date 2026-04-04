@@ -175,6 +175,36 @@ def test_context_manager_closes_session():
     assert client_ref._http.is_closed
 
 
+@respx.mock
+def test_get_scores_fails_over_to_secondary_endpoint_on_dns_error(monkeypatch):
+    primary_base = "https://primary.layerinfinite.ai"
+    secondary_base = "https://secondary.layerinfinite.ai"
+
+    monkeypatch.setenv("LAYERINFINITE_BASE_URLS", secondary_base)
+
+    primary_route = respx.get(f"{primary_base}/v1/get-scores").mock(
+        side_effect=httpx.ConnectError("getaddrinfo failed")
+    )
+    secondary_route = respx.get(f"{secondary_base}/v1/get-scores").mock(
+        return_value=httpx.Response(200, json=MOCK_GET_SCORES_RESPONSE)
+    )
+
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=primary_base,
+        max_retries=2,
+    )
+
+    response = client.scores("billing_dispute")
+
+    assert isinstance(response, GetScoresResponse)
+    assert response.top_action is not None
+    assert response.top_action.action_name == "escalate_to_senior"
+    assert primary_route.called
+    assert secondary_route.called
+
+
 def test_run_uses_entry_score_fn_for_outcome_score(monkeypatch):
     client = LayerinfiniteClient(
         api_key=API_KEY,

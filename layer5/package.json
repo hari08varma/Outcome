@@ -7,7 +7,12 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "check:endpoint-independence": "node scripts/check-endpoint-independence.js",
+    "check:endpoint-parity": "node scripts/check-endpoint-parity.js",
+    "drill:failover": "node scripts/run-failover-drill.js",
+    "check:secrets": "node scripts/check-tracked-secrets.js",
+    "check:production": "npm run check:endpoint-independence && npm run check:endpoint-parity && npm run drill:failover"
   },
   "keywords": [],
   "author": "",

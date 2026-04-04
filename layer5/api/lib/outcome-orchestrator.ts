@@ -2,6 +2,7 @@ import { supabase } from './supabase.js';
 import { writeCounterfactuals } from './ips-engine.js';
 import { upsertSequence, closeSequence } from './sequence-tracker.js';
 import { backpropagateReward } from './reward-backprop.js';
+import { invalidateCache } from './scoring.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type TrustLifecycleStatus = 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new';
@@ -176,6 +177,12 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         });
     }
 
+    async function taskCacheInvalidation() {
+        // Invalidate only this customer/context score cache entry so the next
+        // getScores() call reads fresh data instead of serving a stale 5-min TTL entry.
+        invalidateCache(params.customerId, params.contextId);
+    }
+
     // Trust atomicity is guaranteed by the update_trust_and_audit() RPC (migration 062),
     // which writes both the trust score UPDATE and audit INSERT in one DB transaction.
     // Surfacing trust failures as HTTP 500 to agents is counterproductive — a trust DB
@@ -187,6 +194,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         taskCounterfactuals(),
         taskSequence(),
         taskLatencySpike(),
+        taskCacheInvalidation(),
     ]);
 
     const taskNames = [
@@ -196,6 +204,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         'counterfactuals',
         'sequence',
         'latency-spike',
+        'cache-invalidation',
     ];
 
     const criticalTaskFailures: string[] = [];

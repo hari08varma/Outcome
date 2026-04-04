@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import os
 import threading
 import time
 import uuid
@@ -36,6 +37,7 @@ logger = logging.getLogger("layerinfinite")
 _VALID_MODES = ("recommend", "assist", "auto")
 _SDK_VERSION = "0.3.1"
 _DEFAULT_BASE_URL = "https://api.layerinfinite.app"
+_BASE_URLS_ENV = "LAYERINFINITE_BASE_URLS"
 
 
 class Layerinfinite:
@@ -111,11 +113,29 @@ class Layerinfinite:
         self._log_async = log_async
         self._auto_register = auto_register
 
+        self._base_urls = self._resolve_base_urls(self._base_url)
+        self._endpoint_lock = threading.Lock()
+        self._active_endpoint_index = 0
+
         self._actions: Dict[str, Dict[str, ActionEntry]] = {}
         self._registry_lock = threading.Lock()
 
-        self._http = httpx.Client(
-            base_url=self._base_url,
+        self._http_clients = [
+            self._build_http_client(base_url=endpoint, timeout=timeout, api_key=api_key)
+            for endpoint in self._base_urls
+        ]
+        self._http = self._http_clients[0]
+
+    def __enter__(self) -> "Layerinfinite":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        for client in self._http_clients:
+            client.close()
+
+    def _build_http_client(self, base_url: str, timeout: float, api_key: str) -> httpx.Client:
+        return httpx.Client(
+            base_url=base_url,
             timeout=timeout,
             headers={
                 "X-API-Key": api_key,
@@ -125,11 +145,42 @@ class Layerinfinite:
             },
         )
 
-    def __enter__(self) -> "Layerinfinite":
-        return self
+    def _resolve_base_urls(self, primary_base_url: str) -> List[str]:
+        candidates: List[str] = [primary_base_url]
+        env_base_urls = os.getenv(_BASE_URLS_ENV, "")
+        if env_base_urls:
+            candidates.extend(url.strip() for url in env_base_urls.split(",") if url.strip())
 
-    def __exit__(self, *args: Any) -> None:
-        self._http.close()
+        deduped: List[str] = []
+        for url in candidates:
+            normalized = url.rstrip("/")
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+
+        return deduped or [primary_base_url]
+
+    def _current_http_client(self) -> tuple[int, httpx.Client, str]:
+        with self._endpoint_lock:
+            idx = self._active_endpoint_index
+        return idx, self._http_clients[idx], self._base_urls[idx]
+
+    def _rotate_endpoint(self, reason: str) -> None:
+        if len(self._http_clients) <= 1:
+            return
+
+        with self._endpoint_lock:
+            previous_idx = self._active_endpoint_index
+            next_idx = (previous_idx + 1) % len(self._http_clients)
+            if next_idx == previous_idx:
+                return
+            self._active_endpoint_index = next_idx
+
+        logger.warning(
+            "[layerinfinite] Endpoint failover: %s -> %s (%s)",
+            self._base_urls[previous_idx],
+            self._base_urls[next_idx],
+            reason,
+        )
 
     def action(
         self,
@@ -611,8 +662,7 @@ class Layerinfinite:
     def health(self) -> dict:
         """Check API health. No auth required."""
         logger.debug("GET /health")
-        resp = self._http.get("/health", timeout=5.0)
-        resp.raise_for_status()
+        resp = self._request("GET", "/health", timeout=5.0)
         return resp.json()
 
     def list_actions(self, task: str | None = None) -> Dict[str, List[str]]:
@@ -854,9 +904,16 @@ class Layerinfinite:
         last_exc: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
+            endpoint_idx, client, endpoint_base_url = self._current_http_client()
             try:
-                logger.debug("[layerinfinite] %s %s (attempt %d)", method, path, attempt + 1)
-                resp = self._http.request(method, path, **kwargs)
+                logger.debug(
+                    "[layerinfinite] %s %s via %s (attempt %d)",
+                    method,
+                    path,
+                    endpoint_base_url,
+                    attempt + 1,
+                )
+                resp = client.request(method, path, **kwargs)
 
                 if resp.status_code == 429 and attempt < self._max_retries:
                     retry_after = int(resp.headers.get("Retry-After", 60))
@@ -874,6 +931,7 @@ class Layerinfinite:
                     and resp.status_code >= 500
                     and attempt < self._max_retries
                 ):
+                    self._rotate_endpoint(f"server error {resp.status_code}")
                     wait = 2**attempt
                     logger.warning(
                         "[layerinfinite] Server error %d. Backing off %ds (attempt %d/%d).",
@@ -896,23 +954,33 @@ class Layerinfinite:
                     raise
             except httpx.TimeoutException as exc:
                 last_exc = exc
+                self._rotate_endpoint("timeout")
+                wait = min(2**attempt, 8)
                 logger.warning(
-                    "[layerinfinite] Timeout (attempt %d/%d).",
+                    "[layerinfinite] Timeout via %s (attempt %d/%d). Backing off %ds.",
+                    endpoint_base_url,
                     attempt + 1,
                     self._max_retries,
+                    wait,
                 )
                 if attempt >= self._max_retries:
                     raise LayerinfiniteError("Request timed out.") from exc
+                time.sleep(wait)
             except httpx.RequestError as exc:
                 last_exc = exc
+                self._rotate_endpoint("network request error")
+                wait = min(2**attempt, 8)
                 logger.warning(
-                    "[layerinfinite] Network error: %s (attempt %d/%d).",
+                    "[layerinfinite] Network error via %s: %s (attempt %d/%d). Backing off %ds.",
+                    endpoint_base_url,
                     exc,
                     attempt + 1,
                     self._max_retries,
+                    wait,
                 )
                 if attempt >= self._max_retries:
                     raise LayerinfiniteError(f"Network error: {exc}") from exc
+                time.sleep(wait)
 
         raise LayerinfiniteError("Max retries exceeded.") from last_exc
 

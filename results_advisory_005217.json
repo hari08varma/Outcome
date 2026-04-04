@@ -1,0 +1,101 @@
+{
+  "mode": "advisory",
+  "agent_id": "96a1630d-dafd-4c13-8bce-6bccabc1af87",
+  "episode_id": "02fe10f5-01c0-439b-946e-aa82ca3ff8e6",
+  "num_runs": 3,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "deploy_rollback_triggered",
+      "context": {
+        "repo": "dashboard",
+        "branch": "dev",
+        "runner": "ubuntu-20.04",
+        "attempt": 3,
+        "duration_s": 135,
+        "timestamp": "2026-04-03T19:22:02.809990+00:00"
+      },
+      "recommended": null,
+      "chosen": "rollback_migration",
+      "success": false,
+      "confidence": 0.58,
+      "score": {
+        "correct_action": "pin_previous_image",
+        "recommended_action": null,
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    },
+    {
+      "run": 2,
+      "failure_type": "test_suite_flaky",
+      "context": {
+        "repo": "worker",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 2,
+        "duration_s": 128,
+        "timestamp": "2026-04-03T19:22:12.270694+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_backoff",
+      "success": false,
+      "confidence": 0.49,
+      "score": {
+        "correct_action": "retry_with_seed",
+        "recommended_action": null,
+        "chosen_action": "retry_with_backoff",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    },
+    {
+      "run": 3,
+      "failure_type": "test_suite_flaky",
+      "context": {
+        "repo": "sdk",
+        "branch": "main",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 464,
+        "timestamp": "2026-04-03T19:22:15.066252+00:00"
+      },
+      "recommended": null,
+      "chosen": "retry_with_backoff",
+      "success": true,
+      "confidence": 0.554,
+      "score": {
+        "correct_action": "retry_with_seed",
+        "recommended_action": null,
+        "chosen_action": "retry_with_backoff",
+        "recommendation_correct": null,
+        "choice_correct": false,
+        "followed_recommendation": null
+      },
+      "log_ok": false
+    }
+  ],
+  "observed_tasks": {
+    "deploy_rollback_triggered": {
+      "observe": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed>"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed>"
+      }
+    },
+    "test_suite_flaky": {
+      "observe": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed>"
+      },
+      "scores": {
+        "error": "<urlopen error [Errno 11001] getaddrinfo failed>"
+      }
+    }
+  }
+}

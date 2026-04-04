@@ -26,6 +26,7 @@ import type {
 } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://api.layerinfinite.app';
+const BASE_URLS_ENV = 'LAYERINFINITE_BASE_URLS';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
@@ -57,6 +58,24 @@ function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function normalizeBaseUrl(value: string): string {
+    return value.trim().replace(/\/+$/, '');
+}
+
+function readBaseUrlsFromEnv(): string[] {
+    if (typeof process === 'undefined' || !process.env) {
+        return [];
+    }
+    const raw = process.env[BASE_URLS_ENV];
+    if (!raw) {
+        return [];
+    }
+    return raw
+        .split(',')
+        .map(url => normalizeBaseUrl(url))
+        .filter(Boolean);
+}
+
 export class Layerinfinite {
     private readonly apiKey: string;
     private readonly agentId: string;
@@ -64,9 +83,10 @@ export class Layerinfinite {
     private readonly confidenceThreshold: number;
     private readonly autoFallback: boolean;
     private readonly autoRegister: boolean;
-    private readonly baseUrl: string;
+    private readonly baseUrls: string[];
     private readonly timeout: number;
     private readonly maxRetries: number;
+    private activeEndpointIndex: number;
 
     /** task → (actionName → ActionEntry) */
     private readonly actions: Map<string, Map<string, ActionEntry>> = new Map();
@@ -102,9 +122,11 @@ export class Layerinfinite {
         this.confidenceThreshold = threshold;
         this.autoFallback = config.autoFallback ?? true;
         this.autoRegister = config.autoRegister ?? true;
-        this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
+        const primaryBaseUrl = normalizeBaseUrl(config.baseUrl ?? DEFAULT_BASE_URL);
+        this.baseUrls = this.resolveBaseUrls(primaryBaseUrl, config.baseUrls ?? []);
         this.timeout = config.timeout ?? DEFAULT_TIMEOUT_MS;
         this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+        this.activeEndpointIndex = 0;
     }
 
     /**
@@ -461,9 +483,9 @@ export class Layerinfinite {
      * Available in ALL modes — no mode check.
      */
     async recommend(task: string): Promise<Recommendation> {
-        const url = `${this.baseUrl}/v1/recommendations?task=${encodeURIComponent(task)}`;
+        const path = `/v1/recommendations?task=${encodeURIComponent(task)}`;
         const response = await this.fetchWithRetry(
-            url,
+            path,
             {
                 method: 'GET',
                 headers: this.authHeaders(),
@@ -524,9 +546,9 @@ export class Layerinfinite {
      * Available in ALL modes.
      */
     async observe(task: string): Promise<ObservationSummary> {
-        const url = `${this.baseUrl}/v1/observe?task=${encodeURIComponent(task)}`;
+        const path = `/v1/observe?task=${encodeURIComponent(task)}`;
         const response = await this.fetchWithRetry(
-            url,
+            path,
             {
                 method: 'GET',
                 headers: this.authHeaders(),
@@ -571,21 +593,16 @@ export class Layerinfinite {
 
     /** Check API health. No auth required. */
     async health(): Promise<{ status: string; version: string }> {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5_000);
-        try {
-            const response = await fetch(`${this.baseUrl}/health`, {
+        const response = await this.fetchWithRetry(
+            '/health',
+            {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
-                signal: controller.signal,
-            });
-            if (!response.ok) {
-                throw new LayerinfiniteError(`Health check failed [${response.status}]`);
-            }
-            return response.json() as Promise<{ status: string; version: string }>;
-        } finally {
-            clearTimeout(timer);
-        }
+            },
+            code => code >= 500,
+            5_000,
+        );
+        return response.json() as Promise<{ status: string; version: string }>;
     }
 
     /**
@@ -612,9 +629,8 @@ export class Layerinfinite {
      * Compatible with old LogOutcomeRequest shape (backward compat).
      */
     async logOutcome(request: LogOutcomeRequest): Promise<LogOutcomeResponse> {
-        const url = `${this.baseUrl}/v1/log-outcome`;
         const response = await this.fetchWithRetry(
-            url,
+            '/v1/log-outcome',
             {
                 method: 'POST',
                 headers: this.authHeaders(true),
@@ -630,6 +646,59 @@ export class Layerinfinite {
             trust_status: normalizeTrustStatus(payload.trust_status),
             policy: String(payload.policy ?? ''),
         };
+    }
+
+    // ── Private: endpoint management ─────────────────────────────
+
+    private resolveBaseUrls(primaryBaseUrl: string, configuredBaseUrls: string[]): string[] {
+        const candidates = [
+            primaryBaseUrl,
+            ...configuredBaseUrls,
+            ...readBaseUrlsFromEnv(),
+        ];
+
+        const deduped: string[] = [];
+        for (const candidate of candidates) {
+            if (typeof candidate !== 'string') {
+                continue;
+            }
+            const normalized = normalizeBaseUrl(candidate);
+            if (!normalized || deduped.includes(normalized)) {
+                continue;
+            }
+            deduped.push(normalized);
+        }
+
+        return deduped.length ? deduped : [primaryBaseUrl];
+    }
+
+    private currentEndpoint(): { index: number; baseUrl: string } {
+        const index = this.activeEndpointIndex;
+        const baseUrl = this.baseUrls[index] ?? this.baseUrls[0] ?? DEFAULT_BASE_URL;
+        return { index, baseUrl };
+    }
+
+    private rotateEndpoint(reason: string): void {
+        if (this.baseUrls.length <= 1) {
+            return;
+        }
+        const previousIndex = this.activeEndpointIndex;
+        const nextIndex = (previousIndex + 1) % this.baseUrls.length;
+        if (nextIndex === previousIndex) {
+            return;
+        }
+        this.activeEndpointIndex = nextIndex;
+        console.warn(
+            `[layerinfinite] Endpoint failover: ${this.baseUrls[previousIndex]} -> ${this.baseUrls[nextIndex]} (${reason})`,
+        );
+    }
+
+    private buildEndpointUrl(baseUrl: string, path: string): string {
+        if (/^https?:\/\//i.test(path)) {
+            return path;
+        }
+        const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+        return `${baseUrl}${normalizedPath}`;
     }
 
     // ── Private: headers ─────────────────────────────────────────
@@ -673,7 +742,7 @@ export class Layerinfinite {
 
         try {
             await this.fetchWithRetry(
-                `${this.baseUrl}/v1/log-outcome`,
+                '/v1/log-outcome',
                 {
                     method: 'POST',
                     headers: this.authHeaders(true),
@@ -729,7 +798,7 @@ export class Layerinfinite {
                 environment: 'production',
             });
             const response = await this.fetchWithRetry(
-                `${this.baseUrl}/v1/get-scores?${qs.toString()}`,
+                `/v1/get-scores?${qs.toString()}`,
                 {
                     method: 'GET',
                     headers: this.authHeaders(),
@@ -795,20 +864,23 @@ export class Layerinfinite {
     /**
      * Native fetch with AbortController timeout + retry logic.
      *   - 429: wait Retry-After seconds, retry up to maxRetries
-     *   - isRetryable(status): exponential backoff 1s→2s→4s
-     *   - Timeout / network error: retry up to maxRetries, then throw
+     *   - isRetryable(status): rotate endpoint and exponential backoff 1s→2s→4s
+     *   - Timeout / network error: rotate endpoint and retry up to maxRetries
      *   - 401, 404: throw immediately (no retry)
      */
     private async fetchWithRetry(
-        url: string,
+        path: string,
         init: RequestInit,
         isRetryableStatus: (code: number) => boolean,
+        timeoutMs = this.timeout,
     ): Promise<Response> {
         let lastErr: unknown;
 
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            const { baseUrl } = this.currentEndpoint();
+            const url = this.buildEndpointUrl(baseUrl, path);
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), this.timeout);
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
 
             try {
                 const response = await fetch(url, { ...init, signal: controller.signal });
@@ -822,6 +894,7 @@ export class Layerinfinite {
 
                 // Retryable 5xx — exponential backoff
                 if (isRetryableStatus(response.status) && attempt < this.maxRetries) {
+                    this.rotateEndpoint(`server error ${response.status}`);
                     await sleep(1000 * Math.pow(2, attempt)); // 1s, 2s, 4s
                     continue;
                 }
@@ -834,11 +907,14 @@ export class Layerinfinite {
             } catch (err) {
                 if (err instanceof LayerinfiniteError) throw err;
                 if (err instanceof Error && err.name === 'AbortError') {
-                    lastErr = new LayerinfiniteError(`Request timed out after ${this.timeout}ms`);
+                    this.rotateEndpoint('timeout');
+                    lastErr = new LayerinfiniteError(`Request timed out after ${timeoutMs}ms`);
                 } else {
+                    this.rotateEndpoint('network request error');
                     lastErr = new LayerinfiniteError(`Network error: ${String(err)}`);
                 }
                 if (attempt >= this.maxRetries) throw lastErr;
+                await sleep(Math.min(1000 * Math.pow(2, attempt), 8_000));
             } finally {
                 clearTimeout(timer);
             }
