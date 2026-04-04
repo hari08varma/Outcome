@@ -73,7 +73,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NPM_TOKEN" ]; then
-            echo "Missing required secret: NPM_TOKEN"
+            echo "Missing required secret: NPM_TOKEN (use exact name; do not use typo variants like NPM_TKOEN)"
             exit 1
           fi
 
