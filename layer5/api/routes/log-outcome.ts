@@ -2,7 +2,7 @@ import { Context, Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import { supabase } from '../lib/supabase.js';
-import { invalidateCache, getCachedScore, getScores } from '../lib/scoring.js';
+import { invalidateCache, getCachedScore, getScores, computeEffectiveScore } from '../lib/scoring.js';
 import {
     getPolicyDecision,
 } from '../lib/policy-engine.js';
@@ -637,7 +637,10 @@ logOutcomeRouter.post('/', async (c) => {
         // 3. Verification Layer
         const verification = await verifyOutcome(body, customerId, agentId);
         const finalSuccess = verification.verified_success;
-        const finalOutcomeScore = verification.confidence_override ?? body.outcome_score ?? null;
+        const finalOutcomeScore = computeEffectiveScore(
+            finalSuccess,
+            verification.confidence_override ?? body.outcome_score
+        );
 
         // 4. Resolve References
         const actionId = await resolveActionId(c, body, customerId);

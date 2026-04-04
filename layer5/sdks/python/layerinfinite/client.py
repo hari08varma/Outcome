@@ -1014,8 +1014,12 @@ class Layerinfinite:
                 retry_after=retry_after,
             )
         if code >= 500:
+            error_text = body.get('error', 'unknown')
+            details = body.get('details')
+            if details:
+                error_text = f"{error_text} | details: {details}"
             raise LayerinfiniteServerError(
-                f"Server error [{code}]: {body.get('error', 'unknown')}",
+                f"Server error [{code}]: {error_text}",
                 status_code=code,
                 response_body=body,
             )

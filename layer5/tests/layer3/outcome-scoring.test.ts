@@ -179,7 +179,7 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
         expect(insertCall[0].outcome_score).toBe(0.7);
     });
 
-    it('without outcome_score falls back to null in insert', async () => {
+    it('without outcome_score falls back to 1.0 for success=true', async () => {
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -209,10 +209,45 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
 
         expect(res.status).toBe(201);
 
-        // outcome_score should be null (not provided)
+        // outcome_score should fall back to binary success score
         const insertCall = insertChain.insert.mock.calls[0];
         expect(insertCall).toBeDefined();
-        expect(insertCall[0].outcome_score).toBeNull();
+        expect(insertCall[0].outcome_score).toBe(1.0);
+    });
+
+    it('without outcome_score falls back to 0.0 for success=false', async () => {
+        const ctxChain = buildChain();
+        ctxChain.maybeSingle.mockResolvedValue({
+            data: { context_id: 'ctx-1' },
+            error: null,
+        });
+
+        const insertChain = buildChain();
+        insertChain.single.mockResolvedValue({
+            data: { outcome_id: 'out-3', timestamp: '2026-01-01' },
+            error: null,
+        });
+
+        let callIdx = 0;
+        vi.mocked(supabase.from).mockImplementation(() => {
+            callIdx++;
+            return (callIdx === 1 ? ctxChain : insertChain) as any;
+        });
+
+        const app = createLogOutcomeApp();
+        const res = await app.fetch(
+            new Request('http://localhost/log-outcome', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...validBody, success: false }),
+            })
+        );
+
+        expect(res.status).toBe(201);
+
+        const insertCall = insertChain.insert.mock.calls[0];
+        expect(insertCall).toBeDefined();
+        expect(insertCall[0].outcome_score).toBe(0.0);
     });
 
     it('outcome_score=1.5 returns 400 validation error', async () => {

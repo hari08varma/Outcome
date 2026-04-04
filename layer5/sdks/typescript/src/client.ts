@@ -944,7 +944,12 @@ export class Layerinfinite {
             );
         }
         if (code >= 500) {
-            const msg = (body as Record<string, unknown>)?.error ?? 'unknown server error';
+            const payload = body as Record<string, unknown>;
+            const base = payload?.error ?? 'unknown server error';
+            const details = payload?.details;
+            const msg = details
+                ? `${base} | details: ${String(details)}`
+                : base;
             throw new LayerinfiniteServerError(
                 `Layerinfinite server error [${code}]: ${msg}`, code, body
             );
