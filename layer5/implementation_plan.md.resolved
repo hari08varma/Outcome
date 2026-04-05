@@ -763,6 +763,111 @@ SELECT COUNT(*) FROM fact_outcomes_archive WHERE period_start < NOW() - INTERVAL
 
 ---
 
+## Gap Closure Addendum (Phase 2-4 Implementation Contract)
+
+This addendum is the authoritative definition for the unresolved Phase 2-4 policy details. These values are now part of the repo contract and replace any ambiguous phrasing elsewhere in this document.
+
+### Item 1 - Transition Policy Thresholds and Rationale
+
+Canonical thresholds:
+
+- `warmup_min_samples = 10`
+  - Rationale: below 10 samples, uncertainty is too wide for rank-sensitive routing decisions.
+- `stable_transition_samples = 50`
+  - Rationale: 50 samples is the minimum stable evidence level for primary scoped routing.
+- `cohort_anchor_samples = 100`
+  - Rationale: 100 samples provides robust cohort anchor data for drift and rotation baselines.
+
+Operational meaning:
+
+- `< 10`: no scope transition; treat as warmup signal.
+- `10-49`: transition-eligible only with fallback safeguards.
+- `50-99`: stable scoped routing eligible.
+- `>= 100`: cohort-anchor eligible for rotation/drift comparisons.
+
+Acceptance criteria:
+
+- Threshold constants exist in code/config with exact values `10`, `50`, and `100`.
+- Boundary tests exist for `9`, `10`, `49`, `50`, `99`, and `100`.
+- API/user-facing reasoning includes current threshold bucket and remaining samples to next bucket.
+
+### Item 2 - Damping and Exclusion Coefficients
+
+Outcome-quality damping weights:
+
+- `high_quality_weight = 1.00`
+- `medium_quality_weight = 0.60`
+- `low_quality_weight = 0.25`
+
+Time decay formula:
+
+- `effective_weight = quality_weight * exp(-ln(2) * age_days / half_life_days)`
+- `half_life_days_high = 90`
+- `half_life_days_medium = 45`
+- `half_life_days_low = 14`
+
+Hard exclusion rule:
+
+- Low-quality outcomes older than `30` days are excluded (`effective_weight = 0.00`).
+
+Acceptance criteria:
+
+- Scoring path computes `effective_weight` deterministically for each outcome.
+- Unit tests verify damping outputs at `0`, `14`, `30`, and `90` days.
+- Low-quality outcomes older than `30` days contribute `0` weight to score and confidence denominators.
+
+### Item 3 - Phase 0 Exit Criteria: Schema Invariants (Defined)
+
+Phase 0 exits only when schema invariants are green in all environments (`dev`, `staging`, `prod`).
+
+Canonical invariant set:
+
+1. `action_sequences_episode_id_fkey` does not exist.
+2. `mv_episode_patterns` reads from `action_sequences`.
+3. `fact_outcomes.episode_id` column exists.
+4. `dim_contexts_customer_issue_env_unique` unique constraint exists.
+5. `action_sequences.customer_id` column exists.
+6. `action_sequences.customer_id` is `NOT NULL`.
+7. `mv_sequence_scores.customer_id` column exists.
+
+Additional governance requirements:
+
+- Strict migration governance passes with zero warnings.
+- Duplicate migration prefixes are zero.
+- Migration numeric prefixes are strictly increasing.
+
+Acceptance criteria:
+
+- `verify_schema_invariants().pass = true` and `failures = []` in `dev`, `staging`, and `prod`.
+- `/health/deep` reports `schema_invariants = ok` in `dev`, `staging`, and `prod`.
+- Strict migration-governance job exits successfully for each environment deployment branch.
+- CI publishes invariant-check artifacts per environment.
+
+### Item 4 - Cohort Rotation Cycle Boundary (Defined)
+
+Cycle boundary is hybrid and deterministic:
+
+- Close cycle when either condition is met first:
+  - `7` elapsed days, or
+  - `100` new outcomes in the task-context cohort.
+- Early close trigger (rotate immediately):
+  - confidence drop `>= 0.10` vs previous cycle median, or
+  - success-rate drop `>= 0.15` vs previous cycle median.
+
+Operational rules:
+
+- Exactly one active cycle per task-context at any time.
+- New outcomes always attach to the active `cycle_id`.
+- Close+open rotation is atomic to avoid orphan writes.
+
+Acceptance criteria:
+
+- Tests cover time boundary, count boundary, and drift-trigger rotation.
+- No cycle remains open beyond `7` days once either close condition is met.
+- Dashboard/observability surface includes `cycle_id`, `opened_at`, `closed_at`, and `close_reason`.
+
+---
+
 ## Dependency Map
 
 ```
