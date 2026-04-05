@@ -231,4 +231,57 @@ describe('task performance fallback', () => {
             'mv_task_action_performance',
         ]);
     });
+
+    it('excludes low-quality outcomes older than 30 days when aggregating fallback resolution rates', async () => {
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
+            if (table === 'mv_task_action_performance') {
+                return makeQuery({
+                    data: null,
+                    error: {
+                        code: '42P01',
+                        message: 'relation "mv_task_action_performance" does not exist',
+                    },
+                }) as any;
+            }
+
+            if (table === 'fact_outcomes') {
+                return makeQuery({
+                    data: [
+                        {
+                            action_id: 'a3',
+                            success: false,
+                            outcome_score: 0.1,
+                            timestamp: '2026-02-01T10:00:00.000Z',
+                            dim_actions: { action_name: 'restart_worker' },
+                        },
+                        {
+                            action_id: 'a3',
+                            success: true,
+                            outcome_score: 0.9,
+                            timestamp: '2026-04-02T10:00:00.000Z',
+                            dim_actions: { action_name: 'restart_worker' },
+                        },
+                    ],
+                    error: null,
+                }) as any;
+            }
+
+            if (table === 'mv_action_scores') {
+                return makeQuery({ data: [], error: null }) as any;
+            }
+
+            throw new Error(`unexpected table: ${table}`);
+        });
+
+        const result = await fetchTaskActionPerformance({
+            customerId: 'cust-1',
+            taskName: 'incident_resolution',
+            agentId: null,
+        });
+
+        expect(result.source).toBe('fact_fallback');
+        expect(result.rows).toHaveLength(1);
+        expect(result.rows[0]?.resolution_rate).toBeCloseTo(0.9, 4);
+        expect(result.rows[0]?.success_rate).toBe(0.5);
+    });
 });

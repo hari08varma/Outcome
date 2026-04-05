@@ -13,6 +13,7 @@ import {
 } from '../lib/recommendation/scope-transition.js';
 import { buildRecommendationDataFreshness } from '../lib/recommendation/data-freshness.js';
 import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
+import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
 
 export const getRecommendationsRouter = new Hono();
 
@@ -25,6 +26,18 @@ function toScopeTransitionCandidate(
         confidence: result.confidence,
         has_best_action: !!result.best_action,
     };
+}
+
+function medianOf(values: number[]): number | null {
+    const finite = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+    if (finite.length === 0) return null;
+
+    const middle = Math.floor(finite.length / 2);
+    if (finite.length % 2 === 1) {
+        return Number(finite[middle].toFixed(4));
+    }
+
+    return Number(((finite[middle - 1] + finite[middle]) / 2).toFixed(4));
 }
 
 // GET /tasks — returns distinct task_names available for a customer (+ optional agent scope)
@@ -99,6 +112,12 @@ getRecommendationsRouter.get('/', async (c) => {
         let result: RecommendationResult;
         let servedScope: RecommendationScope = requestedScope;
         let scopeReason: string | null = null;
+        let scopeThresholdProgress: {
+            bucket: string;
+            current_samples: number;
+            next_threshold: number | null;
+            remaining_to_next_bucket: number;
+        } | null = null;
 
         if (scopedAgentId) {
             const [scopedResult, blendedResult] = await Promise.all([
@@ -116,11 +135,17 @@ getRecommendationsRouter.get('/', async (c) => {
                 : scopedResult;
             servedScope = selection.servedScope;
             scopeReason = selection.reason;
+            scopeThresholdProgress = selection.threshold_progress;
         } else {
             result = await getRecommendation(customerId, taskName, null);
         }
 
         const fallbackApplied = requestedScope !== servedScope;
+        const thresholdHint = scopeThresholdProgress
+            ? scopeThresholdProgress.next_threshold === null
+                ? `Evidence bucket: ${scopeThresholdProgress.bucket} (${scopeThresholdProgress.current_samples} samples, cohort-anchor reached).`
+                : `Evidence bucket: ${scopeThresholdProgress.bucket} (${scopeThresholdProgress.current_samples} samples, ${scopeThresholdProgress.remaining_to_next_bucket} to ${scopeThresholdProgress.next_threshold}).`
+            : null;
         const scopeLabel = servedScope === 'agent_scoped'
             ? 'Based on this agent\'s logged outcomes only'
             : fallbackApplied
@@ -134,6 +159,22 @@ getRecommendationsRouter.get('/', async (c) => {
             lastSeenAt,
         );
 
+        const totalOutcomes = result.all_actions.reduce(
+            (sum, action) => sum + Math.max(0, Number(action.total_count ?? 0)),
+            0,
+        );
+        const medianSuccessRate = medianOf(
+            result.all_actions.map((action) => Number(action.resolution_rate ?? Number.NaN)),
+        );
+        const cohortCycle = upsertRecommendationCohortCycle({
+            customer_id: customerId,
+            task_name: taskName,
+            observed_at: result.generated_at,
+            total_outcomes: totalOutcomes,
+            median_confidence: result.confidence,
+            median_success_rate: medianSuccessRate,
+        });
+
         return c.json(
             {
                 ...output,
@@ -145,11 +186,18 @@ getRecommendationsRouter.get('/', async (c) => {
                     served_scope: servedScope,
                     fallback_applied: fallbackApplied,
                     reason: scopeReason,
+                    threshold_hint: thresholdHint,
+                    threshold_bucket: scopeThresholdProgress?.bucket ?? null,
+                    current_samples: scopeThresholdProgress?.current_samples ?? null,
+                    next_threshold: scopeThresholdProgress?.next_threshold ?? null,
+                    remaining_samples_to_next_bucket:
+                        scopeThresholdProgress?.remaining_to_next_bucket ?? null,
                     switch_back_rule: requestedScope === 'agent_scoped'
                         ? `Switches back to agent-only automatically at >=${MIN_SAMPLES_STABLE} min samples and >=${Math.round(AGENT_SCOPE_MIN_CONFIDENCE * 100)}% confidence.`
                         : null,
                 },
                 data_freshness: dataFreshness,
+                cohort_cycle: cohortCycle,
                 customer_id: customerId,
                 // ISSUE 1: Action registry validation.
                 // Tells the developer if the recommended action matches what they have registered.

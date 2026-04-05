@@ -114,6 +114,32 @@ interface RecommendationResponse {
         is_stale: boolean;
         stale_threshold_hours: number;
     };
+    cohort_cycle?: {
+        active_cycle: {
+            cycle_id: string;
+            opened_at: string;
+            closed_at: string | null;
+            close_reason: 'time_elapsed' | 'outcome_count' | 'confidence_drop' | 'success_rate_drop' | null;
+            elapsed_days: number;
+            outcomes_in_cycle: number;
+        };
+        previous_cycle: {
+            cycle_id: string;
+            opened_at: string;
+            closed_at: string | null;
+            close_reason: 'time_elapsed' | 'outcome_count' | 'confidence_drop' | 'success_rate_drop' | null;
+            elapsed_days: number;
+            outcomes_in_cycle: number;
+        } | null;
+        rotation_triggered: boolean;
+        rotation_reason: 'time_elapsed' | 'outcome_count' | 'confidence_drop' | 'success_rate_drop' | null;
+        thresholds: {
+            max_days: number;
+            max_outcomes: number;
+            confidence_drop: number;
+            success_rate_drop: number;
+        };
+    };
 }
 
 const CONFIDENCE_CONFIG: Record<
@@ -338,6 +364,30 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                                 ? ` · Last seen ${new Date(data.data_freshness.last_seen_at).toLocaleString()}`
                                 : ''}
                         </p>
+                    </div>
+                )}
+
+                {data.cohort_cycle && (
+                    <div className="rounded-lg bg-[#1a1a24]/60 border border-[#52525b]/30 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-[#a1a1aa] mb-1">
+                            Cohort Cycle
+                        </p>
+                        <p className="text-xs text-[#a1a1aa] font-mono break-all">
+                            Active cycle: {data.cohort_cycle.active_cycle.cycle_id}
+                        </p>
+                        <p className="text-xs text-[#52525b] mt-1">
+                            Opened: {new Date(data.cohort_cycle.active_cycle.opened_at).toLocaleString()} ·
+                            Elapsed: {data.cohort_cycle.active_cycle.elapsed_days.toFixed(2)}d ·
+                            Outcomes in cycle: {data.cohort_cycle.active_cycle.outcomes_in_cycle}
+                        </p>
+                        {data.cohort_cycle.previous_cycle && (
+                            <p className="text-xs text-[#52525b] mt-1">
+                                Last close: {data.cohort_cycle.previous_cycle.close_reason ?? 'unknown'} at{' '}
+                                {data.cohort_cycle.previous_cycle.closed_at
+                                    ? new Date(data.cohort_cycle.previous_cycle.closed_at).toLocaleString()
+                                    : 'unknown'}
+                            </p>
+                        )}
                     </div>
                 )}
 

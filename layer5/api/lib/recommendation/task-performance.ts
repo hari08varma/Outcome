@@ -1,4 +1,5 @@
 import { supabase } from '../supabase.js';
+import { computeOutcomeEffectiveWeightForScore } from './outcome-weighting.js';
 
 export const ZERO_UUID_AGENT_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -156,7 +157,7 @@ async function getTaskResolutionRateByAction(
 ): Promise<Map<string, number>> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, outcome_score, success')
+        .select('action_id, outcome_score, success, timestamp')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -177,7 +178,12 @@ async function getTaskResolutionRateByAction(
         return new Map<string, number>();
     }
 
-    const grouped = new Map<string, { total: number; scoreSum: number }>();
+    const grouped = new Map<string, {
+        total: number;
+        score_sum: number;
+        weighted_score_sum: number;
+        weight_total: number;
+    }>();
 
     for (const row of data as Array<Record<string, unknown>>) {
         const actionId = typeof row.action_id === 'string' ? row.action_id : null;
@@ -187,16 +193,32 @@ async function getTaskResolutionRateByAction(
         const fallbackScore = row.success === true ? 1 : 0;
         const score = explicitScore ?? fallbackScore;
 
-        const current = grouped.get(actionId) ?? { total: 0, scoreSum: 0 };
+        const current = grouped.get(actionId) ?? {
+            total: 0,
+            score_sum: 0,
+            weighted_score_sum: 0,
+            weight_total: 0,
+        };
         current.total += 1;
-        current.scoreSum += score;
+        current.score_sum += score;
+
+        const timestamp = typeof row.timestamp === 'string' ? row.timestamp : null;
+        const effectiveWeight = computeOutcomeEffectiveWeightForScore(score, timestamp);
+        if (effectiveWeight > 0) {
+            current.weight_total += effectiveWeight;
+            current.weighted_score_sum += score * effectiveWeight;
+        }
+
         grouped.set(actionId, current);
     }
 
     const rates = new Map<string, number>();
     for (const [actionId, stats] of grouped.entries()) {
         if (stats.total <= 0) continue;
-        rates.set(actionId, Number((stats.scoreSum / stats.total).toFixed(4)));
+        const weightedRate = stats.weight_total > 0
+            ? stats.weighted_score_sum / stats.weight_total
+            : stats.score_sum / stats.total;
+        rates.set(actionId, Number(weightedRate.toFixed(4)));
     }
 
     return rates;
@@ -235,6 +257,8 @@ async function queryTaskPerformanceFromFacts(
         total_count: number;
         success_count: number;
         resolution_score_total: number;
+        resolution_weighted_score_total: number;
+        resolution_weight_total: number;
         last_seen_at: string | null;
     }>();
 
@@ -261,6 +285,8 @@ async function queryTaskPerformanceFromFacts(
             total_count: 0,
             success_count: 0,
             resolution_score_total: 0,
+            resolution_weighted_score_total: 0,
+            resolution_weight_total: 0,
             last_seen_at: null,
         };
 
@@ -271,9 +297,16 @@ async function queryTaskPerformanceFromFacts(
 
         const explicitScore = parseBoundedScore(row.outcome_score);
         const fallbackScore = row.success === true ? 1 : 0;
-        existing.resolution_score_total += explicitScore ?? fallbackScore;
+        const score = explicitScore ?? fallbackScore;
+        existing.resolution_score_total += score;
 
         const ts = typeof row.timestamp === 'string' ? row.timestamp : null;
+        const effectiveWeight = computeOutcomeEffectiveWeightForScore(score, ts);
+        if (effectiveWeight > 0) {
+            existing.resolution_weight_total += effectiveWeight;
+            existing.resolution_weighted_score_total += score * effectiveWeight;
+        }
+
         existing.last_seen_at = latestTimestamp(existing.last_seen_at, ts);
 
         grouped.set(key, existing);
@@ -289,7 +322,11 @@ async function queryTaskPerformanceFromFacts(
             ? Number((row.success_count / row.total_count).toFixed(4))
             : 0;
         const resolutionRate = row.total_count > 0
-            ? Number((row.resolution_score_total / row.total_count).toFixed(4))
+            ? Number((
+                row.resolution_weight_total > 0
+                    ? row.resolution_weighted_score_total / row.resolution_weight_total
+                    : row.resolution_score_total / row.total_count
+            ).toFixed(4))
             : successRate;
 
         return {
