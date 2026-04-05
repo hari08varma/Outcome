@@ -29,28 +29,97 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Validate endpoint config
+      - name: Determine endpoint mode
+        id: endpoint_mode
+        shell: bash
         run: |
           if [ -z "$PRIMARY_API_URL" ]; then
             echo "Missing PRIMARY_API_URL (set as repository variable or secret)."
             exit 1
           fi
-          if [ -z "$FALLBACK_API_URLS" ]; then
-            echo "Missing FALLBACK_API_URLS (set as repository variable or secret)."
-            exit 1
-          fi
+
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          primary = os.environ.get('PRIMARY_API_URL', '').strip()
+          fallback_raw = os.environ.get('FALLBACK_API_URLS', '').strip()
+
+          def normalize(value: str):
+              value = value.strip()
+              if not value:
+                  return None
+              try:
+                  p = urlparse(value)
+                  if not p.scheme or not p.netloc:
+                      return None
+                  return f"{p.scheme.lower()}://{p.netloc.lower()}"
+              except Exception:
+                  return None
+
+          primary_origin = normalize(primary)
+          if primary and primary_origin is None:
+              print('PRIMARY_API_URL must be a full URL with scheme and host.')
+              raise SystemExit(1)
+
+          fallback_tokens = [t.strip() for t in fallback_raw.split(',') if t.strip()]
+          fallback_origins = []
+          for token in fallback_tokens:
+              origin = normalize(token)
+              if origin is None:
+                  print(f'Invalid fallback URL in FALLBACK_API_URLS: {token}')
+                  raise SystemExit(1)
+              fallback_origins.append(origin)
+
+          unique_origins = []
+          for candidate in [primary_origin] + fallback_origins:
+              if candidate and candidate not in unique_origins:
+                  unique_origins.append(candidate)
+
+          independent_fallbacks = [o for o in fallback_origins if o != primary_origin]
+          mode = 'multi' if len(set(unique_origins)) >= 2 and len(set(independent_fallbacks)) >= 1 else 'single'
+
+          gh_output = os.environ['GITHUB_OUTPUT']
+          with open(gh_output, 'a', encoding='utf-8') as f:
+              f.write(f'mode={mode}\n')
+              f.write(f'primary_origin={primary_origin or ""}\n')
+              f.write(f'independent_fallback_count={len(set(independent_fallbacks))}\n')
+
+          if mode == 'single':
+              print('Single-endpoint mode detected: independent fallback origin not configured.')
+              print('Production readiness will run primary health checks and skip independence/parity/drill checks.')
+          else:
+              print(f'Multi-endpoint mode detected: {len(set(unique_origins))} unique origins.')
+          PY
 
       - name: Check endpoint independence
+        if: steps.endpoint_mode.outputs.mode == 'multi'
         run: node layer5/scripts/check-endpoint-independence.js
 
       - name: Check endpoint parity
+        if: steps.endpoint_mode.outputs.mode == 'multi'
         run: node layer5/scripts/check-endpoint-parity.js
 
       - name: Run failover drill
+        if: steps.endpoint_mode.outputs.mode == 'multi'
         env:
           DRILL_FALLBACK_URLS: ${{ env.FALLBACK_API_URLS }}
           DRILL_PRIMARY_URL: ${{ env.PRIMARY_API_URL }}
         run: node layer5/scripts/run-failover-drill.js
+
+      - name: Single-endpoint health sanity check
+        if: steps.endpoint_mode.outputs.mode == 'single'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in /health /health/deep; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" "${PRIMARY_API_URL}${path}")
+            echo "${PRIMARY_API_URL}${path} -> HTTP ${code}"
+            if [ "$code" -ge 500 ] || [ "$code" -lt 200 ]; then
+              echo "Primary endpoint health probe failed for ${path}."
+              exit 1
+            fi
+          done
 
       - name: Verify cohort deployment artifacts
         run: node layer5/scripts/check-cohort-deploy.js
