@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 import logging
 import os
 import threading
@@ -29,6 +30,7 @@ from .models import (
     ObservationSummary,
     RankedAction,
     Recommendation,
+    RecommendationDataFreshness,
     Suggestion,
 )
 
@@ -38,6 +40,16 @@ _VALID_MODES = ("recommend", "assist", "auto")
 _SDK_VERSION = "0.3.1"
 _DEFAULT_BASE_URL = "https://api.layerinfinite.app"
 _BASE_URLS_ENV = "LAYERINFINITE_BASE_URLS"
+_SCORES_CACHE_TTL_SECONDS = 15 * 60
+_RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60
+_OBSERVE_CACHE_TTL_SECONDS = 10 * 60
+_PENDING_OUTCOMES_FILE_ENV = "LAYERINFINITE_PENDING_OUTCOMES_FILE"
+_DEFAULT_PENDING_OUTCOMES_FILE = os.path.join(
+    os.path.expanduser("~"),
+    ".layerinfinite",
+    "pending_outcomes.jsonl",
+)
+_PENDING_REPLAY_INTERVAL_SECONDS = 5
 
 
 class Layerinfinite:
@@ -116,6 +128,22 @@ class Layerinfinite:
         self._base_urls = self._resolve_base_urls(self._base_url)
         self._endpoint_lock = threading.Lock()
         self._active_endpoint_index = 0
+        self._scores_cache_ttl_seconds = _SCORES_CACHE_TTL_SECONDS
+        self._scores_cache: Dict[str, tuple[float, GetScoresResponse]] = {}
+        self._scores_cache_lock = threading.Lock()
+        self._recommendation_cache_ttl_seconds = _RECOMMENDATION_CACHE_TTL_SECONDS
+        self._recommendation_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+        self._observe_cache_ttl_seconds = _OBSERVE_CACHE_TTL_SECONDS
+        self._observe_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+        self._snapshot_cache_lock = threading.Lock()
+
+        self._pending_outcomes_file = (
+            os.getenv(_PENDING_OUTCOMES_FILE_ENV, "").strip()
+            or _DEFAULT_PENDING_OUTCOMES_FILE
+        )
+        self._pending_outcomes_lock = threading.Lock()
+        self._pending_replay_interval_seconds = _PENDING_REPLAY_INTERVAL_SECONDS
+        self._last_pending_replay_attempt = 0.0
 
         self._actions: Dict[str, Dict[str, ActionEntry]] = {}
         self._registry_lock = threading.Lock()
@@ -181,6 +209,128 @@ class Layerinfinite:
             self._base_urls[next_idx],
             reason,
         )
+
+    def _cache_scores(self, task: str, scores: GetScoresResponse) -> None:
+        if not scores.ranked_actions and not scores.top_action:
+            return
+
+        with self._scores_cache_lock:
+            self._scores_cache[task] = (time.monotonic(), scores)
+
+    def _get_cached_scores(self, task: str) -> tuple[GetScoresResponse | None, float | None]:
+        with self._scores_cache_lock:
+            entry = self._scores_cache.get(task)
+
+        if entry is None:
+            return None, None
+
+        cached_at, cached_scores = entry
+        age_seconds = max(0.0, time.monotonic() - cached_at)
+
+        if age_seconds > self._scores_cache_ttl_seconds:
+            with self._scores_cache_lock:
+                self._scores_cache.pop(task, None)
+            return None, None
+
+        return cached_scores, age_seconds
+
+    def _cache_snapshot(
+        self,
+        cache: Dict[str, tuple[float, Dict[str, Any]]],
+        key: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        with self._snapshot_cache_lock:
+            cache[key] = (time.monotonic(), dict(payload))
+
+    def _get_cached_snapshot(
+        self,
+        cache: Dict[str, tuple[float, Dict[str, Any]]],
+        key: str,
+        ttl_seconds: float,
+    ) -> tuple[Dict[str, Any] | None, float | None]:
+        with self._snapshot_cache_lock:
+            entry = cache.get(key)
+
+        if entry is None:
+            return None, None
+
+        cached_at, payload = entry
+        age_seconds = max(0.0, time.monotonic() - cached_at)
+        if age_seconds > ttl_seconds:
+            with self._snapshot_cache_lock:
+                cache.pop(key, None)
+            return None, None
+
+        return dict(payload), age_seconds
+
+    def _enqueue_pending_outcome(self, payload: Dict[str, Any]) -> None:
+        if not payload:
+            return
+
+        path = self._pending_outcomes_file
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        with self._pending_outcomes_lock:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, default=str) + "\n")
+
+    def _flush_pending_outcomes(self) -> tuple[int, int]:
+        path = self._pending_outcomes_file
+        if not os.path.exists(path):
+            return (0, 0)
+
+        with self._pending_outcomes_lock:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    queued = [json.loads(line) for line in f if line.strip()]
+            except Exception as exc:
+                logger.warning("[layerinfinite] Failed reading pending outcomes queue: %s", exc)
+                return (0, 0)
+
+            if not queued:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                return (0, 0)
+
+            sent = 0
+            remaining: List[Dict[str, Any]] = []
+            for idx, payload in enumerate(queued):
+                try:
+                    self._request("POST", "/v1/log-outcome", json=payload)
+                    sent += 1
+                except Exception as exc:
+                    logger.warning(
+                        "[layerinfinite] Pending outcome replay paused (%d sent): %s",
+                        sent,
+                        exc,
+                    )
+                    remaining.extend(queued[idx:])
+                    break
+
+            if remaining:
+                with open(path, "w", encoding="utf-8") as f:
+                    for payload in remaining:
+                        f.write(json.dumps(payload, default=str) + "\n")
+            else:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+            return (sent, len(remaining))
+
+    def _maybe_replay_pending_outcomes(self) -> tuple[int, int]:
+        now = time.monotonic()
+        if (now - self._last_pending_replay_attempt) < self._pending_replay_interval_seconds:
+            return (0, 0)
+
+        self._last_pending_replay_attempt = now
+        return self._flush_pending_outcomes()
 
     def action(
         self,
@@ -544,13 +694,94 @@ class Layerinfinite:
                 retry_server_errors=False,
             )
             data = resp.json()
+            self._cache_snapshot(self._recommendation_cache, task, data)
         except LayerinfiniteServerError as exc:
-            logger.warning(
-                "[layerinfinite] recommend() backend unavailable: %s. "
-                "Returning no_data recommendation.",
-                exc,
+            cached_data, age_seconds = self._get_cached_snapshot(
+                self._recommendation_cache,
+                task,
+                self._recommendation_cache_ttl_seconds,
             )
-            data = {}
+            if cached_data is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] recommend() backend unavailable: %s. Using cached recommendation from %.1fs ago.",
+                    exc,
+                    age_seconds,
+                )
+                data = cached_data
+            else:
+                logger.warning(
+                    "[layerinfinite] recommend() backend unavailable: %s. "
+                    "Returning no_data recommendation.",
+                    exc,
+                )
+                data = {}
+        except LayerinfiniteError as exc:
+            cached_data, age_seconds = self._get_cached_snapshot(
+                self._recommendation_cache,
+                task,
+                self._recommendation_cache_ttl_seconds,
+            )
+            if cached_data is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] recommend() network issue: %s. Using cached recommendation from %.1fs ago.",
+                    exc,
+                    age_seconds,
+                )
+                data = cached_data
+            else:
+                logger.warning(
+                    "[layerinfinite] recommend() network issue: %s. "
+                    "Returning no_data recommendation.",
+                    exc,
+                )
+                data = {}
+        except Exception as exc:
+            cached_data, age_seconds = self._get_cached_snapshot(
+                self._recommendation_cache,
+                task,
+                self._recommendation_cache_ttl_seconds,
+            )
+            if cached_data is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] recommend() unexpected error: %s. Using cached recommendation from %.1fs ago.",
+                    exc,
+                    age_seconds,
+                )
+                data = cached_data
+            else:
+                logger.warning(
+                    "[layerinfinite] recommend() unexpected error: %s. "
+                    "Returning no_data recommendation.",
+                    exc,
+                )
+                data = {}
+
+        freshness_raw = data.get("data_freshness")
+        freshness: RecommendationDataFreshness | None = None
+        if isinstance(freshness_raw, dict):
+            source_raw = str(freshness_raw.get("source", "unknown"))
+            source = source_raw if source_raw in {"mv", "fact_fallback", "unknown"} else "unknown"
+
+            age_raw = freshness_raw.get("age_hours")
+            age_hours: float | None
+            try:
+                age_hours = float(age_raw) if age_raw is not None else None
+            except (TypeError, ValueError):
+                age_hours = None
+
+            stale_threshold_raw = freshness_raw.get("stale_threshold_hours", 72)
+            try:
+                stale_threshold = int(stale_threshold_raw)
+            except (TypeError, ValueError):
+                stale_threshold = 72
+
+            freshness = RecommendationDataFreshness(
+                source=source,  # type: ignore[arg-type]
+                last_seen_at=freshness_raw.get("last_seen_at"),
+                age_hours=age_hours,
+                is_stale=bool(freshness_raw.get("is_stale", False)),
+                stale_threshold_hours=stale_threshold,
+            )
 
         rec = Recommendation(
             task=task,
@@ -558,6 +789,7 @@ class Layerinfinite:
             problem=data.get("problem"),
             recommendation=data.get("recommendation"),
             expected_improvement=data.get("expected_improvement"),
+            data_freshness=freshness,
             reason=data.get("reason"),
             confidence=data.get("confidence"),
         )
@@ -575,6 +807,15 @@ class Layerinfinite:
             print(f"  Reason:     {rec.reason}")
         if rec.confidence is not None:
             print(f"  Confidence: {round(rec.confidence * 100)}%")
+        if rec.data_freshness and rec.data_freshness.is_stale:
+            age_text = (
+                f"{rec.data_freshness.age_hours:.1f}h"
+                if rec.data_freshness.age_hours is not None
+                else "unknown age"
+            )
+            print(
+                f"  Freshness:  stale ({age_text}) from {rec.data_freshness.source}"
+            )
         print("")
 
         return rec
@@ -616,21 +857,91 @@ class Layerinfinite:
                 retry_server_errors=False,
             )
             data = resp.json()
+            self._cache_snapshot(self._observe_cache, task, data)
         except LayerinfiniteServerError as exc:
-            logger.warning(
-                "[layerinfinite] observe() backend unavailable: %s. "
-                "Returning cold-start observation.",
-                exc,
+            cached_data, age_seconds = self._get_cached_snapshot(
+                self._observe_cache,
+                task,
+                self._observe_cache_ttl_seconds,
             )
-            data = {
-                "task": task,
-                "total_runs": 0,
-                "success_rate": 0.0,
-                "actions_seen": [],
-                "best_performing": None,
-                "worst_performing": None,
-                "last_run": None,
-            }
+            if cached_data is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] observe() backend unavailable: %s. Using cached snapshot from %.1fs ago.",
+                    exc,
+                    age_seconds,
+                )
+                data = cached_data
+            else:
+                logger.warning(
+                    "[layerinfinite] observe() backend unavailable: %s. "
+                    "Returning cold-start observation.",
+                    exc,
+                )
+                data = {
+                    "task": task,
+                    "total_runs": 0,
+                    "success_rate": 0.0,
+                    "actions_seen": [],
+                    "best_performing": None,
+                    "worst_performing": None,
+                    "last_run": None,
+                }
+        except LayerinfiniteError as exc:
+            cached_data, age_seconds = self._get_cached_snapshot(
+                self._observe_cache,
+                task,
+                self._observe_cache_ttl_seconds,
+            )
+            if cached_data is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] observe() network issue: %s. Using cached snapshot from %.1fs ago.",
+                    exc,
+                    age_seconds,
+                )
+                data = cached_data
+            else:
+                logger.warning(
+                    "[layerinfinite] observe() network issue: %s. "
+                    "Returning cold-start observation.",
+                    exc,
+                )
+                data = {
+                    "task": task,
+                    "total_runs": 0,
+                    "success_rate": 0.0,
+                    "actions_seen": [],
+                    "best_performing": None,
+                    "worst_performing": None,
+                    "last_run": None,
+                }
+        except Exception as exc:
+            cached_data, age_seconds = self._get_cached_snapshot(
+                self._observe_cache,
+                task,
+                self._observe_cache_ttl_seconds,
+            )
+            if cached_data is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] observe() unexpected error: %s. Using cached snapshot from %.1fs ago.",
+                    exc,
+                    age_seconds,
+                )
+                data = cached_data
+            else:
+                logger.warning(
+                    "[layerinfinite] observe() unexpected error: %s. "
+                    "Returning cold-start observation.",
+                    exc,
+                )
+                data = {
+                    "task": task,
+                    "total_runs": 0,
+                    "success_rate": 0.0,
+                    "actions_seen": [],
+                    "best_performing": None,
+                    "worst_performing": None,
+                    "last_run": None,
+                }
 
         obs = ObservationSummary(
             task=data["task"],
@@ -722,14 +1033,42 @@ class Layerinfinite:
 
         def _send() -> None:
             try:
-                self._request("POST", "/v1/log-outcome", json=payload)
+                replayed, remaining = self._maybe_replay_pending_outcomes()
+                if replayed > 0:
+                    logger.info(
+                        "[layerinfinite] Replayed pending outcomes: sent=%d remaining=%d",
+                        replayed,
+                        remaining,
+                    )
             except Exception as exc:
+                logger.debug("[layerinfinite] Pending replay skipped: %s", exc)
+
+            try:
+                self._request("POST", "/v1/log-outcome", json=payload)
+            except LayerinfiniteAuthError as exc:
                 logger.warning(
-                    "[layerinfinite] Failed to log outcome for %s/%s: %s",
+                    "[layerinfinite] Failed to log outcome for %s/%s due to auth error (not queued): %s",
                     task,
                     action_name,
                     exc,
                 )
+            except Exception as exc:
+                try:
+                    self._enqueue_pending_outcome(payload)
+                    logger.warning(
+                        "[layerinfinite] Failed to log outcome for %s/%s: %s. Queued for replay.",
+                        task,
+                        action_name,
+                        exc,
+                    )
+                except Exception as queue_exc:
+                    logger.warning(
+                        "[layerinfinite] Failed to log outcome for %s/%s: %s (queue write failed: %s)",
+                        task,
+                        action_name,
+                        exc,
+                        queue_exc,
+                    )
 
         if self._log_async:
             threading.Thread(target=_send, daemon=True).start()
@@ -830,10 +1169,29 @@ class Layerinfinite:
             scores = GetScoresResponse.model_validate(resp.json())
             if not scores.ranked_actions and not scores.top_action:
                 return None
+            self._cache_scores(task, scores)
             return scores
-        except LayerinfiniteError:
+        except LayerinfiniteError as exc:
+            cached_scores, age_seconds = self._get_cached_scores(task)
+            if cached_scores is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] _fetch_scores failed for %s; using cached ranking from %.1fs ago: %s",
+                    task,
+                    age_seconds,
+                    exc,
+                )
+                return cached_scores
             raise
         except Exception as exc:
+            cached_scores, age_seconds = self._get_cached_scores(task)
+            if cached_scores is not None and age_seconds is not None:
+                logger.warning(
+                    "[layerinfinite] _fetch_scores hit unexpected error for %s; using cached ranking from %.1fs ago: %s",
+                    task,
+                    age_seconds,
+                    exc,
+                )
+                return cached_scores
             logger.warning("[layerinfinite] _fetch_scores failed: %s", exc)
             return None
 
@@ -902,8 +1260,9 @@ class Layerinfinite:
         - 401, 404, other 4xx: raise immediately (no retry)
         """
         last_exc: Exception | None = None
+        total_attempts = self._max_retries + 1
 
-        for attempt in range(self._max_retries + 1):
+        for attempt in range(total_attempts):
             endpoint_idx, client, endpoint_base_url = self._current_http_client()
             try:
                 logger.debug(
@@ -921,7 +1280,7 @@ class Layerinfinite:
                         "[layerinfinite] Rate limited. Waiting %ds (attempt %d/%d).",
                         retry_after,
                         attempt + 1,
-                        self._max_retries,
+                        total_attempts,
                     )
                     time.sleep(retry_after)
                     continue
@@ -938,7 +1297,7 @@ class Layerinfinite:
                         resp.status_code,
                         wait,
                         attempt + 1,
-                        self._max_retries,
+                        total_attempts,
                     )
                     time.sleep(wait)
                     continue
@@ -960,7 +1319,7 @@ class Layerinfinite:
                     "[layerinfinite] Timeout via %s (attempt %d/%d). Backing off %ds.",
                     endpoint_base_url,
                     attempt + 1,
-                    self._max_retries,
+                    total_attempts,
                     wait,
                 )
                 if attempt >= self._max_retries:
@@ -975,7 +1334,7 @@ class Layerinfinite:
                     endpoint_base_url,
                     exc,
                     attempt + 1,
-                    self._max_retries,
+                    total_attempts,
                     wait,
                 )
                 if attempt >= self._max_retries:

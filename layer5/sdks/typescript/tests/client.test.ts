@@ -48,6 +48,27 @@ const MOCK_LOG_OUTCOME_BODY_LEGACY_DEGRADED = {
     policy: 'SANDBOX',
 };
 
+const MOCK_RECOMMENDATION_BODY = {
+    task: 'billing_dispute',
+    state: 'stable',
+    problem: 'retry_with_backoff underperforms',
+    recommendation: 'escalate_to_senior',
+    expected_improvement: {
+        baseline: '62.0%',
+        improved: '79.0%',
+        delta: '+17.0%',
+    },
+    data_freshness: {
+        source: 'mv',
+        last_seen_at: '2026-04-05T10:00:00.000Z',
+        age_hours: 4,
+        is_stale: false,
+        stale_threshold_hours: 72,
+    },
+    reason: 'historically strongest action',
+    confidence: 0.91,
+};
+
 function mockResponse(
     body: unknown,
     status = 200,
@@ -214,5 +235,20 @@ describe('LayerinfiniteClient', () => {
         expect(new URL(secondUrl).origin).toBe(secondaryBaseUrl);
         expect(new URL(secondUrl).pathname).toBe('/v1/get-scores');
         expect(new URL(secondUrl).searchParams.get('issue_type')).toBe('billing_dispute');
+    });
+
+    it('Test 7: recommend maps data_freshness to typed dataFreshness', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_RECOMMENDATION_BODY));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        const rec = await client.recommend('billing_dispute');
+
+        expect(rec.task).toBe('billing_dispute');
+        expect(rec.recommendation).toBe('escalate_to_senior');
+        expect(rec.dataFreshness).not.toBeNull();
+        expect(rec.dataFreshness?.source).toBe('mv');
+        expect(rec.dataFreshness?.ageHours).toBe(4);
+        expect(rec.dataFreshness?.isStale).toBe(false);
+        expect(rec.dataFreshness?.staleThresholdHours).toBe(72);
     });
 });

@@ -2,7 +2,7 @@
 -- LAYERINFINITE — Migration 061: Fix mv_action_scores confidence floor
 -- ============================================================
 -- Fixes:
---   1) confidence denominator n+10 -> n+5
+--   1) enforce canonical confidence denominator n+10
 --   2) trend_delta NULL -> 0.0 via COALESCE wrapper
 -- ============================================================
 
@@ -37,9 +37,9 @@ SELECT
     4
   ) AS weighted_success_rate,
   -- Confidence: based on sample count using Wilson score lower bound approximation
-  -- confidence = n / (n + 5) — ranges from ~0 (n=0) to 1.0 (n=∞)
+  -- confidence = n / (n + 10) — ranges from ~0 (n=0) to 1.0 (n=∞)
   ROUND(
-    COUNT(*)::NUMERIC / NULLIF(COUNT(*) + 5, 0),
+    COUNT(*)::NUMERIC / NULLIF(COUNT(*) + 10, 0),
     4
   ) AS confidence,
   -- Total attempts (used for confidence and trend calculations)

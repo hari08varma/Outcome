@@ -47,8 +47,15 @@ describe('task performance fallback', () => {
         ];
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
-            expect(table).toBe('mv_task_action_performance');
-            return makeQuery({ data: mvRows, error: null }) as any;
+            if (table === 'mv_task_action_performance') {
+                return makeQuery({ data: mvRows, error: null }) as any;
+            }
+
+            if (table === 'fact_outcomes') {
+                return makeQuery({ data: [], error: null }) as any;
+            }
+
+            throw new Error(`unexpected table: ${table}`);
         });
 
         const result = await fetchTaskActionPerformance({
@@ -70,6 +77,7 @@ describe('task performance fallback', () => {
         });
         expect(vi.mocked(supabase.from).mock.calls.map((c) => c[0])).toEqual([
             'mv_task_action_performance',
+            'fact_outcomes',
         ]);
     });
 

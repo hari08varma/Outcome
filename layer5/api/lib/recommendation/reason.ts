@@ -2,10 +2,18 @@ import type {
     RecommendationResult,
     RecommendationState,
 } from './engine.js';
-import { MIN_SAMPLES, MIN_SAMPLES_STABLE, MIN_SAMPLES_HIGH_CONFIDENCE } from './engine.js';
+import { MIN_SAMPLES, MIN_SAMPLES_STABLE, MIN_SAMPLES_HIGH_CONFIDENCE } from './constants.js';
 
 function pct(rate: number): string {
     return `${(rate * 100).toFixed(1)}%`;
+}
+
+function resolutionMetric(action: { resolution_rate: number; success_rate: number }): number {
+    const resolution = Number(action.resolution_rate);
+    if (Number.isFinite(resolution)) {
+        return resolution;
+    }
+    return Number(action.success_rate ?? 0);
 }
 
 type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
@@ -78,7 +86,7 @@ function templateNoData(
             .join('; ');
         return (
             `"${l.name}" is the leading action for "${taskName}" ` +
-            `(${l.total} outcomes, ${(l.rate * 100).toFixed(1)}% success rate). ` +
+            `(${l.total} outcomes, ${(l.rate * 100).toFixed(1)}% resolution score). ` +
             `A second qualified action is needed to generate a recommendation. ` +
             (needing ? `Progress: ${needing}.` : `Log more outcomes for other actions.`)
         );
@@ -262,7 +270,7 @@ function buildMonitorSteps(
     if (bestRate !== undefined) {
         steps.push(
             `Keep using "${bestAction}" as your primary action ` +
-            `(current success rate: ${(bestRate * 100).toFixed(1)}%).`
+            `(current resolution score: ${(bestRate * 100).toFixed(1)}%).`
         );
     } else {
         steps.push(`Keep using "${bestAction}" as your primary action.`);
@@ -312,19 +320,21 @@ function wilsonMargin(successRate: number, n: number): string {
 }
 
 function buildActionUncertainty(
-    best: { action_name: string; success_rate: number; total_count: number },
-    worst: { action_name: string; success_rate: number; total_count: number },
+    best: { action_name: string; resolution_rate: number; success_rate: number; total_count: number },
+    worst: { action_name: string; resolution_rate: number; success_rate: number; total_count: number },
 ): ActionableOutput['action_uncertainty'] {
+    const bestRate = resolutionMetric(best);
+    const worstRate = resolutionMetric(worst);
     return {
         best: {
             action: best.action_name,
-            rate_pct: `${(best.success_rate * 100).toFixed(1)}%`,
-            margin_pct: wilsonMargin(best.success_rate, best.total_count),
+            rate_pct: `${(bestRate * 100).toFixed(1)}%`,
+            margin_pct: wilsonMargin(bestRate, best.total_count),
         },
         worst: {
             action: worst.action_name,
-            rate_pct: `${(worst.success_rate * 100).toFixed(1)}%`,
-            margin_pct: wilsonMargin(worst.success_rate, worst.total_count),
+            rate_pct: `${(worstRate * 100).toFixed(1)}%`,
+            margin_pct: wilsonMargin(worstRate, worst.total_count),
         },
     };
 }
@@ -353,15 +363,19 @@ function buildInsight(r: RecommendationResult): ActionableOutput['insight'] {
             sample_size: null,
         };
     }
+    const bestRate = resolutionMetric(r.best_action);
+    const worstRate = r.worst_action
+        ? resolutionMetric(r.worst_action)
+        : null;
     return {
         best_action: r.best_action.action_name,
-        best_rate: Number(r.best_action.success_rate.toFixed(4)),
+        best_rate: Number(bestRate.toFixed(4)),
         worst_action: r.worst_action?.action_name ?? null,
-        worst_rate: r.worst_action
-            ? Number(r.worst_action.success_rate.toFixed(4))
+        worst_rate: worstRate !== null
+            ? Number(worstRate.toFixed(4))
             : null,
-        delta: r.worst_action
-            ? Number((r.best_action.success_rate - r.worst_action.success_rate).toFixed(4))
+        delta: worstRate !== null
+            ? Number((bestRate - worstRate).toFixed(4))
             : null,
         sample_size: r.worst_action
             ? { best: r.best_action.total_count, worst: r.worst_action.total_count }
@@ -430,6 +444,8 @@ function buildReason(
 
     const b = r.best_action!;
     const w = r.worst_action!;
+    const bestRate = resolutionMetric(b);
+    const worstRate = resolutionMetric(w);
     const confText = `${confidenceMeta.percent}% confidence`;
     const uncertainNote = confidenceMeta.label === 'low' || confidenceMeta.label === 'none'
         ? ' — result may change with more data'
@@ -438,12 +454,12 @@ function buildReason(
             : '';
 
     if (r.state === 'early_signal') {
-        const delta = b.success_rate - w.success_rate;
+        const delta = bestRate - worstRate;
         return {
             summary: delta < 0.08
                 ? `${b.action_name} and ${w.action_name} perform similarly`
                 : `${b.action_name} outperforms ${w.action_name}`,
-            evidence: `${pct(b.success_rate)} vs ${pct(w.success_rate)} (${b.total_count} and ${w.total_count} runs)`,
+            evidence: `${pct(bestRate)} vs ${pct(worstRate)} (${b.total_count} and ${w.total_count} runs)`,
             confidence_note: `${confText}${uncertainNote}`,
         };
     }
@@ -487,6 +503,14 @@ export function buildActionableOutput(
 
     if (r.state === 'no_data') {
         const trustBlocked = (r as any)._trust_gate_blocked === true;
+        const noDataInsight: ActionableOutput['insight'] = {
+            best_action: null,
+            best_rate: null,
+            worst_action: null,
+            worst_rate: null,
+            delta: null,
+            sample_size: null,
+        };
         return {
             ...base,
             decision: {
@@ -504,7 +528,7 @@ export function buildActionableOutput(
             validated: 'insufficient_data' as const,
             confidence_explanation: 'Not enough data to estimate confidence yet. ' +
                 `Log outcomes with task_name="${r.task}" to unlock a recommendation.`,
-            insight: buildInsight(r),
+            insight: noDataInsight,
             message: buildMessage('no_data', false, confidenceMeta, null, null),
             validation_hint: null,
             sample_size: null,
@@ -521,7 +545,9 @@ export function buildActionableOutput(
     if (r.state === 'early_signal') {
         const b = r.best_action!;
         const w = r.worst_action!;
-        const delta = b.success_rate - w.success_rate;
+        const bestRate = resolutionMetric(b);
+        const worstRate = resolutionMetric(w);
+        const delta = bestRate - worstRate;
         const lastSeen = b.last_seen_at || w.last_seen_at || null;
         return {
             ...base,
@@ -533,13 +559,13 @@ export function buildActionableOutput(
                 if (delta < 0.08) {
                     return (
                         `${b.action_name} and ${w.action_name} perform similarly ` +
-                        `(${pct(b.success_rate)} vs ${pct(w.success_rate)}, ` +
+                        `(${pct(bestRate)} vs ${pct(worstRate)}, ` +
                         `${b.total_count} and ${w.total_count} outcomes - monitoring)`
                     );
                 }
                 return (
                     `${w.action_name} is underperforming ` +
-                    `(${pct(w.success_rate)} success rate, ` +
+                    `(${pct(worstRate)} resolution score, ` +
                     `${w.total_count} outcomes - early data)`
                 );
             })(),
@@ -549,8 +575,8 @@ export function buildActionableOutput(
             expected_improvement: (() => {
                 if (delta <= 0) return null;
                 return {
-                    baseline: pct(w.success_rate),
-                    improved: pct(b.success_rate),
+                    baseline: pct(worstRate),
+                    improved: pct(bestRate),
                     delta: `+${(delta * 100).toFixed(1)}% (early estimate)`,
                     delta_raw: Number(delta.toFixed(4)),
                     based_on_samples: r.min_sample_count,
@@ -584,7 +610,7 @@ export function buildActionableOutput(
                 if (delta < 0.08) {
                     return (
                         `${b.action_name} and ${w.action_name} are performing ` +
-                        `similarly (${pct(b.success_rate)} vs ${pct(w.success_rate)}). ` +
+                        `similarly (${pct(bestRate)} vs ${pct(worstRate)}). ` +
                         `Continue collecting data before making a switch.`
                     );
                 }
@@ -613,9 +639,9 @@ export function buildActionableOutput(
                 MIN_SAMPLES_HIGH_CONFIDENCE,
                 b.action_name,
                 r.task,
-                b.success_rate,
+                bestRate,
                 w.action_name,
-                w.success_rate,
+                worstRate,
                 Math.round((r.confidence ?? 0) * 100),
             ),
             unlock_hint: buildUnlockHint(
@@ -650,7 +676,7 @@ export function buildActionableOutput(
         },
         problem: (
             `${w.action_name} is underperforming ` +
-            `(${pct(imp.baseline_rate)} success rate, ` +
+            `(${pct(imp.baseline_rate)} resolution score, ` +
             `${w.total_count} outcomes)`
         ),
         risk_context: (r as any)._silent_failure_warning
@@ -722,9 +748,9 @@ export function buildActionableOutput(
             MIN_SAMPLES_HIGH_CONFIDENCE,
             b.action_name,
             r.task,
-            b.success_rate,
+            resolutionMetric(b),
             w.action_name,
-            w.success_rate,
+            resolutionMetric(w),
             Math.round((r.confidence ?? 0) * 100),
         ),
         unlock_hint: shouldAct ? null : buildUnlockHint(

@@ -18,7 +18,7 @@ export interface ScoredAction {
 export interface GetScoresResponse {
     ranked_actions: ScoredAction[];
     top_action: ScoredAction | null;
-    policy: 'exploit' | 'explore' | 'escalate';
+    policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX';
     cold_start: boolean;
     context_id: string;
     agent_id: string;
@@ -115,6 +115,14 @@ export interface Suggestion {
     ranked: RankedAction[];
 }
 
+export interface RecommendationDataFreshness {
+    source: 'mv' | 'fact_fallback' | 'unknown';
+    lastSeenAt: string | null;
+    ageHours: number | null;
+    isStale: boolean;
+    staleThresholdHours: number;
+}
+
 export interface Recommendation {
     task: string;
     state: 'no_data' | 'early_signal' | 'close' | 'stable';
@@ -125,6 +133,7 @@ export interface Recommendation {
         improved: string;
         delta: string;
     } | null;
+    dataFreshness: RecommendationDataFreshness | null;
     reason: string | null;
     confidence: number | null;
 }

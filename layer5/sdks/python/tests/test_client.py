@@ -8,6 +8,7 @@ Run with: pytest tests/test_client.py -v
 from __future__ import annotations
 
 import inspect
+import json
 import httpx
 import pytest
 import respx
@@ -15,6 +16,7 @@ import respx
 from layerinfinite import (
     LayerinfiniteClient,
     LayerinfiniteAuthError,
+    LayerinfiniteError,
     LayerinfiniteRateLimitError,
     LogOutcomeRequest,
 )
@@ -51,6 +53,27 @@ MOCK_LOG_OUTCOME_RESPONSE = {
     "agent_trust_score": 0.74,
     "trust_status": "trusted",
     "policy": "exploit",
+}
+
+MOCK_RECOMMENDATION_RESPONSE = {
+    "task": "billing_dispute",
+    "state": "stable",
+    "problem": "retry_with_backoff underperforms",
+    "recommendation": "escalate_to_senior",
+    "expected_improvement": {
+        "baseline": "62.0%",
+        "improved": "79.0%",
+        "delta": "+17.0%",
+    },
+    "data_freshness": {
+        "source": "mv",
+        "last_seen_at": "2026-04-05T10:00:00.000Z",
+        "age_hours": 4,
+        "is_stale": False,
+        "stale_threshold_hours": 72,
+    },
+    "reason": "historically strongest action",
+    "confidence": 0.91,
 }
 
 
@@ -163,6 +186,70 @@ def test_log_outcome_normalizes_legacy_degraded_status_to_sandbox():
     assert response.trust_status == "sandbox"
 
 
+def test_log_outcome_queues_and_replays_after_network_recovery(tmp_path, monkeypatch):
+    pending_file = tmp_path / "pending_outcomes.jsonl"
+    monkeypatch.setenv("LAYERINFINITE_PENDING_OUTCOMES_FILE", str(pending_file))
+
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        log_async=False,
+        auto_register=False,
+    )
+
+    network_up = {'value': False}
+    posted_session_ids: list[str] = []
+
+    def fake_request(method, path, **kwargs):
+        if method == 'POST' and path == '/v1/log-outcome':
+            payload = kwargs.get('json', {})
+            posted_session_ids.append(payload.get('session_id', ''))
+            if not network_up['value']:
+                raise LayerinfiniteError("Network error: getaddrinfo failed")
+            return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+    client._pending_replay_interval_seconds = 0
+
+    client._log_outcome(
+        task='billing_dispute',
+        action_name='first_attempt',
+        success=True,
+        session_id='session-1',
+        latency_ms=120,
+        outcome_score=0.82,
+    )
+
+    assert pending_file.exists()
+    queued_payloads = [
+        json.loads(line)
+        for line in pending_file.read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert len(queued_payloads) == 1
+    assert queued_payloads[0]['session_id'] == 'session-1'
+
+    network_up['value'] = True
+
+    client._log_outcome(
+        task='billing_dispute',
+        action_name='second_attempt',
+        success=True,
+        session_id='session-2',
+        latency_ms=80,
+        outcome_score=0.91,
+    )
+
+    if pending_file.exists():
+        assert pending_file.read_text(encoding='utf-8').strip() == ''
+
+    assert posted_session_ids.count('session-1') == 2
+    assert posted_session_ids.count('session-2') == 1
+
+
 # ── Test 5: context manager properly closes session ────────────
 def test_context_manager_closes_session():
     client_ref = None
@@ -203,6 +290,171 @@ def test_get_scores_fails_over_to_secondary_endpoint_on_dns_error(monkeypatch):
     assert response.top_action.action_name == "escalate_to_senior"
     assert primary_route.called
     assert secondary_route.called
+
+
+def test_fetch_scores_uses_recent_cache_on_network_error(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    calls = {'scores': 0}
+
+    def fake_request(method, path, **kwargs):
+        if method == 'GET' and path == '/v1/get-scores':
+            calls['scores'] += 1
+            if calls['scores'] == 1:
+                return httpx.Response(200, json=MOCK_GET_SCORES_RESPONSE)
+            raise LayerinfiniteError("Network error: getaddrinfo failed")
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    first = client.scores('billing_dispute')
+    second = client.scores('billing_dispute')
+
+    assert first.top_action is not None
+    assert first.top_action.action_name == 'escalate_to_senior'
+    assert second.top_action is not None
+    assert second.top_action.action_name == 'escalate_to_senior'
+    assert calls['scores'] == 2
+
+
+def test_run_uses_cached_ranking_when_get_scores_temporarily_unreachable(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        mode='auto',
+        auto_register=False,
+    )
+
+    executed: list[str] = []
+
+    def first_action(**kwargs):
+        executed.append('first_action')
+        return {'ok': True, 'action': 'first_action'}
+
+    def best_action(**kwargs):
+        executed.append('best_action')
+        return {'ok': True, 'action': 'best_action'}
+
+    client.register_action('billing_dispute', 'first_action', first_action)
+    client.register_action('billing_dispute', 'best_action', best_action)
+
+    ranked_payload = {
+        **MOCK_GET_SCORES_RESPONSE,
+        'ranked_actions': [
+            {**MOCK_SCORED_ACTION, 'action_name': 'best_action', 'composite_score': 0.93},
+            {**MOCK_SCORED_ACTION, 'action_name': 'first_action', 'composite_score': 0.21},
+        ],
+        'top_action': {**MOCK_SCORED_ACTION, 'action_name': 'best_action', 'composite_score': 0.93},
+    }
+
+    calls = {'scores': 0}
+
+    def fake_request(method, path, **kwargs):
+        if method == 'GET' and path == '/v1/get-scores':
+            calls['scores'] += 1
+            if calls['scores'] == 1:
+                return httpx.Response(200, json=ranked_payload)
+            raise LayerinfiniteError("Network error: getaddrinfo failed")
+        if method == 'POST' and path == '/v1/log-outcome':
+            return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    # Prime cache while scoring endpoint is reachable.
+    primed = client.scores('billing_dispute')
+    assert primed.top_action is not None
+    assert primed.top_action.action_name == 'best_action'
+
+    result = client.run('billing_dispute', ticket_id='t-1')
+
+    assert result['action'] == 'best_action'
+    assert executed[0] == 'best_action'
+
+
+def test_recommend_uses_cached_snapshot_on_network_error(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    calls = {'recommend': 0}
+    recommendation_payload = {
+        'state': 'high_confidence',
+        'problem': 'billing_dispute is recurring',
+        'recommendation': 'escalate_to_senior',
+        'expected_improvement': {'baseline': '62%', 'improved': '79%', 'delta': '+17%'},
+        'reason': 'historically strongest action',
+        'confidence': 0.91,
+    }
+
+    def fake_request(method, path, **kwargs):
+        if method == 'GET' and path.startswith('/v1/recommendations'):
+            calls['recommend'] += 1
+            if calls['recommend'] == 1:
+                return httpx.Response(200, json=recommendation_payload)
+            raise LayerinfiniteError('Network error: getaddrinfo failed')
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    first = client.recommend('billing_dispute')
+    second = client.recommend('billing_dispute')
+
+    assert first.recommendation == 'escalate_to_senior'
+    assert second.recommendation == 'escalate_to_senior'
+    assert second.state == 'high_confidence'
+    assert calls['recommend'] == 2
+
+
+def test_observe_uses_cached_snapshot_on_network_error(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    calls = {'observe': 0}
+    observe_payload = {
+        'task': 'billing_dispute',
+        'total_runs': 25,
+        'success_rate': 0.84,
+        'actions_seen': ['escalate_to_senior', 'retry_with_context'],
+        'best_performing': 'escalate_to_senior',
+        'worst_performing': 'retry_with_context',
+        'last_run': '2026-04-05T02:00:00+00:00',
+    }
+
+    def fake_request(method, path, **kwargs):
+        if method == 'GET' and path.startswith('/v1/observe'):
+            calls['observe'] += 1
+            if calls['observe'] == 1:
+                return httpx.Response(200, json=observe_payload)
+            raise LayerinfiniteError('Network error: getaddrinfo failed')
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    first = client.observe('billing_dispute')
+    second = client.observe('billing_dispute')
+
+    assert first.task == 'billing_dispute'
+    assert second.task == 'billing_dispute'
+    assert second.total_runs == 25
+    assert second.best_performing == 'escalate_to_senior'
+    assert calls['observe'] == 2
+
+
+@respx.mock
+def test_recommend_maps_data_freshness():
+    respx.get(f"{BASE_URL}/v1/recommendations").mock(
+        return_value=httpx.Response(200, json=MOCK_RECOMMENDATION_RESPONSE)
+    )
+
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+    rec = client.recommend('billing_dispute')
+
+    assert rec.task == 'billing_dispute'
+    assert rec.recommendation == 'escalate_to_senior'
+    assert rec.data_freshness is not None
+    assert rec.data_freshness.source == 'mv'
+    assert rec.data_freshness.age_hours == pytest.approx(4.0)
+    assert rec.data_freshness.is_stale is False
+    assert rec.data_freshness.stale_threshold_hours == 72
 
 
 def test_run_uses_entry_score_fn_for_outcome_score(monkeypatch):

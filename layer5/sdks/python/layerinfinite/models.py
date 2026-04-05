@@ -28,7 +28,7 @@ class ScoredAction(BaseModel):
 class GetScoresResponse(BaseModel):
     ranked_actions: list[ScoredAction]
     top_action: ScoredAction | None = None
-    policy: Literal["exploit", "explore", "escalate"] = "explore"
+    policy: Literal["exploit", "explore", "escalate", "SANDBOX"] = "explore"
     cold_start: bool = False
     context_id: str = ""
     agent_id: str = ""
@@ -119,8 +119,18 @@ class Recommendation:
     problem: str | None = None
     recommendation: str | None = None
     expected_improvement: dict | None = None
+    data_freshness: 'RecommendationDataFreshness | None' = None
     reason: str | None = None
     confidence: float | None = None
+
+
+@dataclass
+class RecommendationDataFreshness:
+    source: Literal['mv', 'fact_fallback', 'unknown']
+    last_seen_at: str | None
+    age_hours: float | None
+    is_stale: bool
+    stale_threshold_hours: int
 
 
 @dataclass

@@ -500,6 +500,13 @@ export class Layerinfinite {
             problem?: string | null;
             recommendation?: string | null;
             expected_improvement?: { baseline: string; improved: string; delta: string } | null;
+            data_freshness?: {
+                source?: 'mv' | 'fact_fallback' | 'unknown';
+                last_seen_at?: string | null;
+                age_hours?: number | null;
+                is_stale?: boolean;
+                stale_threshold_hours?: number;
+            } | null;
             reason?: string | null;
             confidence?: number | null;
         };
@@ -510,6 +517,15 @@ export class Layerinfinite {
             problem: raw.problem ?? null,
             recommendation: raw.recommendation ?? null,
             expectedImprovement: raw.expected_improvement ?? null,
+            dataFreshness: raw.data_freshness
+                ? {
+                    source: raw.data_freshness.source ?? 'unknown',
+                    lastSeenAt: raw.data_freshness.last_seen_at ?? null,
+                    ageHours: raw.data_freshness.age_hours ?? null,
+                    isStale: Boolean(raw.data_freshness.is_stale),
+                    staleThresholdHours: raw.data_freshness.stale_threshold_hours ?? 72,
+                }
+                : null,
             reason: raw.reason ?? null,
             confidence: raw.confidence ?? null,
         };
@@ -526,6 +542,12 @@ export class Layerinfinite {
         if (rec.reason) console.log(`  Reason:     ${rec.reason}`);
         if (rec.confidence !== null && rec.confidence !== undefined) {
             console.log(`  Confidence: ${Math.round(rec.confidence * 100)}%`);
+        }
+        if (rec.dataFreshness?.isStale) {
+            const age = rec.dataFreshness.ageHours;
+            console.log(
+                `  Freshness:  stale (${age !== null ? `${age.toFixed(1)}h` : 'unknown age'}) from ${rec.dataFreshness.source}`,
+            );
         }
         console.log('');
 

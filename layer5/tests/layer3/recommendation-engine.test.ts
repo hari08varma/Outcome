@@ -76,9 +76,12 @@ describe('Recommendation Engine - silent failure propagation', () => {
             return alertsQuery;
         });
 
+        const resolutionQuery = makeAwaitableQuery({ data: [], error: null });
+
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'dim_actions') return dimActionsQuery;
             if (table === 'mv_task_action_performance') return taskActionsQuery;
+            if (table === 'fact_outcomes') return resolutionQuery;
             if (table === 'degradation_alert_events') return alertsQuery;
             throw new Error(`Unexpected table: ${table}`);
         });
@@ -127,10 +130,12 @@ describe('Recommendation Engine - silent failure propagation', () => {
         });
 
         const alertsQuery = makeAwaitableQuery({ count: 1, error: null });
+        const resolutionQuery = makeAwaitableQuery({ data: [], error: null });
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'dim_actions') return dimActionsQuery;
             if (table === 'mv_task_action_performance') return taskActionsQuery;
+            if (table === 'fact_outcomes') return resolutionQuery;
             if (table === 'degradation_alert_events') return alertsQuery;
             throw new Error(`Unexpected table: ${table}`);
         });

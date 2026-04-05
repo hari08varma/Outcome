@@ -34,6 +34,7 @@ __all__ = [
     "Suggestion",
     "RankedAction",
     "Recommendation",
+    "RecommendationDataFreshness",
     "ObservationSummary",
     "LayerinfiniteError",
     "LayerinfiniteAuthError",
@@ -64,6 +65,7 @@ from .models import (
     ObservationSummary,
     RankedAction,
     Recommendation,
+    RecommendationDataFreshness,
     ScoredAction,
     Suggestion,
 )

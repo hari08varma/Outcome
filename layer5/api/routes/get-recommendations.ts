@@ -1,9 +1,31 @@
 import { Hono } from 'hono';
-import { getRecommendation } from '../lib/recommendation/engine.js';
+import {
+    MIN_SAMPLES_STABLE,
+    type RecommendationResult,
+    getRecommendation,
+} from '../lib/recommendation/engine.js';
 import { buildActionableOutput } from '../lib/recommendation/reason.js';
+import {
+    AGENT_SCOPE_MIN_CONFIDENCE,
+    type RecommendationScope,
+    type ScopeTransitionCandidate,
+    chooseScopedOrBlendedCandidate,
+} from '../lib/recommendation/scope-transition.js';
+import { buildRecommendationDataFreshness } from '../lib/recommendation/data-freshness.js';
 import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
 
 export const getRecommendationsRouter = new Hono();
+
+function toScopeTransitionCandidate(
+    result: RecommendationResult,
+): ScopeTransitionCandidate {
+    return {
+        state: result.state,
+        min_sample_count: result.min_sample_count,
+        confidence: result.confidence,
+        has_best_action: !!result.best_action,
+    };
+}
 
 // GET /tasks — returns distinct task_names available for a customer (+ optional agent scope)
 // Uses mv_task_action_performance with automatic fallback to fact_outcomes.
@@ -27,7 +49,6 @@ getRecommendationsRouter.get('/tasks', async (c) => {
 
 getRecommendationsRouter.get('/', async (c) => {
     const customerId = c.get('customer_id') as string | undefined;
-    const agentId = c.get('agent_id') as string | undefined;
 
     if (!customerId) {
         return c.json(
@@ -71,19 +92,64 @@ getRecommendationsRouter.get('/', async (c) => {
     }
 
     try {
-        const result = await getRecommendation(customerId, taskName, scopedAgentId);
+        const requestedScope: RecommendationScope = scopedAgentId
+            ? 'agent_scoped'
+            : 'customer_blended';
+
+        let result: RecommendationResult;
+        let servedScope: RecommendationScope = requestedScope;
+        let scopeReason: string | null = null;
+
+        if (scopedAgentId) {
+            const [scopedResult, blendedResult] = await Promise.all([
+                getRecommendation(customerId, taskName, scopedAgentId),
+                getRecommendation(customerId, taskName, null),
+            ]);
+
+            const selection = chooseScopedOrBlendedCandidate(
+                toScopeTransitionCandidate(scopedResult),
+                toScopeTransitionCandidate(blendedResult),
+            );
+
+            result = selection.servedScope === 'customer_blended'
+                ? blendedResult
+                : scopedResult;
+            servedScope = selection.servedScope;
+            scopeReason = selection.reason;
+        } else {
+            result = await getRecommendation(customerId, taskName, null);
+        }
+
+        const fallbackApplied = requestedScope !== servedScope;
+        const scopeLabel = servedScope === 'agent_scoped'
+            ? 'Based on this agent\'s logged outcomes only'
+            : fallbackApplied
+                ? 'Agent-specific evidence is still warming. Temporarily using blended cohort outcomes for lower uncertainty.'
+                : 'Based on all agents\' combined outcomes';
+
         const output = buildActionableOutput(result);
+        const lastSeenAt = output.data_window?.last_seen_at ?? null;
+        const dataFreshness = buildRecommendationDataFreshness(
+            result._data_source ?? 'unknown',
+            lastSeenAt,
+        );
 
         return c.json(
             {
                 ...output,
                 agent_id: result.agent_id,
-                agent_scope: scopedAgentId
-                    ? 'agent_scoped'
-                    : 'customer_blended',
-                scope_label: scopedAgentId
-                    ? 'Based on this agent\'s logged outcomes only'
-                    : 'Based on all agents\' combined outcomes',
+                agent_scope: servedScope,
+                scope_label: scopeLabel,
+                scope_transition: {
+                    requested_scope: requestedScope,
+                    served_scope: servedScope,
+                    fallback_applied: fallbackApplied,
+                    reason: scopeReason,
+                    switch_back_rule: requestedScope === 'agent_scoped'
+                        ? `Switches back to agent-only automatically at >=${MIN_SAMPLES_STABLE} min samples and >=${Math.round(AGENT_SCOPE_MIN_CONFIDENCE * 100)}% confidence.`
+                        : null,
+                },
+                data_freshness: dataFreshness,
                 customer_id: customerId,
                 // ISSUE 1: Action registry validation.
                 // Tells the developer if the recommended action matches what they have registered.

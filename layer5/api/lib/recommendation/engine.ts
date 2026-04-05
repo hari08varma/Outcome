@@ -1,9 +1,16 @@
 import { supabase } from '../supabase.js';
+import {
+    MIN_SAMPLES,
+    MIN_SAMPLES_HIGH_CONFIDENCE,
+    MIN_SAMPLES_STABLE,
+} from './constants.js';
 import { fetchTaskActionPerformance } from './task-performance.js';
 
-export const MIN_SAMPLES = 10;
-export const MIN_SAMPLES_STABLE = 20;
-export const MIN_SAMPLES_HIGH_CONFIDENCE = 50;
+export {
+    MIN_SAMPLES,
+    MIN_SAMPLES_STABLE,
+    MIN_SAMPLES_HIGH_CONFIDENCE,
+} from './constants.js';
 export const TRUST_GATE_STATUSES: string[] = ['suspended'];
 export const TRUST_GATE_MIN_SCORE = 0.10;
 export const RECOMMENDATION_WINDOW_DAYS = 180;
@@ -19,6 +26,7 @@ export interface ActionPerformance {
     total_count: number;
     success_count: number;
     success_rate: number;
+    resolution_rate: number;
     ml_score: number | null;
     last_seen_at: string;
 }
@@ -54,6 +62,7 @@ export interface RecommendationResult {
     _trust_gate_blocked?: boolean;
     _trust_status?: string;
     _silent_failure_warning?: boolean;
+    _data_source?: 'mv' | 'fact_fallback' | 'unknown';
     agent_id: string | null;
     generated_at: string;
     registered_actions: string[];
@@ -61,19 +70,24 @@ export interface RecommendationResult {
 }
 
 function rankingScore(a: ActionPerformance): number {
-    // Prefer the ML composite score from mv_action_scores —
-    // it already applies Bayesian smoothing and multi-factor weighting.
-    if (a.ml_score !== null && a.ml_score !== undefined) {
-        return a.ml_score;
+    // Primary signal: task-specific outcome quality (resolution semantics).
+    // Use Laplace smoothing so tiny sample sets do not dominate.
+    const n = a.total_count;
+    const taskSignal = (a.resolution_rate * n + 1) / (n + 2);
+
+    // Secondary prior: global ML score from mv_action_scores.
+    // Keep this as a stabilizer, but prioritize task-specific resolution evidence.
+    if (a.ml_score === null || a.ml_score === undefined) {
+        return taskSignal;
     }
 
-    // Fallback: apply Laplace (add-1) smoothing to raw success rate.
-    // Prevents low-sample actions from dominating on perfect-but-tiny scores.
-    // Formula: (successes + 1) / (total + 2)
-    // = (rate * n + 1) / (n + 2)
-    const n = a.total_count;
-    const smoothed = (a.success_rate * n + 1) / (n + 2);
-    return smoothed;
+    const globalSignal = Math.max(0, Math.min(1, a.ml_score));
+    const globalWeight = n >= MIN_SAMPLES_STABLE
+        ? 0.20
+        : n >= MIN_SAMPLES
+            ? 0.30
+            : 0.40;
+    return taskSignal * (1 - globalWeight) + globalSignal * globalWeight;
 }
 
 function confidenceFromSamplesAndLift(
@@ -183,6 +197,7 @@ export async function getRecommendation(
                     generated_at: generatedAt,
                     _trust_gate_blocked: true,
                     _trust_status: trustState.trust_status,
+                    _data_source: 'unknown',
                     registered_actions: registeredActions,
                     action_mismatch: false,
                 } as any;
@@ -195,6 +210,7 @@ export async function getRecommendation(
         actions: ActionPerformance[],
         best: ActionPerformance | null = null,
         worst: ActionPerformance | null = null,
+        dataSource: RecommendationResult['_data_source'] = 'unknown',
     ): RecommendationResult {
         return {
             task: taskName,
@@ -207,6 +223,7 @@ export async function getRecommendation(
                 ? Math.min(best.total_count, worst.total_count)
                 : (best?.total_count ?? 0),
             all_actions: actions,
+            _data_source: dataSource,
             agent_id: agentId ?? null,
             generated_at: generatedAt,
             registered_actions: registeredActions,
@@ -227,7 +244,7 @@ export async function getRecommendation(
             Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000
         ).toISOString();
 
-        const { rows } = await fetchTaskActionPerformance({
+        const { rows, source } = await fetchTaskActionPerformance({
             customerId,
             taskName,
             agentId: agentId ?? null,
@@ -242,6 +259,7 @@ export async function getRecommendation(
                 total_count: Number(row.total_count),
                 success_count: Number(row.success_count),
                 success_rate: Number(row.success_rate),
+                resolution_rate: Number(row.resolution_rate ?? row.success_rate ?? 0),
                 ml_score: mlScoreRaw !== null
                     && mlScoreRaw !== undefined
                     ? Number(mlScoreRaw)
@@ -258,8 +276,9 @@ export async function getRecommendation(
                 ...makeResult(
                     'no_data',
                     actions,
-                    soloHasMinimumEvidence ? solo : null,
                     null,
+                    null,
+                    source,
                 ),
                 min_sample_count: solo?.total_count ?? 0,
                 _qualification_context: {
@@ -269,7 +288,7 @@ export async function getRecommendation(
                         ? {
                             name: solo.action_name,
                             total: solo.total_count,
-                            rate: solo.success_rate,
+                            rate: solo.resolution_rate,
                         }
                         : null,
                     actions_needing_more: solo && !soloHasMinimumEvidence
@@ -282,9 +301,7 @@ export async function getRecommendation(
                 },
                 _silent_failure_warning: false,
                 registered_actions: registeredActions,
-                action_mismatch: soloHasMinimumEvidence && registeredActions.length > 0
-                    ? !registeredActions.includes(solo!.action_name)
-                    : false,
+                action_mismatch: false,
             };
         }
 
@@ -320,7 +337,7 @@ export async function getRecommendation(
                 const rawConfidence = confidenceFromSamplesAndLift(
                     best.total_count,
                     Math.max(1, worst.total_count),
-                    Math.max(0, best.success_rate - worst.success_rate),
+                    Math.max(0, best.resolution_rate - worst.resolution_rate),
                 );
                 const minSamples = Math.min(best.total_count, worst.total_count);
                 const silentFailureActive = await hasSilentFailureAlertForActions(
@@ -338,7 +355,7 @@ export async function getRecommendation(
                         leading_action: {
                             name: best.action_name,
                             total: best.total_count,
-                            rate: best.success_rate,
+                            rate: best.resolution_rate,
                         },
                         actions_needing_more: needMore,
                     },
@@ -346,13 +363,14 @@ export async function getRecommendation(
                     registered_actions: registeredActions,
                     action_mismatch: registeredActions.length > 0
                         && !registeredActions.includes(best.action_name),
+                    _data_source: source,
                 };
             }
 
             return {
                 task: taskName,
                 state: 'no_data',
-                best_action: qualifiedActions[0] ?? null,
+                best_action: null,
                 worst_action: null,
                 confidence: null,
                 improvement: null,
@@ -365,7 +383,7 @@ export async function getRecommendation(
                         ? {
                             name: leader.action_name,
                             total: leader.total_count,
-                            rate: leader.success_rate,
+                            rate: leader.resolution_rate,
                         }
                         : null,
                     actions_needing_more: needMore,
@@ -375,6 +393,7 @@ export async function getRecommendation(
                 agent_id: agentId ?? null,
                 registered_actions: registeredActions,
                 action_mismatch: false,
+                _data_source: source,
             };
         }
 
@@ -397,6 +416,7 @@ export async function getRecommendation(
                 _silent_failure_warning: false,
                 registered_actions: registeredActions,
                 action_mismatch: false,
+                _data_source: source,
             };
         }
 
@@ -404,7 +424,7 @@ export async function getRecommendation(
             const rawConfidence = confidenceFromSamplesAndLift(
                 best.total_count,
                 worst.total_count,
-                best.success_rate - worst.success_rate,
+                best.resolution_rate - worst.resolution_rate,
             );
             return {
                 ...makeResult('early_signal', actions, best, worst),
@@ -414,10 +434,11 @@ export async function getRecommendation(
                 registered_actions: registeredActions,
                 action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
+                _data_source: source,
             };
         }
 
-        const absoluteDelta = best.success_rate - worst.success_rate;
+        const absoluteDelta = best.resolution_rate - worst.resolution_rate;
         if (absoluteDelta < 0.08) {
             // Near-equal actions: confidence represents "how sure are we
             // that they're truly similar?" — based on sample size only.
@@ -436,11 +457,12 @@ export async function getRecommendation(
                 registered_actions: registeredActions,
                 action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
+                _data_source: source,
             };
         }
 
-        const relativeDelta = worst.success_rate > 0
-            ? absoluteDelta / worst.success_rate
+        const relativeDelta = worst.resolution_rate > 0
+            ? absoluteDelta / worst.resolution_rate
             : 1.0;
 
         if (relativeDelta < 0.15) {
@@ -457,13 +479,14 @@ export async function getRecommendation(
                 registered_actions: registeredActions,
                 action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
+                _data_source: source,
             };
         }
 
         const rawConfidence = confidenceFromSamplesAndLift(
             best.total_count,
             worst.total_count,
-            best.success_rate - worst.success_rate,
+            best.resolution_rate - worst.resolution_rate,
         );
 
         // Guardrail: avoid presenting low-confidence outputs as stable decisions.
@@ -476,6 +499,7 @@ export async function getRecommendation(
                 registered_actions: registeredActions,
                 action_mismatch: registeredActions.length > 0
                     && !registeredActions.includes(best.action_name),
+                _data_source: source,
             };
         }
 
@@ -486,14 +510,15 @@ export async function getRecommendation(
             worst_action: worst,
             confidence: rawConfidence,
             improvement: {
-                baseline_rate: Number(worst.success_rate.toFixed(4)),
-                improved_rate: Number(best.success_rate.toFixed(4)),
+                baseline_rate: Number(worst.resolution_rate.toFixed(4)),
+                improved_rate: Number(best.resolution_rate.toFixed(4)),
                 absolute_delta: Number(absoluteDelta.toFixed(4)),
                 relative_delta: Number(relativeDelta.toFixed(4)),
             },
             min_sample_count: minSamples,
             all_actions: actions,
             _silent_failure_warning: silentFailureActive,
+            _data_source: source,
             agent_id: agentId ?? null,
             generated_at: generatedAt,
             registered_actions: registeredActions,

@@ -15,6 +15,7 @@ export interface TaskPerformanceRow {
     total_count: number;
     success_count: number;
     success_rate: number;
+    resolution_rate: number;
     ml_score: number | null;
     last_seen_at: string | null;
 }
@@ -85,13 +86,22 @@ async function queryTaskPerformanceFromMV(
         total_count: Number(row.total_count ?? 0),
         success_count: Number(row.success_count ?? 0),
         success_rate: Number(row.success_rate ?? 0),
+        resolution_rate: Number(row.success_rate ?? 0),
         ml_score: row.ml_score === null || row.ml_score === undefined
             ? null
             : Number(row.ml_score),
         last_seen_at: typeof row.last_seen_at === 'string' ? row.last_seen_at : null,
     }));
 
-    return { rows, error: null };
+    // Derive task-specific resolution quality from fact_outcomes.outcome_score
+    // so recommendations track incident resolution semantics (not just binary success).
+    const resolutionRateByAction = await getTaskResolutionRateByAction(params);
+    const hydratedRows = rows.map((row) => ({
+        ...row,
+        resolution_rate: resolutionRateByAction.get(row.action_id) ?? row.resolution_rate,
+    }));
+
+    return { rows: hydratedRows, error: null };
 }
 
 async function getLatestMlScoreByAction(
@@ -135,12 +145,69 @@ async function getLatestMlScoreByAction(
     return mapped;
 }
 
+function parseBoundedScore(value: unknown): number | null {
+    const parsed = Number(value ?? Number.NaN);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(1, parsed));
+}
+
+async function getTaskResolutionRateByAction(
+    params: FetchTaskPerformanceParams,
+): Promise<Map<string, number>> {
+    let query = supabase
+        .from('fact_outcomes')
+        .select('action_id, outcome_score, success')
+        .eq('customer_id', params.customerId)
+        .eq('is_deleted', false)
+        .eq('is_synthetic', false)
+        .eq('task_name', params.taskName);
+
+    if (params.windowStart) {
+        query = query.gte('timestamp', params.windowStart);
+    }
+
+    if (params.agentId) {
+        query = query.eq('agent_id', params.agentId);
+    } else {
+        query = query.neq('agent_id', ZERO_UUID_AGENT_ID);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) {
+        return new Map<string, number>();
+    }
+
+    const grouped = new Map<string, { total: number; scoreSum: number }>();
+
+    for (const row of data as Array<Record<string, unknown>>) {
+        const actionId = typeof row.action_id === 'string' ? row.action_id : null;
+        if (!actionId) continue;
+
+        const explicitScore = parseBoundedScore(row.outcome_score);
+        const fallbackScore = row.success === true ? 1 : 0;
+        const score = explicitScore ?? fallbackScore;
+
+        const current = grouped.get(actionId) ?? { total: 0, scoreSum: 0 };
+        current.total += 1;
+        current.scoreSum += score;
+        grouped.set(actionId, current);
+    }
+
+    const rates = new Map<string, number>();
+    for (const [actionId, stats] of grouped.entries()) {
+        if (stats.total <= 0) continue;
+        rates.set(actionId, Number((stats.scoreSum / stats.total).toFixed(4)));
+    }
+
+    return rates;
+}
+
 async function queryTaskPerformanceFromFacts(
     params: FetchTaskPerformanceParams,
 ): Promise<TaskPerformanceRow[]> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, success, timestamp, dim_actions!inner(action_name)')
+        .select('action_id, success, outcome_score, timestamp, dim_actions!inner(action_name)')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -167,6 +234,7 @@ async function queryTaskPerformanceFromFacts(
         action_name: string;
         total_count: number;
         success_count: number;
+        resolution_score_total: number;
         last_seen_at: string | null;
     }>();
 
@@ -192,6 +260,7 @@ async function queryTaskPerformanceFromFacts(
             action_name: actionName,
             total_count: 0,
             success_count: 0,
+            resolution_score_total: 0,
             last_seen_at: null,
         };
 
@@ -199,6 +268,10 @@ async function queryTaskPerformanceFromFacts(
         if (row.success === true) {
             existing.success_count += 1;
         }
+
+        const explicitScore = parseBoundedScore(row.outcome_score);
+        const fallbackScore = row.success === true ? 1 : 0;
+        existing.resolution_score_total += explicitScore ?? fallbackScore;
 
         const ts = typeof row.timestamp === 'string' ? row.timestamp : null;
         existing.last_seen_at = latestTimestamp(existing.last_seen_at, ts);
@@ -215,6 +288,9 @@ async function queryTaskPerformanceFromFacts(
         const successRate = row.total_count > 0
             ? Number((row.success_count / row.total_count).toFixed(4))
             : 0;
+        const resolutionRate = row.total_count > 0
+            ? Number((row.resolution_score_total / row.total_count).toFixed(4))
+            : successRate;
 
         return {
             action_id: row.action_id,
@@ -222,6 +298,7 @@ async function queryTaskPerformanceFromFacts(
             total_count: row.total_count,
             success_count: row.success_count,
             success_rate: successRate,
+            resolution_rate: resolutionRate,
             ml_score: mlScoreByAction.get(row.action_id) ?? null,
             last_seen_at: row.last_seen_at,
         };

@@ -100,6 +100,20 @@ interface RecommendationResponse {
     } | null;
     threshold_hint: string;
     scope_label: string;
+    scope_transition?: {
+        requested_scope: 'agent_scoped' | 'customer_blended';
+        served_scope: 'agent_scoped' | 'customer_blended';
+        fallback_applied: boolean;
+        reason: string | null;
+        switch_back_rule: string | null;
+    };
+    data_freshness?: {
+        source: 'mv' | 'fact_fallback' | 'unknown';
+        last_seen_at: string | null;
+        age_hours: number | null;
+        is_stale: boolean;
+        stale_threshold_hours: number;
+    };
 }
 
 const CONFIDENCE_CONFIG: Record<
@@ -252,8 +266,8 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     <span
                         title={data.scope_label}
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-help ${data.agent_scope === 'agent_scoped'
-                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
-                                : 'bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'
+                            ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
+                            : 'bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'
                             }`}
                     >
                         {data.agent_scope === 'agent_scoped' ? '⬡ Agent data only' : '⬡ All agents blended'}
@@ -289,6 +303,40 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                         <p className={`text-sm font-semibold flex items-center gap-2 ${recommendationTone}`}>
                             <ArrowRight size={15} className="shrink-0" />
                             {data.message}
+                        </p>
+                    </div>
+                )}
+
+                {data.scope_transition?.fallback_applied && (
+                    <div className="rounded-lg bg-blue-500/5 border border-blue-500/25 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-blue-400 mb-1">
+                            Cohort Fallback Active
+                        </p>
+                        {data.scope_transition.reason && (
+                            <p className="text-xs text-[#a1a1aa]">{data.scope_transition.reason}</p>
+                        )}
+                        {data.scope_transition.switch_back_rule && (
+                            <p className="text-xs text-[#52525b] mt-1">{data.scope_transition.switch_back_rule}</p>
+                        )}
+                    </div>
+                )}
+
+                {data.data_freshness?.is_stale && (
+                    <div className="rounded-lg bg-yellow-500/5 border border-yellow-500/25 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-yellow-400 mb-1">
+                            Data Freshness Warning
+                        </p>
+                        <p className="text-xs text-[#a1a1aa]">
+                            Latest outcome evidence is older than {data.data_freshness.stale_threshold_hours}h.
+                            {data.data_freshness.age_hours !== null
+                                ? ` Current age: ${data.data_freshness.age_hours.toFixed(1)}h.`
+                                : ' Current age unavailable.'}
+                        </p>
+                        <p className="text-xs text-[#52525b] mt-1">
+                            Source: {data.data_freshness.source}
+                            {data.data_freshness.last_seen_at
+                                ? ` · Last seen ${new Date(data.data_freshness.last_seen_at).toLocaleString()}`
+                                : ''}
                         </p>
                     </div>
                 )}
