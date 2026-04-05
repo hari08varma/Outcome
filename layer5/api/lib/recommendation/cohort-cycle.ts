@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+import { supabase } from '../supabase.js';
+
 export const COHORT_CYCLE_MAX_DAYS = 7;
 export const COHORT_CYCLE_MAX_OUTCOMES = 100;
 export const COHORT_EARLY_CLOSE_CONFIDENCE_DROP = 0.10;
@@ -194,7 +196,7 @@ export function resetRecommendationCohortCycleStore(): void {
     cycleStore.clear();
 }
 
-export function upsertRecommendationCohortCycle(
+function fallbackUpsertRecommendationCohortCycle(
     observation: CohortCycleObservation,
 ): RecommendationCohortCycleResult {
     const key = cycleKey(observation.customer_id, observation.task_name);
@@ -263,4 +265,70 @@ export function upsertRecommendationCohortCycle(
             success_rate_drop: COHORT_EARLY_CLOSE_SUCCESS_RATE_DROP,
         },
     };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function isCohortCycleResult(value: unknown): value is RecommendationCohortCycleResult {
+    if (!isObject(value)) return false;
+    if (!isObject(value.active_cycle)) return false;
+    if (typeof value.rotation_triggered !== 'boolean') return false;
+    if (!isObject(value.thresholds)) return false;
+    return typeof value.active_cycle.cycle_id === 'string';
+}
+
+function isMissingRpcFunctionError(error: { code?: string | null; message?: string | null }): boolean {
+    const msg = String(error.message ?? '').toLowerCase();
+    return error.code === '42883' || (msg.includes('upsert_recommendation_cohort_cycle') && msg.includes('function'));
+}
+
+export async function upsertRecommendationCohortCycle(
+    observation: CohortCycleObservation,
+): Promise<RecommendationCohortCycleResult> {
+    const payload = {
+        p_customer_id: observation.customer_id,
+        p_task_name: observation.task_name,
+        p_observed_at: observation.observed_at,
+        p_total_outcomes: normalizeTotalOutcomes(observation.total_outcomes),
+        p_median_confidence: clamp01(observation.median_confidence),
+        p_median_success_rate: clamp01(observation.median_success_rate),
+    };
+
+    try {
+        const { data, error } = await supabase.rpc('upsert_recommendation_cohort_cycle', payload as any);
+
+        if (error) {
+            const fallback = fallbackUpsertRecommendationCohortCycle(observation);
+            if (isMissingRpcFunctionError(error)) {
+                console.warn(
+                    '[cohort-cycle] upsert_recommendation_cohort_cycle RPC unavailable; using in-memory fallback:',
+                    error.message,
+                );
+                return fallback;
+            }
+
+            console.warn(
+                '[cohort-cycle] RPC failed; using in-memory fallback:',
+                error.message,
+            );
+            return fallback;
+        }
+
+        if (!isCohortCycleResult(data)) {
+            console.warn(
+                '[cohort-cycle] RPC returned unexpected payload shape; using in-memory fallback.',
+            );
+            return fallbackUpsertRecommendationCohortCycle(observation);
+        }
+
+        return data;
+    } catch (err: any) {
+        console.warn(
+            '[cohort-cycle] RPC threw; using in-memory fallback:',
+            err?.message ?? 'unknown error',
+        );
+        return fallbackUpsertRecommendationCohortCycle(observation);
+    }
 }

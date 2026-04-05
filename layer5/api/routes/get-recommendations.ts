@@ -166,7 +166,7 @@ getRecommendationsRouter.get('/', async (c) => {
         const medianSuccessRate = medianOf(
             result.all_actions.map((action) => Number(action.resolution_rate ?? Number.NaN)),
         );
-        const cohortCycle = upsertRecommendationCohortCycle({
+        const cohortCycle = await upsertRecommendationCohortCycle({
             customer_id: customerId,
             task_name: taskName,
             observed_at: result.generated_at,
