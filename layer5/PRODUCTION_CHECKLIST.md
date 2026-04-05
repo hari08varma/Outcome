@@ -6,6 +6,7 @@
 - [ ] All `.env.production.example` files reviewed
 - [ ] 105/105 tests passing locally (`cd api && npm test`)
 - [ ] New migrations (011, 012) ready to apply
+- [ ] Migration 093 ready to apply (`093_persist_recommendation_cohort_cycles.sql`)
 
 ## PRE-MIGRATION CHECKLIST
 
@@ -55,9 +56,11 @@ Set on Railway: Settings → Variables
 - [ ] 4. Add dashboard URL to API `ALLOWED_ORIGINS` (redeploy if needed)
 - [ ] 5. Run migration 011 — pg_cron schedules (`psql $DB_URL -f supabase/migrations/011_create_cron_schedules.sql`)
 - [ ] 6. Run migration 012 — pgvector index (`psql $DB_URL -f supabase/migrations/012_create_vector_index.sql`)
-- [ ] 7. Set `app.supabase_url` in Supabase Dashboard → Settings → Database → Configuration
-- [ ] 8. Set `app.service_role_key` in Supabase Dashboard → Settings → Database → Configuration
-- [ ] 9. Verify 4 cron jobs in Supabase Dashboard → Database → Cron Jobs
+- [ ] 7. Run migration 093 — cohort persistence (`psql $DB_URL -f supabase/migrations/093_persist_recommendation_cohort_cycles.sql`)
+- [ ] 8. Verify cohort deployment artifacts (`npm --prefix layer5 run check:cohort-deploy`)
+- [ ] 9. Set `app.supabase_url` in Supabase Dashboard → Settings → Database → Configuration
+- [ ] 10. Set `app.service_role_key` in Supabase Dashboard → Settings → Database → Configuration
+- [ ] 11. Verify 4 cron jobs in Supabase Dashboard → Database → Cron Jobs
 
 ## SDK Publishing
 Before launch:
@@ -74,6 +77,7 @@ Before launch:
 
 - [ ] Enable Supabase PITR — Dashboard → Settings → Database → Point in Time Recovery (30-day retention)
 - [ ] Take manual backup — Dashboard → Database → Backups → Create backup now
+- [ ] Re-run `npm --prefix layer5 run check:cohort-deploy` against live environment config
 - [ ] Run `node scripts/verify-backup-status.js` — confirm row counts
 - [ ] Set up UptimeRobot on `/health` endpoint (see `scripts/setup-monitoring.md`)
 - [ ] Test `GET /health` → all checks return `"ok"`

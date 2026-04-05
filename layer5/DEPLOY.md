@@ -85,7 +85,22 @@ npm run build    # outputs to dist/
 # Run against your Supabase database:
 psql $DB_URL -f supabase/migrations/011_create_cron_schedules.sql
 psql $DB_URL -f supabase/migrations/012_create_vector_index.sql
+psql $DB_URL -f supabase/migrations/093_persist_recommendation_cohort_cycles.sql
 ```
+
+### 3a.1 Verify cohort persistence deployment
+
+After migration 093, verify both required artifacts are present:
+
+- `public.recommendation_cohort_cycles` table
+- `public.upsert_recommendation_cohort_cycle(...)` RPC function
+
+```bash
+# from repository root
+npm --prefix layer5 run check:cohort-deploy
+```
+
+If this command fails, do not route production traffic until the check passes.
 
 ### 3b. Configure Supabase app settings
 
@@ -156,6 +171,9 @@ curl -X POST -H "X-API-Key: [key]" \
      -H "Content-Type: application/json" \
      -d '{"session_id":"test-session","action_name":"restart_service","issue_type":"payment_failed","success":true}' \
      "https://your-api.railway.app/v1/log-outcome"
+
+# Cohort deployment artifacts
+npm --prefix layer5 run check:cohort-deploy
 
 # Dashboard
 open https://your-dashboard.vercel.app
