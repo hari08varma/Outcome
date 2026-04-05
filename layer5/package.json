@@ -13,6 +13,7 @@
     "drill:failover": "node scripts/run-failover-drill.js",
     "check:secrets": "node scripts/check-tracked-secrets.js",
     "check:migration-governance": "node scripts/check-migration-governance.js",
+    "check:cohort-deploy": "node scripts/check-cohort-deploy.js",
     "check:production": "npm run check:endpoint-independence && npm run check:endpoint-parity && npm run drill:failover"
   },
   "keywords": [],
