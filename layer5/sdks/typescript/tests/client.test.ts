@@ -32,6 +32,57 @@ const MOCK_GET_SCORES_BODY = {
     served_from_cache: false,
 };
 
+const MOCK_GET_SCORES_BODY_WITH_EXPLORE_TARGET = {
+    ranked_actions: [
+        {
+            action_id: 'act-uuid-1',
+            action_name: 'escalate_to_senior',
+            action_category: 'escalation',
+            composite_score: 0.87,
+            confidence: 0.72,
+            total_attempts: 42,
+            policy_reason: 'top_performer',
+            is_cold_start: false,
+        },
+        {
+            action_id: 'act-uuid-2',
+            action_name: 'retry_with_backoff',
+            action_category: 'remediation',
+            composite_score: 0.79,
+            confidence: 0.68,
+            total_attempts: 31,
+            policy_reason: 'runner_up',
+            is_cold_start: false,
+        },
+        {
+            action_id: 'act-uuid-3',
+            action_name: 'pin_previous_image',
+            action_category: 'rollback',
+            composite_score: 0.74,
+            confidence: 0.64,
+            total_attempts: 19,
+            policy_reason: 'exploration_candidate',
+            is_cold_start: false,
+        },
+    ],
+    top_action: {
+        action_id: 'act-uuid-1',
+        action_name: 'escalate_to_senior',
+        action_category: 'escalation',
+        composite_score: 0.87,
+        confidence: 0.72,
+        total_attempts: 42,
+        policy_reason: 'top_performer',
+        is_cold_start: false,
+    },
+    policy: 'explore',
+    policy_exploration_target: 'act-uuid-3',
+    cold_start: false,
+    context_id: 'ctx-uuid-2',
+    agent_id: 'my-agent',
+    served_from_cache: false,
+};
+
 const MOCK_LOG_OUTCOME_BODY = {
     logged: true,
     outcome_id: 'out-uuid-1',
@@ -107,6 +158,31 @@ describe('LayerinfiniteClient', () => {
         expect(result.top_action?.composite_score).toBeCloseTo(0.87);
         expect(['exploit', 'explore', 'escalate']).toContain(result.policy);
         expect(result.ranked_actions).toHaveLength(1);
+    });
+
+    it('Test 1b: auto mode prioritizes policy exploration target in execution order', async () => {
+        fetchSpy.mockResolvedValueOnce(
+            mockResponse(MOCK_GET_SCORES_BODY_WITH_EXPLORE_TARGET),
+        );
+
+        const client = new LayerinfiniteClient({
+            apiKey: API_KEY,
+            agentId: 'my-agent',
+            baseUrl: BASE_URL,
+            mode: 'auto',
+        });
+
+        client.registerAction('billing_dispute', 'escalate_to_senior', async () => true);
+        client.registerAction('billing_dispute', 'retry_with_backoff', async () => true);
+        client.registerAction('billing_dispute', 'pin_previous_image', async () => true);
+
+        const executionOrder = await (client as any).buildExecutionOrder('billing_dispute');
+
+        expect(executionOrder.slice(0, 3)).toEqual([
+            'pin_previous_image',
+            'escalate_to_senior',
+            'retry_with_backoff',
+        ]);
     });
 
     // ── Test 2 ─────────────────────────────────────────────────

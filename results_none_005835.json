@@ -1,0 +1,35 @@
+{
+  "mode": "none",
+  "agent_id": "a4c53386-a098-4a46-8a60-f2ec8534af47",
+  "episode_id": "2b7cab20-df7f-4036-b39d-7de26469909c",
+  "num_runs": 1,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "env_var_missing",
+      "context": {
+        "repo": "dashboard",
+        "branch": "hotfix/prod",
+        "runner": "ubuntu-22.04",
+        "attempt": 2,
+        "duration_s": 149,
+        "timestamp": "2026-04-04T19:28:31.102777+00:00"
+      },
+      "recommended": null,
+      "chosen": "inject_env_from_vault",
+      "success": true,
+      "confidence": 0.912,
+      "score": {
+        "correct_action": "inject_env_from_vault",
+        "recommended_action": null,
+        "chosen_action": "inject_env_from_vault",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    }
+  ],
+  "observed_tasks": {},
+  "replayed_outcomes": 0
+}

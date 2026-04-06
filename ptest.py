@@ -35,34 +35,236 @@ Usage:
 import argparse
 import json
 import random
+import re
 import time
 import uuid
 import sys
 import os
+import socket
 from datetime import datetime, timezone
 from typing import Optional
 import urllib.request
 import urllib.parse
 import urllib.error
 
+
 # Network resilience tuning for transient DNS/socket/service errors.
 HTTP_TIMEOUT_SECONDS = 15
 HTTP_MAX_RETRIES = 8
 HTTP_BACKOFF_BASE_SECONDS = 0.4
 HTTP_BACKOFF_MAX_SECONDS = 6.0
+NETWORK_PREFLIGHT_TIMEOUT_SECONDS = 2.0
 PENDING_OUTCOMES_FILE = "ptest_pending_outcomes.jsonl"
 
 # ─────────────────────────────────────────────────────────────────────
-# CONFIGURATION — Set your NEW keys here after rotating
+# CONFIGURATION — Use environment variables only
 # ─────────────────────────────────────────────────────────────────────
 LAYERINFINITE_API_KEY = os.getenv("LAYERINFINITE_API_KEY", "")
 OPENAI_API_KEY        = os.getenv("OPENAI_API_KEY", "")
-LAYERINFINITE_BASE    = "https://api.layerinfinite.app"  # your Railway URL
-OPENAI_BASE           = "https://api.openai.com/v1"
-OPENAI_MODEL          = "gpt-4o-mini"
+LAYERINFINITE_BASE    = os.getenv("LAYERINFINITE_BASE", "https://api.layerinfinite.app")
+OPENAI_BASE           = os.getenv("OPENAI_BASE", "https://api.openai.com/v1")
+OPENAI_MODEL          = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+# Keep transport/telemetry jitter out of seeded simulation randomness.
+_NON_DETERMINISTIC_RNG = random.SystemRandom()
+
+DNS_ERROR_MARKERS = (
+    "getaddrinfo failed",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname provided",
+)
+
+
+def configure_console_utf8() -> None:
+    """Best-effort UTF-8 output so Windows terminals don't crash on report glyphs."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+def normalize_api_key(value: str) -> str:
+    """Clean common copy-paste artifacts while preserving valid keys."""
+    cleaned = (value or '').strip().strip('"').strip("'")
+
+    # Handles accidental suffix from quoted pastes like ..."s
+    if cleaned.endswith('"s') or cleaned.endswith("'s"):
+        cleaned = cleaned[:-2]
+
+    return cleaned
+
+
+def normalize_base_url(value: str, default: str) -> str:
+    cleaned = (value or default).strip().strip('"').strip("'")
+    if not cleaned:
+        cleaned = default
+    return cleaned.rstrip("/")
+
+
+def validate_runtime_configuration() -> None:
+    missing = []
+    if not LAYERINFINITE_API_KEY:
+        missing.append("LAYERINFINITE_API_KEY")
+    if not OPENAI_API_KEY:
+        missing.append("OPENAI_API_KEY")
+
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables: " + ", ".join(missing)
+        )
+
+    if not LAYERINFINITE_API_KEY.startswith("layerinfinite_"):
+        raise RuntimeError(
+            "Invalid LAYERINFINITE_API_KEY format. Expected prefix: layerinfinite_"
+        )
+
+    if not OPENAI_API_KEY.startswith("sk-"):
+        raise RuntimeError(
+            "Invalid OPENAI_API_KEY format. Expected prefix: sk-"
+        )
+
+LAYERINFINITE_API_KEY = normalize_api_key(LAYERINFINITE_API_KEY)
+OPENAI_API_KEY = normalize_api_key(OPENAI_API_KEY)
+LAYERINFINITE_BASE = normalize_base_url(LAYERINFINITE_BASE, "https://api.layerinfinite.app")
+OPENAI_BASE = normalize_base_url(OPENAI_BASE, "https://api.openai.com/v1")
+validate_runtime_configuration()
+
+LI_HOST = urllib.parse.urlparse(LAYERINFINITE_BASE).hostname or "api.layerinfinite.app"
+_ORIGINAL_GETADDRINFO = socket.getaddrinfo
+_DNS_CACHE: dict[str, list] = {}
+_DNS_FALLBACK_INSTALLED = False
+
+def is_dns_resolution_error(error_text: str) -> bool:
+    text = (error_text or "").lower()
+    return any(marker in text for marker in DNS_ERROR_MARKERS)
+
+def install_dns_cache_fallback(host: str) -> None:
+    """Reuse last successful DNS answer when resolver intermittently fails."""
+    global _DNS_FALLBACK_INSTALLED
+    if _DNS_FALLBACK_INSTALLED:
+        return
+
+    target = host.strip().lower()
+
+    def cached_getaddrinfo(hostname, *args, **kwargs):
+        host_key = str(hostname).strip().lower()
+        try:
+            resolved = _ORIGINAL_GETADDRINFO(hostname, *args, **kwargs)
+            if host_key == target and resolved:
+                _DNS_CACHE[target] = resolved
+            return resolved
+        except socket.gaierror:
+            cached = _DNS_CACHE.get(target) if host_key == target else None
+            if cached:
+                return cached
+            raise
+
+    socket.getaddrinfo = cached_getaddrinfo
+    _DNS_FALLBACK_INSTALLED = True
+
+def warm_dns_cache(host: str, attempts: int = 3) -> bool:
+    target = host.strip().lower()
+    for _ in range(max(1, attempts)):
+        try:
+            resolved = _ORIGINAL_GETADDRINFO(target, 443, type=socket.SOCK_STREAM)
+            if resolved:
+                _DNS_CACHE[target] = resolved
+                return True
+        except socket.gaierror:
+            pass
+        time.sleep(0.2)
+    return False
+
+
+def quick_health_probe(base_url: str, timeout_seconds: float = NETWORK_PREFLIGHT_TIMEOUT_SECONDS) -> dict:
+    url = f"{base_url}/health"
+    req = urllib.request.Request(url, headers={"Content-Type": "application/json"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            payload = json.loads(resp.read().decode() or "{}")
+            return {
+                "ok": True,
+                "status": str(payload.get("status", "unknown")),
+                "checks": payload.get("checks", {}),
+            }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "unknown",
+            "checks": {},
+            "error": str(exc),
+        }
+
+
+def run_connectivity_preflight(base_url: str, host: str) -> dict:
+    result = {
+        "host": host,
+        "dns_ok": False,
+        "tcp_ok": False,
+        "health_ok": False,
+        "health_status": "unknown",
+        "status": "unknown",
+        "error": None,
+    }
+
+    target = host.strip().lower()
+
+    try:
+        resolved = _ORIGINAL_GETADDRINFO(target, 443, type=socket.SOCK_STREAM)
+        if resolved:
+            _DNS_CACHE[target] = resolved
+            result["dns_ok"] = True
+    except socket.gaierror as exc:
+        result["status"] = "dns_unstable"
+        result["error"] = str(exc)
+        return result
+
+    try:
+        with socket.create_connection((target, 443), timeout=NETWORK_PREFLIGHT_TIMEOUT_SECONDS):
+            pass
+        result["tcp_ok"] = True
+    except OSError as exc:
+        result["status"] = "network_degraded"
+        result["error"] = str(exc)
+        return result
+
+    health = quick_health_probe(base_url)
+    result["health_ok"] = bool(health.get("ok"))
+    result["health_status"] = str(health.get("status", "unknown"))
+    if not result["health_ok"] and health.get("error"):
+        result["error"] = str(health.get("error"))
+
+    if result["health_ok"] and result["health_status"] == "ok":
+        result["status"] = "healthy"
+    elif result["health_ok"]:
+        result["status"] = "network_degraded"
+    else:
+        result["status"] = "network_degraded"
+
+    return result
+
+
+def print_preflight_banner(preflight: dict) -> None:
+    print("  Startup connectivity preflight...")
+    print(
+        f"  Preflight status ({preflight.get('host', 'unknown')}) : {preflight.get('status', 'unknown')} "
+        f"(dns={preflight.get('dns_ok')}, tcp={preflight.get('tcp_ok')}, health={preflight.get('health_status')})"
+    )
+
+    if preflight.get("status") != "healthy":
+        error_text = str(preflight.get("error") or "connectivity issue")
+        print(f"  ⚠️  Preflight warning: {error_text}")
+        print("  Resilience layer active: DNS cache fallback + pending outcome replay.")
+
+install_dns_cache_fallback(LI_HOST)
+DNS_WARMUP_OK = warm_dns_cache(LI_HOST)
 
 # Agent identity — persistent across all runs so Layerinfinite builds history
-AGENT_ID_FILE = "pagent"
+AGENT_ID_FILE = "ptest"
 
 def get_or_create_agent_id() -> str:
     if os.path.exists(AGENT_ID_FILE):
@@ -133,6 +335,17 @@ ALL_FAILURE_TYPES = list(GROUND_TRUTH.keys())
 OBSERVE_EXPLORATION_RATE = 0.35
 ADVISORY_EXPLORATION_RATE = 0.15
 
+# Autonomous mode only executes recommendations that pass quality gates.
+AUTONOMOUS_ALLOWED_STATES = {"early_signal", "stable"}
+AUTONOMOUS_MIN_CONFIDENCE_BY_STATE = {
+    "early_signal": 0.25,
+    "stable": 0.50,
+}
+AUTONOMOUS_MIN_SAMPLES_BY_STATE = {
+    "early_signal": 10,
+    "stable": 20,
+}
+
 # ─────────────────────────────────────────────────────────────────────
 # HTTP HELPERS
 # ─────────────────────────────────────────────────────────────────────
@@ -153,20 +366,28 @@ def _request_json(method: str, url: str, headers: dict, body: Optional[dict] = N
                 body_text = str(e)
 
             if status >= 500 and attempt < HTTP_MAX_RETRIES:
-                sleep_s = min(HTTP_BACKOFF_BASE_SECONDS * (2 ** attempt), HTTP_BACKOFF_MAX_SECONDS) + random.uniform(0.0, 0.2)
+                sleep_s = min(HTTP_BACKOFF_BASE_SECONDS * (2 ** attempt), HTTP_BACKOFF_MAX_SECONDS) + _NON_DETERMINISTIC_RNG.uniform(0.0, 0.2)
                 time.sleep(sleep_s)
                 last_error = body_text
                 continue
 
-            return {"error": body_text, "status": status}
+            return {"error": body_text, "status": status, "error_category": "http_error"}
         except Exception as e:
             last_error = str(e)
             if attempt >= HTTP_MAX_RETRIES:
-                return {"error": f"{last_error} (attempts={attempt + 1})"}
-            sleep_s = min(HTTP_BACKOFF_BASE_SECONDS * (2 ** attempt), HTTP_BACKOFF_MAX_SECONDS) + random.uniform(0.0, 0.2)
+                category = "dns_resolution" if is_dns_resolution_error(last_error) else "transport_error"
+                return {
+                    "error": f"{last_error} (attempts={attempt + 1})",
+                    "error_category": category,
+                }
+            sleep_s = min(HTTP_BACKOFF_BASE_SECONDS * (2 ** attempt), HTTP_BACKOFF_MAX_SECONDS) + _NON_DETERMINISTIC_RNG.uniform(0.0, 0.2)
             time.sleep(sleep_s)
 
-    return {"error": f"{last_error} (attempts={HTTP_MAX_RETRIES + 1})"}
+    category = "dns_resolution" if is_dns_resolution_error(last_error) else "transport_error"
+    return {
+        "error": f"{last_error} (attempts={HTTP_MAX_RETRIES + 1})",
+        "error_category": category,
+    }
 
 
 def http_post(url: str, headers: dict, body: dict) -> dict:
@@ -243,7 +464,8 @@ def call_openai(system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user",   "content": user},
         ],
-        "temperature": 0.2,
+        # Deterministic decisions keep seeded cross-mode comparisons fair.
+        "temperature": 0.0,
         "max_tokens": 300,
     }
     result = http_post(f"{OPENAI_BASE}/chat/completions", headers, body)
@@ -287,11 +509,52 @@ LI_HEADERS = {
     "Content-Type": "application/json",
 }
 
+
+def clamp_score(value: float) -> float:
+    return max(0.0, min(1.0, round(float(value), 4)))
+
+
+def build_execution_result(failure_type: str, action: str, success: bool,
+                           confidence: float, context: dict) -> dict:
+    """Builds action output used by score_fn to produce ranking input."""
+    correct_action = GROUND_TRUTH[failure_type]
+    action_match_score = 1.0 if action == correct_action else 0.2
+    attempt_factor = 1.0 / max(1, int(context.get("attempt", 1)))
+    success_signal = 1.0 if success else 0.0
+
+    # score_fn input mirrors a production action result shape.
+    resolution_score = clamp_score(
+        (0.55 * success_signal)
+        + (0.30 * confidence)
+        + (0.10 * action_match_score)
+        + (0.05 * attempt_factor)
+    )
+
+    return {
+        "resolved": success,
+        "resolution_score": resolution_score,
+        "confidence": confidence,
+        "action": action,
+        "failure_type": failure_type,
+        "attempt": int(context.get("attempt", 1)),
+        "correct_action": correct_action,
+        "action_match": action == correct_action,
+    }
+
+
+def score_fn(result: dict) -> float:
+    """Extract ranking score from action output. Required shape: resolution_score in [0,1]."""
+    try:
+        return clamp_score(result.get("resolution_score", 0.0))
+    except Exception:
+        return 0.0
+
 def li_get_recommendation(task: str) -> dict:
     url = f"{LAYERINFINITE_BASE}/v1/recommendations?task={urllib.parse.quote(task)}"
     return http_get(url, LI_HEADERS)
 
 def li_log_outcome(task: str, action: str, success: bool, confidence: float,
+                   outcome_score: float, score_input: dict,
                    context: dict, episode_id: str, sequence_index: int) -> dict:
     idempotency_key = f"ptest-{episode_id}-{sequence_index}-{uuid.uuid4().hex[:8]}"
     body = {
@@ -299,13 +562,21 @@ def li_log_outcome(task: str, action: str, success: bool, confidence: float,
         "task_name": task,
         "action_name": action,
         "success": success,
-        "outcome_score": confidence,
+        "outcome_score": outcome_score,
         "raw_context": context,
-        "response_ms": random.randint(40, 900),
+        "response_ms": _NON_DETERMINISTIC_RNG.randint(40, 900),
         "idempotency_key": idempotency_key,
         "episode_id": episode_id,
         "episode_history": [f"step_{i}" for i in range(sequence_index)],
-        "metadata": {"test_harness": "ci_reliability_agent_v1"},
+        "metadata": {
+            "test_harness": "ci_reliability_agent_v1",
+            "score_fn": "resolution_score_v1",
+            "score_input": {
+                "resolution_score": score_input.get("resolution_score"),
+                "action_match": score_input.get("action_match"),
+                "attempt": score_input.get("attempt"),
+            },
+        },
     }
     resp = http_post(f"{LAYERINFINITE_BASE}/v1/log-outcome", LI_HEADERS, body)
     if "error" in resp:
@@ -354,6 +625,64 @@ def maybe_explore_action(li_mode: str, failure_type: str, chosen_action: str) ->
 
     return random.choice(task_actions), True
 
+
+def parse_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def extract_leading_action_from_reason(reason_text: str) -> Optional[str]:
+    text = (reason_text or "").strip()
+    if not text:
+        return None
+
+    match = re.search(r'"([a-zA-Z0-9_\-]+)"\s+is\s+the\s+leading\s+action', text)
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def validate_autonomous_recommendation(
+    failure_type: str,
+    recommendation: dict,
+    recommended_action: Optional[str],
+    reason_text: str,
+) -> tuple[bool, str]:
+    if not recommended_action:
+        return (False, "missing_action")
+
+    task_actions = {
+        action
+        for (ft, action) in ACTION_SUCCESS_RATES.keys()
+        if ft == failure_type
+    }
+    if recommended_action not in task_actions:
+        return (False, "unknown_action_for_task")
+
+    state = str(recommendation.get("state") or "no_data").strip().lower()
+    if state not in AUTONOMOUS_ALLOWED_STATES:
+        return (False, f"state={state}")
+
+    confidence = parse_float(recommendation.get("confidence"), 0.0)
+    required_confidence = AUTONOMOUS_MIN_CONFIDENCE_BY_STATE.get(state, 1.0)
+    if confidence < required_confidence:
+        return (False, f"confidence={confidence:.3f}<min={required_confidence:.3f}")
+
+    sample_size = recommendation.get("sample_size") or {}
+    min_samples_seen = int(parse_float(sample_size.get("min"), 0.0))
+    required_samples = AUTONOMOUS_MIN_SAMPLES_BY_STATE.get(state, 0)
+    if min_samples_seen < required_samples:
+        return (False, f"samples={min_samples_seen}<min={required_samples}")
+
+    reason_action = extract_leading_action_from_reason(reason_text)
+    if reason_action and reason_action != recommended_action:
+        return (False, f"inconsistent_reason_leader={reason_action}")
+
+    return (True, "accepted")
+
 # ─────────────────────────────────────────────────────────────────────
 # SCORING ENGINE
 # ─────────────────────────────────────────────────────────────────────
@@ -374,7 +703,8 @@ def score_recommendation(failure_type: str, recommended_action: Optional[str],
 # ─────────────────────────────────────────────────────────────────────
 # MAIN AGENT LOOP
 # ─────────────────────────────────────────────────────────────────────
-def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
+def run_agent(li_mode: str, num_runs: int, stress: bool = False,
+              seed: Optional[int] = None) -> dict:
     """
     li_mode: "none" | "observe" | "advisory" | "autonomous"
     """
@@ -384,18 +714,43 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
     print(f"  Runs               : {num_runs}")
     print(f"  Agent ID           : {AGENT_ID[:16]}...")
     print(f"  OpenAI Model       : {OPENAI_MODEL}")
+    if seed is not None:
+        print(f"  Random Seed        : {seed}")
     print(f"{'═'*70}\n")
 
+    if seed is not None:
+        random.seed(seed)
+
     replayed_total = 0
+    preflight = {
+        "host": LI_HOST,
+        "dns_ok": DNS_WARMUP_OK,
+        "tcp_ok": False,
+        "health_ok": False,
+        "health_status": "unknown",
+        "status": "skipped",
+        "error": None,
+    }
+    api_errors_total = 0
+    dns_errors_total = 0
+    recommendation_errors = 0
+    observe_errors = 0
+    score_errors = 0
+    log_errors = 0
 
     # ── Health check first ──────────────────────────────────────────
     if li_mode != "none":
+        preflight = run_connectivity_preflight(LAYERINFINITE_BASE, LI_HOST)
+        print_preflight_banner(preflight)
+
         replayed, pending = flush_pending_outcomes()
         replayed_total += replayed
         if replayed > 0 or pending > 0:
             print(f"  Replayed pending logs : sent={replayed}, remaining={pending}")
 
         print("  Checking Layerinfinite health...")
+        dns_state = "ok" if DNS_WARMUP_OK else "failed"
+        print(f"  DNS preflight ({LI_HOST}) : {dns_state}")
         health = li_health()
         status = health.get("status", "unknown")
         color = "✅" if status == "ok" else "⚠️ "
@@ -425,10 +780,20 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
 
         recommended_action = None
         li_rec_data = {}
+        rec_fetch_ok = True
+        rec_validation = {"accepted": False, "reason": None}
 
         # ── OBSERVE / ADVISORY / AUTONOMOUS: always log + get rec ───
         if li_mode in ("observe", "advisory", "autonomous"):
             rec = li_get_recommendation(failure_type)
+            if "error" in rec:
+                rec_fetch_ok = False
+                recommendation_errors += 1
+                api_errors_total += 1
+                if is_dns_resolution_error(str(rec.get("error", ""))):
+                    dns_errors_total += 1
+                print(f"         ⚠️  LI rec error : {str(rec.get('error'))[:80]}")
+
             rec_state = rec.get("state")
             rec_conf = rec.get("confidence")
             rec_reason = ((rec.get("reason") or {}).get("confidence_note")
@@ -439,8 +804,24 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
             if best_action:
                 recommended_action = str(best_action)
                 li_rec_data = rec
-                print(f"         LI recommends : {recommended_action} "
-                      f"(state={rec_state}, confidence={rec_conf})")
+                if li_mode == "autonomous":
+                    accepted, reason = validate_autonomous_recommendation(
+                        failure_type=failure_type,
+                        recommendation=rec,
+                        recommended_action=recommended_action,
+                        reason_text=rec_reason,
+                    )
+                    rec_validation = {"accepted": accepted, "reason": reason}
+                    if accepted:
+                        print(f"         LI recommends : {recommended_action} "
+                              f"(state={rec_state}, confidence={rec_conf})")
+                    else:
+                        print(f"         LI candidate  : {recommended_action} "
+                              f"(state={rec_state}, confidence={rec_conf})")
+                        print(f"         LI guardrail  : rejected ({reason})")
+                else:
+                    print(f"         LI recommends : {recommended_action} "
+                          f"(state={rec_state}, confidence={rec_conf})")
             else:
                 print(f"         LI status     : {rec_state or 'no_data'}")
                 print(f"         LI reason     : {rec_reason}")
@@ -448,10 +829,14 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
                     print(f"         LI unlock     : {unlock_hint}")
 
         # ── DECIDE: agent picks action ───────────────────────────────
-        if li_mode == "autonomous" and recommended_action:
+        if li_mode == "autonomous" and recommended_action and rec_validation.get("accepted"):
             # Layerinfinite makes the decision outright
             chosen_action = recommended_action
             print(f"         Action taken  : {chosen_action} [AUTONOMOUS — LI decided]")
+        elif li_mode == "autonomous" and recommended_action and not rec_validation.get("accepted"):
+            # Autonomous safe fallback: recommendation present but below quality gate.
+            chosen_action = diagnose_and_pick_action(failure_type, context)
+            print(f"         Action taken  : {chosen_action} [AUTONOMOUS SAFE-FALLBACK — agent]")
         elif li_mode == "advisory" and recommended_action:
             # Agent consults hint but decides independently
             chosen_action = diagnose_and_pick_action(failure_type, context,
@@ -468,9 +853,18 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
 
         # ── EXECUTE: simulate real outcome ───────────────────────────
         success, confidence = simulate_action_outcome(failure_type, chosen_action)
+        execution_result = build_execution_result(
+            failure_type=failure_type,
+            action=chosen_action,
+            success=success,
+            confidence=confidence,
+            context=context,
+        )
+        outcome_score = score_fn(execution_result)
         outcome_icon = "✅" if success else "❌"
         print(f"         Outcome       : {outcome_icon} {'SUCCESS' if success else 'FAILURE'} "
               f"(conf={confidence:.3f})")
+        print(f"         score_fn      : outcome_score={outcome_score:.3f}")
 
         # ── LOG: always send outcome to Layerinfinite if connected ───
         log_resp = {}
@@ -480,11 +874,17 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
                 action=chosen_action,
                 success=success,
                 confidence=confidence,
+                outcome_score=outcome_score,
+                score_input=execution_result,
                 context=context,
                 episode_id=episode_id,
                 sequence_index=i,
             )
             if "error" in log_resp:
+                api_errors_total += 1
+                log_errors += 1
+                if is_dns_resolution_error(str(log_resp.get("error", ""))):
+                    dns_errors_total += 1
                 print(f"         ⚠️  Log error   : {log_resp['error'][:80]}")
                 enqueue_pending_outcome(log_resp.get("_payload", {}))
                 print("         📦 Queued      : pending replay enabled")
@@ -493,6 +893,8 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
 
         # ── SCORE ────────────────────────────────────────────────────
         score = score_recommendation(failure_type, recommended_action, chosen_action)
+        if li_mode == "autonomous" and recommended_action and not rec_validation.get("accepted"):
+            score["followed_recommendation"] = False
         results.append({
             "run":            i + 1,
             "failure_type":   failure_type,
@@ -501,8 +903,13 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
             "chosen":         chosen_action,
             "success":        success,
             "confidence":     confidence,
+            "outcome_score":  outcome_score,
+            "score_input":    execution_result,
             "score":          score,
             "log_ok":         "error" not in log_resp,
+            "rec_fetch_ok":   rec_fetch_ok,
+            "rec_autonomous_accepted": bool(rec_validation.get("accepted")),
+            "rec_autonomous_reject_reason": rec_validation.get("reason"),
         })
 
         if not stress:
@@ -522,6 +929,21 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
         for ft in set(r["failure_type"] for r in results):
             obs = li_observe(ft)
             sc  = li_get_scores(ft)
+
+            if "error" in obs:
+                api_errors_total += 1
+                observe_errors += 1
+                if is_dns_resolution_error(str(obs.get("error", ""))):
+                    dns_errors_total += 1
+                print(f"     {ft}: observe_error={str(obs.get('error'))[:80]}")
+
+            if "error" in sc:
+                api_errors_total += 1
+                score_errors += 1
+                if is_dns_resolution_error(str(sc.get("error", ""))):
+                    dns_errors_total += 1
+                print(f"     {ft}: score_error={str(sc.get('error'))[:80]}")
+
             observed_tasks[ft] = {"observe": obs, "scores": sc}
             total = obs.get("total_runs", 0)
             sr    = obs.get("success_rate", 0)
@@ -533,10 +955,22 @@ def run_agent(li_mode: str, num_runs: int, stress: bool = False) -> dict:
         "mode":           li_mode,
         "agent_id":       AGENT_ID,
         "episode_id":     episode_id,
+        "seed":           seed,
         "num_runs":       num_runs,
         "results":        results,
         "observed_tasks": observed_tasks,
         "replayed_outcomes": replayed_total,
+        "network": {
+            "li_host": LI_HOST,
+            "dns_warmup_ok": DNS_WARMUP_OK,
+            "preflight": preflight,
+            "api_errors_total": api_errors_total,
+            "dns_errors_total": dns_errors_total,
+            "recommendation_errors": recommendation_errors,
+            "log_errors": log_errors,
+            "observe_errors": observe_errors,
+            "score_errors": score_errors,
+        },
     }
 
 # ─────────────────────────────────────────────────────────────────────
@@ -557,14 +991,26 @@ def generate_report(run_data: dict) -> None:
 
     choice_correct    = sum(1 for r in results if r["score"]["choice_correct"])
     choice_accuracy   = choice_correct / n if n else 0
+    mean_outcome_score = (sum(float(r.get("outcome_score", 0.0)) for r in results) / n) if n else 0
 
     followed_count    = sum(1 for r in rec_available if r["score"]["followed_recommendation"])
     follow_rate       = followed_count / len(rec_available) if rec_available else None
+
+    rec_fetch_ok = sum(1 for r in results if r.get("rec_fetch_ok", True))
+    rec_fetch_rate = rec_fetch_ok / n if n else 0
+
+    rec_candidates = sum(1 for r in results if r.get("recommended") is not None)
+    rec_autonomous_accepted = sum(1 for r in results if r.get("rec_autonomous_accepted", False))
+    rec_autonomous_accept_rate = (
+        rec_autonomous_accepted / rec_candidates
+        if rec_candidates else 0
+    )
 
     log_ok            = sum(1 for r in results if r.get("log_ok", False))
     replayed_outcomes = int(run_data.get("replayed_outcomes", 0) or 0)
     effective_logged  = min(n, log_ok + replayed_outcomes)
     log_success_rate  = effective_logged / n if n else 0
+    network = run_data.get("network", {})
 
     # ── Per-failure breakdown ─────────────────────────────────────────
     per_type: dict = {}
@@ -585,9 +1031,24 @@ def generate_report(run_data: dict) -> None:
     print(f"\n  BACKEND VERIFICATION")
     print(f"  {'─'*50}")
     if mode != "none":
+        preflight = network.get("preflight") or {}
+        if preflight:
+            print(
+                f"  Startup preflight status        : {preflight.get('status', 'unknown')} "
+                f"(dns={preflight.get('dns_ok')}, tcp={preflight.get('tcp_ok')})"
+            )
         print(f"  Outcomes logged immediately      : {log_ok}/{n}")
         print(f"  Outcomes replayed from queue     : {replayed_outcomes}")
         print(f"  Outcomes delivered eventually    : {effective_logged}/{n} ({log_success_rate:.0%})")
+        print(f"  Recommendation fetch success     : {rec_fetch_ok}/{n} ({rec_fetch_rate:.0%})")
+
+        api_errors_total = int(network.get("api_errors_total", 0) or 0)
+        dns_errors_total = int(network.get("dns_errors_total", 0) or 0)
+        if api_errors_total > 0:
+            print(f"  API transport errors observed    : {api_errors_total} (DNS={dns_errors_total})")
+            if dns_errors_total > 0:
+                print(f"  ⚠️  DNS resolution instability detected. LI learning/recommendation coverage can be undercounted.")
+
         if effective_logged == n:
             print(f"  ✅ All outcomes reached backend (direct + replay) — no silent failures")
         else:
@@ -599,6 +1060,9 @@ def generate_report(run_data: dict) -> None:
     print(f"  {'─'*50}")
     print(f"  Overall success rate        : {success_rate:.1%}  ({successes}/{n})")
     print(f"  Correct action chosen       : {choice_accuracy:.1%}  ({choice_correct}/{n})")
+    print(f"  Mean outcome score (score_fn): {mean_outcome_score:.3f}")
+    if mode == "autonomous" and rec_candidates > 0:
+        print(f"  Autonomous rec accepted     : {rec_autonomous_accepted}/{rec_candidates} ({rec_autonomous_accept_rate:.1%})")
 
     if rec_accuracy is not None:
         print(f"\n  LAYERINFINITE ACCURACY")
@@ -686,6 +1150,8 @@ def compare_reports(file_none: str, file_li: str) -> None:
 # CLI ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    configure_console_utf8()
+
     parser = argparse.ArgumentParser(
         description="CI/CD Reliability Agent — Layerinfinite Test Harness"
     )
@@ -697,6 +1163,8 @@ if __name__ == "__main__":
                         help="Stress mode: 20 rapid decisions")
     parser.add_argument("--compare", nargs=2, metavar=("BASELINE_JSON", "LI_JSON"),
                         help="Compare two saved result files")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Deterministic random seed for reproducible runs")
     args = parser.parse_args()
 
     if args.compare:
@@ -707,5 +1175,10 @@ if __name__ == "__main__":
         args.runs = 20
         print("  ⚡ STRESS MODE: 20 rapid decisions")
 
-    run_data = run_agent(li_mode=args.mode, num_runs=args.runs, stress=args.stress)
+    run_data = run_agent(
+        li_mode=args.mode,
+        num_runs=args.runs,
+        stress=args.stress,
+        seed=args.seed,
+    )
     generate_report(run_data)

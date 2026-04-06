@@ -1,0 +1,614 @@
+{
+  "mode": "autonomous",
+  "agent_id": "a4c53386-a098-4a46-8a60-f2ec8534af47",
+  "episode_id": "c0c5a33e-914b-4281-a4ca-a42d60170ab4",
+  "seed": 20260405,
+  "num_runs": 5,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "sdk",
+        "branch": "main",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 50,
+        "timestamp": "2026-04-05T04:42:07.181022+00:00"
+      },
+      "recommended": "rollback_migration",
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.99,
+      "outcome_score": 0.972,
+      "score_input": {
+        "resolved": true,
+        "resolution_score": 0.972,
+        "confidence": 0.99,
+        "action": "rollback_migration",
+        "failure_type": "db_migration_failed",
+        "attempt": 2,
+        "correct_action": "rollback_migration",
+        "action_match": true
+      },
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": "rollback_migration",
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": false
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true,
+      "rec_autonomous_accepted": false,
+      "rec_autonomous_reject_reason": "confidence=0.000<min=0.250"
+    },
+    {
+      "run": 2,
+      "failure_type": "docker_build_timeout",
+      "context": {
+        "repo": "dashboard",
+        "branch": "dev",
+        "runner": "ubuntu-20.04",
+        "attempt": 2,
+        "duration_s": 331,
+        "timestamp": "2026-04-05T04:42:17.495353+00:00"
+      },
+      "recommended": "increase_docker_timeout",
+      "chosen": "increase_docker_timeout",
+      "success": true,
+      "confidence": 0.838,
+      "outcome_score": 0.9264,
+      "score_input": {
+        "resolved": true,
+        "resolution_score": 0.9264,
+        "confidence": 0.838,
+        "action": "increase_docker_timeout",
+        "failure_type": "docker_build_timeout",
+        "attempt": 2,
+        "correct_action": "increase_docker_timeout",
+        "action_match": true
+      },
+      "score": {
+        "correct_action": "increase_docker_timeout",
+        "recommended_action": "increase_docker_timeout",
+        "chosen_action": "increase_docker_timeout",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": false
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true,
+      "rec_autonomous_accepted": false,
+      "rec_autonomous_reject_reason": "state=no_data"
+    },
+    {
+      "run": 3,
+      "failure_type": "db_migration_failed",
+      "context": {
+        "repo": "api-service",
+        "branch": "main",
+        "runner": "ubuntu-22.04",
+        "attempt": 2,
+        "duration_s": 391,
+        "timestamp": "2026-04-05T04:42:24.248879+00:00"
+      },
+      "recommended": "rollback_migration",
+      "chosen": "rollback_migration",
+      "success": true,
+      "confidence": 0.834,
+      "outcome_score": 0.9252,
+      "score_input": {
+        "resolved": true,
+        "resolution_score": 0.9252,
+        "confidence": 0.834,
+        "action": "rollback_migration",
+        "failure_type": "db_migration_failed",
+        "attempt": 2,
+        "correct_action": "rollback_migration",
+        "action_match": true
+      },
+      "score": {
+        "correct_action": "rollback_migration",
+        "recommended_action": "rollback_migration",
+        "chosen_action": "rollback_migration",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": false
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true,
+      "rec_autonomous_accepted": false,
+      "rec_autonomous_reject_reason": "confidence=0.000<min=0.250"
+    },
+    {
+      "run": 4,
+      "failure_type": "env_var_missing",
+      "context": {
+        "repo": "sdk",
+        "branch": "feature/auth",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 143,
+        "timestamp": "2026-04-05T04:42:32.749186+00:00"
+      },
+      "recommended": "inject_env_from_vault",
+      "chosen": "inject_env_from_vault",
+      "success": true,
+      "confidence": 0.896,
+      "outcome_score": 0.9355,
+      "score_input": {
+        "resolved": true,
+        "resolution_score": 0.9355,
+        "confidence": 0.896,
+        "action": "inject_env_from_vault",
+        "failure_type": "env_var_missing",
+        "attempt": 3,
+        "correct_action": "inject_env_from_vault",
+        "action_match": true
+      },
+      "score": {
+        "correct_action": "inject_env_from_vault",
+        "recommended_action": "inject_env_from_vault",
+        "chosen_action": "inject_env_from_vault",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": false
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true,
+      "rec_autonomous_accepted": false,
+      "rec_autonomous_reject_reason": "samples=5<min=10"
+    },
+    {
+      "run": 5,
+      "failure_type": "npm_install_failed",
+      "context": {
+        "repo": "dashboard",
+        "branch": "dev",
+        "runner": "ubuntu-20.04",
+        "attempt": 1,
+        "duration_s": 93,
+        "timestamp": "2026-04-05T04:42:41.197151+00:00"
+      },
+      "recommended": "clear_npm_cache",
+      "chosen": "clear_npm_cache",
+      "success": true,
+      "confidence": 0.975,
+      "outcome_score": 0.9925,
+      "score_input": {
+        "resolved": true,
+        "resolution_score": 0.9925,
+        "confidence": 0.975,
+        "action": "clear_npm_cache",
+        "failure_type": "npm_install_failed",
+        "attempt": 1,
+        "correct_action": "clear_npm_cache",
+        "action_match": true
+      },
+      "score": {
+        "correct_action": "clear_npm_cache",
+        "recommended_action": "clear_npm_cache",
+        "chosen_action": "clear_npm_cache",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": false
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true,
+      "rec_autonomous_accepted": false,
+      "rec_autonomous_reject_reason": "state=no_data"
+    }
+  ],
+  "observed_tasks": {
+    "docker_build_timeout": {
+      "observe": {
+        "task": "docker_build_timeout",
+        "total_runs": 27,
+        "success_rate": 0.8148,
+        "actions_seen": [
+          "retry_with_backoff",
+          "increase_docker_timeout"
+        ],
+        "best_performing": "retry_with_backoff",
+        "worst_performing": "increase_docker_timeout",
+        "last_run": "2026-04-05T04:42:21.197665+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+            "action_name": "increase_docker_timeout",
+            "action_category": "auto-discovered",
+            "composite_score": 0.7877,
+            "confidence": 0.8387,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 26,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.5995,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "1f6f89b9-8392-4bd6-b4c0-b5f42dea74cc",
+          "action_name": "increase_docker_timeout",
+          "action_category": "auto-discovered",
+          "composite_score": 0.7877,
+          "confidence": 0.8387,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 26,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "c85c9fef-bc61-4e11-8118-65e3209587e8",
+        "agent_id": "a64d4579-a2f6-4234-ab04-4f9b857ac7ab",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "docker_build_timeout",
+        "environment": "production",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-05T04:42:45.568071+00:00",
+        "scores_as_of": "2026-04-05T04:42:45.568071+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-05T04:42:45.568071+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "escalate",
+        "policy_reason": "agent_suspended",
+        "agent_trust": {
+          "score": 0.734,
+          "status": "suspended"
+        },
+        "meta": {
+          "total_actions_scored": 2,
+          "top_n_returned": 2,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "db_migration_failed": {
+      "observe": {
+        "task": "db_migration_failed",
+        "total_runs": 53,
+        "success_rate": 0.8868,
+        "actions_seen": [
+          "retry_with_backoff",
+          "rollback_migration"
+        ],
+        "best_performing": "retry_with_backoff",
+        "worst_performing": "rollback_migration",
+        "last_run": "2026-04-05T04:42:29.104298+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "e1978e87-65f1-43f3-8f34-74bd0432aa47",
+            "action_name": "rollback_migration",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8257,
+            "confidence": 0.9091,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 50,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.6948,
+            "confidence": 0.375,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 3,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          }
+        ],
+        "top_action": {
+          "action_id": "e1978e87-65f1-43f3-8f34-74bd0432aa47",
+          "action_name": "rollback_migration",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8257,
+          "confidence": 0.9091,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 50,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "2c86aea2-f6bd-4179-81d7-8aafed710aa2",
+        "agent_id": "a64d4579-a2f6-4234-ab04-4f9b857ac7ab",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "db_migration_failed",
+        "environment": "production",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-05T04:42:45.568071+00:00",
+        "scores_as_of": "2026-04-05T04:42:45.568071+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-05T04:42:45.568071+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "escalate",
+        "policy_reason": "agent_suspended",
+        "agent_trust": {
+          "score": 0.734,
+          "status": "suspended"
+        },
+        "meta": {
+          "total_actions_scored": 2,
+          "top_n_returned": 2,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "npm_install_failed": {
+      "observe": {
+        "task": "npm_install_failed",
+        "total_runs": 31,
+        "success_rate": 0.9355,
+        "actions_seen": [
+          "retry_with_backoff",
+          "clear_npm_cache",
+          "inject_env_from_vault"
+        ],
+        "best_performing": "retry_with_backoff",
+        "worst_performing": "inject_env_from_vault",
+        "last_run": "2026-04-05T04:42:44.542135+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "5b8d72cd-ff51-4afa-ae19-6b395543a85a",
+            "action_name": "clear_npm_cache",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8469,
+            "confidence": 0.8529,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 29,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.5947,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          },
+          {
+            "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+            "action_name": "inject_env_from_vault",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4611,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "5b8d72cd-ff51-4afa-ae19-6b395543a85a",
+          "action_name": "clear_npm_cache",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8469,
+          "confidence": 0.8529,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 29,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "eff87490-29b8-46dd-a568-a38c3a11e7aa",
+        "agent_id": "a64d4579-a2f6-4234-ab04-4f9b857ac7ab",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "npm_install_failed",
+        "environment": "production",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-05T04:42:45.568071+00:00",
+        "scores_as_of": "2026-04-05T04:42:45.568071+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-05T04:42:45.568071+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "escalate",
+        "policy_reason": "agent_suspended",
+        "agent_trust": {
+          "score": 0.734,
+          "status": "suspended"
+        },
+        "meta": {
+          "total_actions_scored": 3,
+          "top_n_returned": 3,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    },
+    "env_var_missing": {
+      "observe": {
+        "task": "env_var_missing",
+        "total_runs": 36,
+        "success_rate": 0.8333,
+        "actions_seen": [
+          "inject_env_from_vault",
+          "retry_with_backoff",
+          "pin_previous_image"
+        ],
+        "best_performing": "inject_env_from_vault",
+        "worst_performing": "pin_previous_image",
+        "last_run": "2026-04-05T04:42:38.238671+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+            "action_name": "inject_env_from_vault",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8589,
+            "confidence": 0.8571,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 30,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4661,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          },
+          {
+            "action_id": "f222d893-137a-4808-b4ab-4a6478990715",
+            "action_name": "pin_previous_image",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4569,
+            "confidence": 0.5,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 5,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+          "action_name": "inject_env_from_vault",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8589,
+          "confidence": 0.8571,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 30,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "cec7d29a-0887-4428-9bb8-d465e56d2969",
+        "agent_id": "a64d4579-a2f6-4234-ab04-4f9b857ac7ab",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "env_var_missing",
+        "environment": "production",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-05T04:43:00.058173+00:00",
+        "scores_as_of": "2026-04-05T04:43:00.058173+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-05T04:43:00.058173+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "escalate",
+        "policy_reason": "agent_suspended",
+        "agent_trust": {
+          "score": 0.734,
+          "status": "suspended"
+        },
+        "meta": {
+          "total_actions_scored": 3,
+          "top_n_returned": 3,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    }
+  },
+  "replayed_outcomes": 0,
+  "network": {
+    "li_host": "api.layerinfinite.app",
+    "dns_warmup_ok": true,
+    "preflight": {
+      "host": "api.layerinfinite.app",
+      "dns_ok": true,
+      "tcp_ok": true,
+      "health_ok": false,
+      "health_status": "unknown",
+      "status": "network_degraded",
+      "error": "The read operation timed out"
+    },
+    "api_errors_total": 0,
+    "dns_errors_total": 0,
+    "recommendation_errors": 0,
+    "log_errors": 0,
+    "observe_errors": 0,
+    "score_errors": 0
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "mode": "none",
+  "agent_id": "a4c53386-a098-4a46-8a60-f2ec8534af47",
+  "episode_id": "953e711a-8006-4c0d-9b50-0691cd7861ec",
+  "num_runs": 1,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "lint_failure",
+      "context": {
+        "repo": "dashboard",
+        "branch": "main",
+        "runner": "ubuntu-22.04",
+        "attempt": 3,
+        "duration_s": 243,
+        "timestamp": "2026-04-04T19:30:52.664187+00:00"
+      },
+      "recommended": null,
+      "chosen": "auto_fix_lint",
+      "success": true,
+      "confidence": 0.99,
+      "score": {
+        "correct_action": "auto_fix_lint",
+        "recommended_action": null,
+        "chosen_action": "auto_fix_lint",
+        "recommendation_correct": null,
+        "choice_correct": true,
+        "followed_recommendation": null
+      },
+      "log_ok": true
+    }
+  ],
+  "observed_tasks": {},
+  "replayed_outcomes": 0
+}

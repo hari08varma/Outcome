@@ -1,0 +1,171 @@
+{
+  "mode": "observe",
+  "agent_id": "a4c53386-a098-4a46-8a60-f2ec8534af47",
+  "episode_id": "bb1c2e37-803f-40d2-b041-2a9f949e1cd9",
+  "num_runs": 1,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "env_var_missing",
+      "context": {
+        "repo": "worker",
+        "branch": "main",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 329,
+        "timestamp": "2026-04-05T03:48:45.067009+00:00"
+      },
+      "recommended": "inject_env_from_vault",
+      "chosen": "retry_with_backoff",
+      "success": false,
+      "confidence": 0.038,
+      "outcome_score": 0.0814,
+      "score_input": {
+        "resolved": false,
+        "resolution_score": 0.0814,
+        "confidence": 0.038,
+        "action": "retry_with_backoff",
+        "failure_type": "env_var_missing",
+        "attempt": 1,
+        "correct_action": "inject_env_from_vault",
+        "action_match": false
+      },
+      "score": {
+        "correct_action": "inject_env_from_vault",
+        "recommended_action": "inject_env_from_vault",
+        "chosen_action": "retry_with_backoff",
+        "recommendation_correct": true,
+        "choice_correct": false,
+        "followed_recommendation": false
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true
+    }
+  ],
+  "observed_tasks": {
+    "env_var_missing": {
+      "observe": {
+        "task": "env_var_missing",
+        "total_runs": 22,
+        "success_rate": 0.9091,
+        "actions_seen": [
+          "inject_env_from_vault",
+          "retry_with_backoff",
+          "pin_previous_image"
+        ],
+        "best_performing": "inject_env_from_vault",
+        "worst_performing": "pin_previous_image",
+        "last_run": "2026-04-05T03:48:52.386871+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+            "action_name": "inject_env_from_vault",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8377,
+            "confidence": 0.8,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 20,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4667,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          },
+          {
+            "action_id": "f222d893-137a-4808-b4ab-4a6478990715",
+            "action_name": "pin_previous_image",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4616,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "2c73ce6d-830b-4361-bbbb-4ff5ec94533d",
+          "action_name": "inject_env_from_vault",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8377,
+          "confidence": 0.8,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 20,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "cec7d29a-0887-4428-9bb8-d465e56d2969",
+        "agent_id": "a64d4579-a2f6-4234-ab04-4f9b857ac7ab",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "env_var_missing",
+        "environment": "production",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-05T03:48:53.538786+00:00",
+        "scores_as_of": "2026-04-05T03:48:53.538786+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-05T03:48:53.538786+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "escalate",
+        "policy_reason": "agent_suspended",
+        "agent_trust": {
+          "score": 0.7729,
+          "status": "suspended"
+        },
+        "meta": {
+          "total_actions_scored": 3,
+          "top_n_returned": 3,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    }
+  },
+  "replayed_outcomes": 0,
+  "network": {
+    "li_host": "api.layerinfinite.app",
+    "dns_warmup_ok": true,
+    "preflight": {
+      "host": "api.layerinfinite.app",
+      "dns_ok": true,
+      "tcp_ok": true,
+      "health_ok": false,
+      "health_status": "unknown",
+      "status": "network_degraded",
+      "error": "The read operation timed out"
+    },
+    "api_errors_total": 0,
+    "dns_errors_total": 0,
+    "recommendation_errors": 0,
+    "log_errors": 0,
+    "observe_errors": 0,
+    "score_errors": 0
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "mode": "autonomous",
+  "agent_id": "a4c53386-a098-4a46-8a60-f2ec8534af47",
+  "episode_id": "3abac98e-a062-4621-9baa-6e24f94d9f7d",
+  "num_runs": 1,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "lint_failure",
+      "context": {
+        "repo": "api-service",
+        "branch": "main",
+        "runner": "ubuntu-22.04",
+        "attempt": 1,
+        "duration_s": 289,
+        "timestamp": "2026-04-04T21:04:14.061905+00:00"
+      },
+      "recommended": "auto_fix_lint",
+      "chosen": "auto_fix_lint",
+      "success": true,
+      "confidence": 0.954,
+      "outcome_score": 0.9862,
+      "score_input": {
+        "resolved": true,
+        "resolution_score": 0.9862,
+        "confidence": 0.954,
+        "action": "auto_fix_lint",
+        "failure_type": "lint_failure",
+        "attempt": 1,
+        "correct_action": "auto_fix_lint",
+        "action_match": true
+      },
+      "score": {
+        "correct_action": "auto_fix_lint",
+        "recommended_action": "auto_fix_lint",
+        "chosen_action": "auto_fix_lint",
+        "recommendation_correct": true,
+        "choice_correct": true,
+        "followed_recommendation": true
+      },
+      "log_ok": true,
+      "rec_fetch_ok": true
+    }
+  ],
+  "observed_tasks": {
+    "lint_failure": {
+      "observe": {
+        "task": "lint_failure",
+        "total_runs": 24,
+        "success_rate": 0.875,
+        "actions_seen": [
+          "retry_with_backoff",
+          "auto_fix_lint",
+          "pin_previous_image"
+        ],
+        "best_performing": "retry_with_backoff",
+        "worst_performing": "pin_previous_image",
+        "last_run": "2026-04-04T21:04:49.722553+00:00"
+      },
+      "scores": {
+        "ranked_actions": [
+          {
+            "action_id": "26c991af-35bb-4383-a249-bc31295e6c5e",
+            "action_name": "auto_fix_lint",
+            "action_category": "auto-discovered",
+            "composite_score": 0.8112,
+            "confidence": 0.8148,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 22,
+            "is_cold_start": false,
+            "is_low_sample": false,
+            "recommendation": "recommend"
+          },
+          {
+            "action_id": "c81abdf8-45d6-4c4a-afbc-0f0cff3c196a",
+            "action_name": "retry_with_backoff",
+            "action_category": "auto-discovered",
+            "composite_score": 0.5992,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          },
+          {
+            "action_id": "f222d893-137a-4808-b4ab-4a6478990715",
+            "action_name": "pin_previous_image",
+            "action_category": "auto-discovered",
+            "composite_score": 0.4656,
+            "confidence": 0.1667,
+            "trend_delta": 0,
+            "trend": "stable",
+            "total_attempts": 1,
+            "is_cold_start": false,
+            "is_low_sample": true,
+            "recommendation": "neutral"
+          }
+        ],
+        "top_action": {
+          "action_id": "26c991af-35bb-4383-a249-bc31295e6c5e",
+          "action_name": "auto_fix_lint",
+          "action_category": "auto-discovered",
+          "composite_score": 0.8112,
+          "confidence": 0.8148,
+          "trend_delta": 0,
+          "trend": "stable",
+          "total_attempts": 22,
+          "is_cold_start": false,
+          "is_low_sample": false,
+          "recommendation": "recommend"
+        },
+        "should_escalate": false,
+        "cold_start": false,
+        "context_id": "eb534617-3385-4c12-8c99-24e0fbdb9d09",
+        "agent_id": "a64d4579-a2f6-4234-ab04-4f9b857ac7ab",
+        "customer_id": "e5fee369-2b23-48e8-927f-2fd83783ea92",
+        "issue_type": "lint_failure",
+        "environment": "production",
+        "context_match": null,
+        "context_warning": null,
+        "view_refreshed_at": "2026-04-04T21:04:54.200003+00:00",
+        "scores_as_of": "2026-04-04T21:04:54.200003+00:00",
+        "scores_max_age_seconds": 300,
+        "scoring_metadata": {
+          "view_refreshed_at": "2026-04-04T21:04:54.200003+00:00",
+          "is_stale": false,
+          "stale_threshold_minutes": 10
+        },
+        "served_from_cache": false,
+        "policy": "escalate",
+        "policy_reason": "agent_suspended",
+        "agent_trust": {
+          "score": 0.8218,
+          "status": "suspended"
+        },
+        "meta": {
+          "total_actions_scored": 3,
+          "top_n_returned": 3,
+          "scoring_version": "1.0"
+        },
+        "decision_id": null,
+        "recommended_sequence": null,
+        "sequence_context": null,
+        "signal_contract": null
+      }
+    }
+  },
+  "replayed_outcomes": 1,
+  "network": {
+    "li_host": "api.layerinfinite.app",
+    "dns_warmup_ok": false,
+    "api_errors_total": 0,
+    "dns_errors_total": 0,
+    "recommendation_errors": 0,
+    "log_errors": 0,
+    "observe_errors": 0,
+    "score_errors": 0
+  }
+}
