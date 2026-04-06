@@ -83,7 +83,7 @@ export default async function webhookRoute(c: Context): Promise<Response> {
 
         const { data: pending } = await supabase
             .from('dim_pending_signal_registrations')
-            .select('registration_id, customer_id, resolved')
+            .select('registration_id, customer_id, resolved, event_type, platform')
             .eq('outcome_id', payload.outcomeId)
             .eq('resolved', false)
             .limit(1)
@@ -93,25 +93,84 @@ export default async function webhookRoute(c: Context): Promise<Response> {
             return c.json({ resolved: false, outcome_id: payload.outcomeId }, 200);
         }
 
-        await supabase
-            .from('dim_pending_signal_registrations')
-            .update({
-                resolved: true,
-                resolved_at: new Date().toISOString(),
-                resolved_by: `${provider}_webhook`,
-            })
-            .eq('registration_id', pending.registration_id);
+        const { data: currentOutcome } = await supabase
+            .from('fact_outcomes')
+            .select('outcome_id, success')
+            .eq('outcome_id', payload.outcomeId)
+            .limit(1)
+            .maybeSingle();
 
-        await supabase
+        if (!currentOutcome) {
+            return c.json({ resolved: false, outcome_id: payload.outcomeId }, 200);
+        }
+
+        const finalSignalSuccess = payload.finalScore >= 0.5;
+        const crossEventStatus = currentOutcome.success === finalSignalSuccess
+            ? 'confirmed'
+            : 'conflict';
+        const nowIso = new Date().toISOString();
+
+        const { error: outcomeUpdateError } = await supabase
             .from('fact_outcomes')
             .update({
                 outcome_score: payload.finalScore,
                 business_outcome: payload.businessOutcome,
-                feedback_received_at: new Date().toISOString(),
+                feedback_received_at: nowIso,
+                signal_pending: false,
+                signal_updated_at: nowIso,
+                cross_event_status: crossEventStatus,
+                cross_event_last_updated: nowIso,
+                pending_registration_id: pending.registration_id,
             })
             .eq('outcome_id', payload.outcomeId);
 
-        return c.json({ resolved: true, outcome_id: payload.outcomeId }, 200);
+        if (outcomeUpdateError) {
+            return c.json({ resolved: false, outcome_id: payload.outcomeId }, 200);
+        }
+
+        await supabase
+            .from('dim_pending_signal_registrations')
+            .update({
+                resolved: true,
+                resolved_at: nowIso,
+                resolved_by: `${provider}_webhook`,
+            })
+            .eq('registration_id', pending.registration_id);
+
+        if (crossEventStatus === 'conflict') {
+            const { data: existingConflict } = await supabase
+                .from('dim_discrepancy_log')
+                .select('discrepancy_id')
+                .eq('customer_id', pending.customer_id)
+                .eq('outcome_id', payload.outcomeId)
+                .eq('discrepancy_type', 'cross_event_conflict')
+                .eq('resolved', false)
+                .limit(1);
+
+            if (!existingConflict || existingConflict.length === 0) {
+                await supabase
+                    .from('dim_discrepancy_log')
+                    .insert({
+                        customer_id: pending.customer_id,
+                        outcome_id: payload.outcomeId,
+                        registration_id: pending.registration_id,
+                        action_name: `${pending.platform}:${pending.event_type}`,
+                        discrepancy_type: 'cross_event_conflict',
+                        expected_outcome: currentOutcome.success,
+                        actual_outcome: finalSignalSuccess,
+                        signal_confidence: payload.finalScore,
+                        detail:
+                            `Webhook ${provider} contradicted initial outcome polarity. ` +
+                            `initial_success=${String(currentOutcome.success)} final_score=${payload.finalScore.toFixed(4)}.`,
+                    });
+            }
+        }
+
+        return c.json({
+            resolved: true,
+            outcome_id: payload.outcomeId,
+            cross_event_status: crossEventStatus,
+        }, 200);
     } catch {
         return c.json({ resolved: false }, 200);
     }

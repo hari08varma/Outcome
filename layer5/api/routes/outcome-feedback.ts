@@ -54,7 +54,7 @@ outcomeFeedbackRouter.post('/', async (c) => {
     // ── Verify outcome belongs to this customer ──────────────
     const { data: outcome, error: lookupErr } = await supabase
         .from('fact_outcomes')
-        .select('outcome_id, customer_id, context_id')
+        .select('outcome_id, customer_id, context_id, success, signal_pending, cross_event_status, action_id')
         .eq('outcome_id', body.outcome_id)
         .maybeSingle();
 
@@ -85,12 +85,22 @@ outcomeFeedbackRouter.post('/', async (c) => {
     // This is the ONE permitted UPDATE on fact_outcomes.
     // The prevent_outcome_update trigger allows changes ONLY to
     // outcome_score, business_outcome, and feedback_received_at.
+    const feedbackSignalsSuccess = body.final_score >= 0.5;
+    const crossEventStatus = outcome.signal_pending === true
+        ? (outcome.success === feedbackSignalsSuccess ? 'confirmed' : 'conflict')
+        : (outcome.success === feedbackSignalsSuccess ? 'resolved' : 'conflict');
+    const nowIso = new Date().toISOString();
+
     const { error: updateErr } = await supabase
         .from('fact_outcomes')
         .update({
             outcome_score: body.final_score,
             business_outcome: body.business_outcome,
-            feedback_received_at: new Date().toISOString(),
+            feedback_received_at: nowIso,
+            signal_pending: false,
+            signal_updated_at: nowIso,
+            cross_event_status: crossEventStatus,
+            cross_event_last_updated: nowIso,
         })
         .eq('outcome_id', body.outcome_id);
 
@@ -100,6 +110,49 @@ outcomeFeedbackRouter.post('/', async (c) => {
 
     // ── Trigger score cache refresh (async, non-blocking) ────
     invalidateCache(customerId, outcome.context_id);
+
+    const { error: resolvePendingError } = await supabase
+        .from('dim_pending_signal_registrations')
+        .update({
+            resolved: true,
+            resolved_at: nowIso,
+            resolved_by: 'outcome_feedback',
+        })
+        .eq('customer_id', customerId)
+        .eq('outcome_id', body.outcome_id)
+        .eq('resolved', false);
+
+    if (resolvePendingError) {
+        console.warn('[outcome-feedback] failed to resolve pending registrations:', resolvePendingError.message);
+    }
+
+    if (crossEventStatus === 'conflict') {
+        const { data: existingConflict } = await supabase
+            .from('dim_discrepancy_log')
+            .select('discrepancy_id')
+            .eq('customer_id', customerId)
+            .eq('outcome_id', body.outcome_id)
+            .eq('discrepancy_type', 'cross_event_conflict')
+            .eq('resolved', false)
+            .limit(1);
+
+        if (!existingConflict || existingConflict.length === 0) {
+            await supabase
+                .from('dim_discrepancy_log')
+                .insert({
+                    customer_id: customerId,
+                    outcome_id: body.outcome_id,
+                    action_name: `action:${outcome.action_id ?? 'unknown'}`,
+                    discrepancy_type: 'cross_event_conflict',
+                    expected_outcome: outcome.success,
+                    actual_outcome: feedbackSignalsSuccess,
+                    signal_confidence: body.final_score,
+                    detail:
+                        'Delayed feedback contradicted initial outcome polarity. ' +
+                        `initial_success=${String(outcome.success)} final_score=${body.final_score.toFixed(4)}.`,
+                });
+        }
+    }
 
     // ── DELAYED SILENT FAILURE DETECTION (Gap 5) ─────────────
     // Original outcome was success=true but feedback shows low score.
@@ -134,5 +187,7 @@ outcomeFeedbackRouter.post('/', async (c) => {
         outcome_id: body.outcome_id,
         final_score: body.final_score,
         business_outcome: body.business_outcome,
+        cross_event_status: crossEventStatus,
+        cross_event_conflict: crossEventStatus === 'conflict',
     });
 });

@@ -14,6 +14,7 @@ import {
 import { buildRecommendationDataFreshness } from '../lib/recommendation/data-freshness.js';
 import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
 import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
+import { computeCohortReliability } from '../lib/recommendation/cohort-reliability.js';
 
 export const getRecommendationsRouter = new Hono();
 
@@ -174,6 +175,7 @@ getRecommendationsRouter.get('/', async (c) => {
             median_confidence: result.confidence,
             median_success_rate: medianSuccessRate,
         });
+        const cohortReliability = computeCohortReliability(result, cohortCycle);
 
         return c.json(
             {
@@ -198,6 +200,7 @@ getRecommendationsRouter.get('/', async (c) => {
                 },
                 data_freshness: dataFreshness,
                 cohort_cycle: cohortCycle,
+                cohort_reliability: cohortReliability,
                 customer_id: customerId,
                 noise_gate: result._noise_gate ?? null,
                 simulation_guardrail: result._simulation_guardrail ?? null,

@@ -89,6 +89,52 @@ pendingSignalsRoute.post('/', async (c) => {
         return c.json({ error: 'No active contract found for this action' }, 422);
     }
 
+    const { data: existingRegistration, error: existingRegistrationError } = await supabase
+        .from('dim_pending_signal_registrations')
+        .select('registration_id, outcome_id, created_at')
+        .eq('customer_id', customerId)
+        .eq('outcome_id', body.outcome_id)
+        .eq('event_type', contract.event_type)
+        .eq('platform', contract.platform)
+        .eq('resolved', false)
+        .limit(1)
+        .maybeSingle();
+
+    if (existingRegistrationError) {
+        return c.json({ error: 'Failed pending registration lookup', details: existingRegistrationError.message }, 500);
+    }
+
+    if (existingRegistration) {
+        const nowIso = new Date().toISOString();
+        const { error: markExistingPendingError } = await supabase
+            .from('fact_outcomes')
+            .update({
+                signal_pending: true,
+                signal_updated_at: nowIso,
+                cross_event_status: 'pending_signal',
+                cross_event_last_updated: nowIso,
+                pending_registration_id: existingRegistration.registration_id,
+            })
+            .eq('outcome_id', body.outcome_id)
+            .eq('customer_id', customerId);
+
+        if (markExistingPendingError) {
+            return c.json({
+                error: 'Failed to mark outcome as pending',
+                details: markExistingPendingError.message,
+            }, 500);
+        }
+
+        return c.json({
+            ...existingRegistration,
+            idempotent_replay: true,
+            pending_state: {
+                signal_pending: true,
+                cross_event_status: 'pending_signal',
+            },
+        }, 200);
+    }
+
     const { data: inserted, error: insertError } = await supabase
         .from('dim_pending_signal_registrations')
         .insert({
@@ -105,7 +151,40 @@ pendingSignalsRoute.post('/', async (c) => {
         return c.json({ error: 'Failed pending registration insert', details: insertError.message }, 500);
     }
 
-    return c.json(inserted, 201);
+    const nowIso = new Date().toISOString();
+    const { error: pendingStateError } = await supabase
+        .from('fact_outcomes')
+        .update({
+            signal_pending: true,
+            signal_updated_at: nowIso,
+            cross_event_status: 'pending_signal',
+            cross_event_last_updated: nowIso,
+            pending_registration_id: inserted.registration_id,
+        })
+        .eq('outcome_id', body.outcome_id)
+        .eq('customer_id', customerId);
+
+    if (pendingStateError) {
+        await supabase
+            .from('dim_pending_signal_registrations')
+            .delete()
+            .eq('registration_id', inserted.registration_id)
+            .eq('customer_id', customerId);
+
+        return c.json({
+            error: 'Failed to sync pending state on outcome',
+            details: pendingStateError.message,
+        }, 500);
+    }
+
+    return c.json({
+        ...inserted,
+        idempotent_replay: false,
+        pending_state: {
+            signal_pending: true,
+            cross_event_status: 'pending_signal',
+        },
+    }, 201);
 });
 
 export default pendingSignalsRoute;

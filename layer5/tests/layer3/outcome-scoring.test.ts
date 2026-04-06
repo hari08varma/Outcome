@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 // ── Mock supabase (hoisted — factory must not reference outer vars) ──
 vi.mock('../../api/lib/supabase.js', () => {
     const chain: any = {};
-    const methods = ['select', 'eq', 'order', 'insert', 'update', 'upsert', 'maybeSingle', 'single'];
+    const methods = ['select', 'eq', 'order', 'limit', 'insert', 'update', 'upsert', 'maybeSingle', 'single'];
     for (const m of methods) {
         chain[m] = vi.fn().mockReturnValue(chain);
     }
@@ -74,7 +74,7 @@ function getChain() {
 /** Build a fresh chain mock for one supabase.from() call */
 function buildChain() {
     const c: any = {};
-    for (const m of ['select', 'eq', 'order', 'insert', 'update', 'upsert', 'maybeSingle', 'single']) {
+    for (const m of ['select', 'eq', 'order', 'limit', 'insert', 'update', 'upsert', 'maybeSingle', 'single']) {
         c[m] = vi.fn().mockReturnValue(c);
     }
     return c;
@@ -179,7 +179,7 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
         expect(insertCall[0].outcome_score).toBe(0.7);
     });
 
-    it('without outcome_score falls back to 1.0 for success=true', async () => {
+    it('without outcome_score stores neutral 0.5 for success=true', async () => {
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -209,13 +209,13 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
 
         expect(res.status).toBe(201);
 
-        // outcome_score should fall back to binary success score
+        // Raw score is null and persisted outcome_score uses neutral prior (0.5).
         const insertCall = insertChain.insert.mock.calls[0];
         expect(insertCall).toBeDefined();
-        expect(insertCall[0].outcome_score).toBe(1.0);
+        expect(insertCall[0].outcome_score).toBe(0.5);
     });
 
-    it('without outcome_score falls back to 0.0 for success=false', async () => {
+    it('without outcome_score stores neutral 0.5 for success=false', async () => {
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -247,7 +247,7 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
 
         const insertCall = insertChain.insert.mock.calls[0];
         expect(insertCall).toBeDefined();
-        expect(insertCall[0].outcome_score).toBe(0.0);
+        expect(insertCall[0].outcome_score).toBe(0.5);
     });
 
     it('outcome_score=1.5 returns 400 validation error', async () => {
@@ -285,7 +285,15 @@ describe('POST /v1/outcome-feedback', () => {
         // Three from() calls: lookup, insert feedback, update outcome
         const lookupChain = buildChain();
         lookupChain.maybeSingle.mockResolvedValue({
-            data: { outcome_id: feedbackBody.outcome_id, customer_id: 'cust-test', context_id: 'ctx-1' },
+            data: {
+                outcome_id: feedbackBody.outcome_id,
+                customer_id: 'cust-test',
+                context_id: 'ctx-1',
+                success: true,
+                signal_pending: false,
+                cross_event_status: 'none',
+                action_id: 'act-1',
+            },
             error: null,
         });
 
@@ -293,7 +301,6 @@ describe('POST /v1/outcome-feedback', () => {
         insertChain.insert.mockResolvedValue({ data: null, error: null });
 
         const updateChain = buildChain();
-        updateChain.eq.mockResolvedValue({ data: null, error: null });
 
         let callIdx = 0;
         vi.mocked(supabase.from).mockImplementation(() => {

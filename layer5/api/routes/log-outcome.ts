@@ -12,6 +12,10 @@ import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
 import { inferTask, validateTaskName, TASK_MAPPING_CONFIDENCE } from '../lib/recommendation/task-infer.js';
 import type { TaskInferResult } from '../lib/recommendation/task-infer.js';
+import {
+    inferSemanticActionCluster,
+    type SemanticActionClusterResult,
+} from '../lib/recommendation/semantic-action-cluster.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -80,6 +84,99 @@ const LOCAL_DEFAULT_POLICY_CONFIG: CustomerPolicyConfig = {
     exploration_rate: 0.05,
     min_confidence: 0.30,
 };
+
+interface InconsistencyEvaluation {
+    isInconsistent: boolean;
+    type: string | null;
+    reason: string | null;
+    ruleVersion: string | null;
+}
+
+interface RetryChainState {
+    retryChainId: string | null;
+    retryAttempt: number | null;
+    crossEventAttemptCount: number | null;
+    canonicalOutcomeId: string | null;
+}
+
+function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+}
+
+function parseOptionalNumber(value: unknown): number | null {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+}
+
+function evaluateInconsistency(params: {
+    finalSuccess: boolean;
+    outcomeScoreRaw: number | null;
+    businessOutcome: string | null | undefined;
+    verifierDiscrepancy: boolean;
+}): InconsistencyEvaluation {
+    const lowThreshold = clamp01(
+        parseOptionalNumber(process.env.LI_INCONSISTENCY_THRESHOLD) ?? 0.3,
+    );
+    const highThreshold = clamp01(
+        parseOptionalNumber(process.env.LI_INCONSISTENCY_HIGH_THRESHOLD) ?? 0.7,
+    );
+
+    if (params.verifierDiscrepancy) {
+        return {
+            isInconsistent: true,
+            type: 'verifier_discrepancy',
+            reason: 'Verifier signal contradicted self-reported outcome.',
+            ruleVersion: 'v2:verifier_discrepancy',
+        };
+    }
+
+    if (
+        params.finalSuccess === true
+        && params.outcomeScoreRaw !== null
+        && params.outcomeScoreRaw < lowThreshold
+    ) {
+        return {
+            isInconsistent: true,
+            type: 'success_low_score',
+            reason: `success=true but outcome_score_raw=${params.outcomeScoreRaw.toFixed(4)} is below threshold ${lowThreshold.toFixed(4)}.`,
+            ruleVersion: `v2:success_low_score:threshold=${lowThreshold.toFixed(4)}`,
+        };
+    }
+
+    if (
+        params.finalSuccess === false
+        && params.outcomeScoreRaw !== null
+        && params.outcomeScoreRaw > highThreshold
+    ) {
+        return {
+            isInconsistent: true,
+            type: 'failure_high_score',
+            reason: `success=false but outcome_score_raw=${params.outcomeScoreRaw.toFixed(4)} exceeds threshold ${highThreshold.toFixed(4)}.`,
+            ruleVersion: `v2:failure_high_score:threshold=${highThreshold.toFixed(4)}`,
+        };
+    }
+
+    if (
+        params.finalSuccess === true
+        && (params.businessOutcome === 'partial' || params.businessOutcome === 'failed')
+    ) {
+        return {
+            isInconsistent: true,
+            type: 'success_business_conflict',
+            reason: `success=true but business_outcome=${params.businessOutcome}.`,
+            ruleVersion: 'v2:success_business_conflict',
+        };
+    }
+
+    return {
+        isInconsistent: false,
+        type: null,
+        reason: null,
+        ruleVersion: null,
+    };
+}
 
 // ── Request schema ────────────────────────────────────────────
 const LogOutcomeBody = z.object({
@@ -198,6 +295,8 @@ const LogOutcomeBody = z.object({
     // If absent: auto-inferred from issue_type via inferTask().
     // TASK RESOLUTION RULE: provided value ALWAYS wins over inferred.
     task_name: z.string().min(1).max(255).optional(),
+    retry_chain_id: z.string().uuid().optional(),
+    retry_attempt: z.number().int().min(0).max(1000).optional(),
 });
 
 // ── Helper: fetch real agent trust ──
@@ -436,16 +535,87 @@ async function resolveContextId(body: any, customerId: string): Promise<string> 
     return ctx.context_id;
 }
 
+async function resolveRetryChainState(
+    customerId: string,
+    body: any,
+): Promise<RetryChainState> {
+    const fromRawContext = body.raw_context && typeof body.raw_context === 'object'
+        ? body.raw_context
+        : null;
+
+    const derivedChain =
+        body.retry_chain_id
+        ?? (typeof fromRawContext?.retry_chain_id === 'string' ? fromRawContext.retry_chain_id : null)
+        ?? null;
+
+    const derivedAttemptRaw =
+        body.retry_attempt
+        ?? (typeof fromRawContext?.retry_attempt === 'number' ? fromRawContext.retry_attempt : null);
+
+    const derivedAttempt = typeof derivedAttemptRaw === 'number' && Number.isFinite(derivedAttemptRaw)
+        ? Math.max(0, Math.floor(derivedAttemptRaw))
+        : null;
+
+    if (!derivedChain) {
+        return {
+            retryChainId: null,
+            retryAttempt: null,
+            crossEventAttemptCount: null,
+            canonicalOutcomeId: null,
+        };
+    }
+
+    const { data: previous, error } = await supabase
+        .from('fact_outcomes')
+        .select('outcome_id, canonical_outcome_id, cross_event_attempt_count, retry_attempt')
+        .eq('customer_id', customerId)
+        .eq('retry_chain_id', derivedChain)
+        .order('timestamp', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (error) {
+        console.warn('[log-outcome] retry chain lookup failed:', error.message);
+    }
+
+    const previousAttemptCount = typeof previous?.cross_event_attempt_count === 'number'
+        ? previous.cross_event_attempt_count
+        : null;
+
+    const previousRetryAttempt = typeof previous?.retry_attempt === 'number'
+        ? previous.retry_attempt
+        : null;
+
+    const resolvedAttempt = derivedAttempt
+        ?? (previousRetryAttempt !== null ? previousRetryAttempt + 1 : 0);
+
+    const crossEventAttemptCount = previousAttemptCount !== null
+        ? Math.max(previousAttemptCount + 1, resolvedAttempt + 1)
+        : resolvedAttempt + 1;
+
+    return {
+        retryChainId: derivedChain,
+        retryAttempt: resolvedAttempt,
+        crossEventAttemptCount,
+        canonicalOutcomeId: previous?.canonical_outcome_id ?? previous?.outcome_id ?? null,
+    };
+}
+
 async function insertCoreOutcome(
     agentId: string, customerId: string, actionId: string, contextId: string,
     body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any,
     outcomeScoreRaw: number | null,
     dataQuality: number,
     isInconsistent: boolean,
+    inconsistencyType: string | null,
+    inconsistencyReason: string | null,
     mappingConfidence: number,
     scoreOrigin: 'provided' | 'inferred',
     mappingTier: string,
     inconsistencyRuleVersion: string | null,
+    semanticCluster: SemanticActionClusterResult,
+    crossEventStatus: 'none' | 'pending_signal' | 'confirmed' | 'conflict' | 'resolved',
+    retryChain: RetryChainState,
 ) {
     // RULE: backprop_episode_id is INTERNAL — set by the backprop engine only.
     // NEVER map body.episode_id to this column. body.episode_id is the SDK's
@@ -486,11 +656,22 @@ async function insertCoreOutcome(
             signal_source: body.signal_source ?? 'explicit',
             signal_confidence: body.causal_confidence ?? null,
             causal_depth: body.signal_depth ?? null,
-            signal_pending: false,
+            signal_pending: crossEventStatus === 'pending_signal',
             signal_updated_at: null,
+            cross_event_status: crossEventStatus,
+            cross_event_last_updated: new Date().toISOString(),
+            retry_chain_id: retryChain.retryChainId,
+            retry_attempt: retryChain.retryAttempt,
+            cross_event_attempt_count: retryChain.crossEventAttemptCount,
+            canonical_outcome_id: retryChain.canonicalOutcomeId,
+            pending_registration_id: null,
             // ── Decision Recommendation Engine ───────────────────────
             // Task resolution rule: developer-provided wins, else infer.
             task_name: body._resolved_task_name ?? null,
+            semantic_cluster_key: semanticCluster.clusterKey,
+            semantic_cluster_domain: semanticCluster.domain,
+            semantic_cluster_intent: semanticCluster.intent,
+            semantic_cluster_confidence: semanticCluster.confidence,
             // ── Ingestion Quality Layer ───────────────────────────────
             // Raw developer signal — never fabricated, null if not provided.
             outcome_score_raw: outcomeScoreRaw,
@@ -498,6 +679,8 @@ async function insertCoreOutcome(
             data_quality: dataQuality,
             // TRUE when success=true but outcome_score_raw < 0.3 — flagged, not overridden.
             is_inconsistent: isInconsistent,
+            inconsistency_type: inconsistencyType,
+            inconsistency_reason: inconsistencyReason,
             // Confidence of issue_type → task_name mapping (1.0 = developer provided).
             mapping_confidence: mappingConfidence,
             // 'provided' = developer sent outcome_score; 'inferred' = absent, fell back to binary.
@@ -753,32 +936,18 @@ logOutcomeRouter.post('/', async (c) => {
         // mapping_tier: exact tier string from TaskInferResult (persisted for audit trail).
         const mappingTier: string = taskInferResult.tier;
 
-        // Configurable inconsistency threshold — overridable via env for A/B testing.
-        // Default 0.3: developer says success=true but scored it below 0.3 → suspicious.
-        const inconsistencyThresholdRaw = process.env.LI_INCONSISTENCY_THRESHOLD;
-        const inconsistencyThreshold = inconsistencyThresholdRaw !== undefined
-            ? Math.max(0, Math.min(1, Number(inconsistencyThresholdRaw)))
-            : 0.3;
-
-        // is_inconsistent: developer said success=true but scored it below threshold.
-        // Both facts are preserved — neither is overridden. The inconsistency is
-        // flagged so the scoring engine can apply reduced trust to this event.
-        const isInconsistent: boolean =
-            finalSuccess === true
-            && outcomeScoreRaw !== null
-            && outcomeScoreRaw < inconsistencyThreshold;
-
-        // Rule version string encodes which threshold produced this flag.
-        // NULL when not flagged — avoids writing misleading version strings for clean events.
-        const inconsistencyRuleVersion: string | null = isInconsistent
-            ? `v1:threshold=${inconsistencyThreshold}`
-            : null;
+        const inconsistency = evaluateInconsistency({
+            finalSuccess,
+            outcomeScoreRaw,
+            businessOutcome: body.business_outcome ?? null,
+            verifierDiscrepancy: verification.discrepancy_detected === true,
+        });
 
         // Data quality score: 0.0–1.0 completeness of this event.
         const mappingConfidence: number = (body as any)._mapping_confidence ?? 1.0;
         const dataQuality = computeDataQuality({
             outcomeScoreRaw,
-            isInconsistent,
+            isInconsistent: inconsistency.isInconsistent,
             mappingConfidence,
             businessOutcome: body.business_outcome ?? null,
         });
@@ -787,12 +956,35 @@ logOutcomeRouter.post('/', async (c) => {
         const actionId = await resolveActionId(c, body, customerId);
         const contextId = await resolveContextId(body, customerId); // ← FIX: pass customerId
 
+        const semanticCluster = inferSemanticActionCluster({
+            actionName: body.action_name ?? 'unknown_action',
+            issueType: body.issue_type,
+            taskName: (body as any)._resolved_task_name ?? null,
+        });
+
+        const retryChain = await resolveRetryChainState(customerId, body);
+
+        const crossEventStatus: 'none' | 'pending_signal' | 'confirmed' | 'conflict' | 'resolved' =
+            body.feedback_signal === 'delayed'
+                ? 'pending_signal'
+                : 'none';
+
         // 5. Insert Core Fact
         const outcome = await insertCoreOutcome(
             agentId, customerId, actionId, contextId,
             body, finalSuccess, finalOutcomeScore, verification,
-            outcomeScoreRaw, dataQuality, isInconsistent, mappingConfidence,
-            scoreOrigin, mappingTier, inconsistencyRuleVersion,
+            outcomeScoreRaw,
+            dataQuality,
+            inconsistency.isInconsistent,
+            inconsistency.type,
+            inconsistency.reason,
+            mappingConfidence,
+            scoreOrigin,
+            mappingTier,
+            inconsistency.ruleVersion,
+            semanticCluster,
+            crossEventStatus,
+            retryChain,
         );
 
         // 6. Post-Insert Synchronous Updates
@@ -859,9 +1051,26 @@ logOutcomeRouter.post('/', async (c) => {
             ingestion_quality: {
                 data_quality: dataQuality,
                 score_origin: scoreOrigin,
-                is_inconsistent: isInconsistent,
+                is_inconsistent: inconsistency.isInconsistent,
+                inconsistency_type: inconsistency.type,
+                inconsistency_reason: inconsistency.reason,
+                inconsistency_rule_version: inconsistency.ruleVersion,
                 mapping_tier: mappingTier,
                 mapping_confidence: mappingConfidence,
+                semantic_cluster: {
+                    key: semanticCluster.clusterKey,
+                    domain: semanticCluster.domain,
+                    intent: semanticCluster.intent,
+                    confidence: semanticCluster.confidence,
+                    matched_tokens: semanticCluster.matchedTokens,
+                },
+                retry_chain: {
+                    retry_chain_id: retryChain.retryChainId,
+                    retry_attempt: retryChain.retryAttempt,
+                    attempt_count: retryChain.crossEventAttemptCount,
+                    canonical_outcome_id: retryChain.canonicalOutcomeId,
+                },
+                cross_event_status: crossEventStatus,
             },
             // ISSUE 4: Tell developer exactly when and how to improve logging quality.
             // outcome_score_tip is null when they already provided outcome_score (no nagging).
@@ -883,6 +1092,18 @@ logOutcomeRouter.post('/', async (c) => {
                     ? `Keep logging for task "${(body as any)._resolved_task_name}" ` +
                     `to improve recommendation confidence.`
                     : 'Add task_name to your log_outcome calls for task-specific recommendations.',
+                inconsistency_diagnostics: inconsistency.isInconsistent
+                    ? {
+                        type: inconsistency.type,
+                        reason: inconsistency.reason,
+                        resolution_hint:
+                            'Align success, outcome_score, and business_outcome to the same real-world truth. ' +
+                            'If delayed signal is expected, register pending signal and send final feedback later.',
+                    }
+                    : null,
+                delayed_signal_hint: body.feedback_signal === 'delayed'
+                    ? 'This outcome was marked as pending delayed validation. Register /v1/pending-signals and send /v1/outcome-feedback or webhook confirmation to close the lifecycle.'
+                    : null,
             },
         }, 201);
 

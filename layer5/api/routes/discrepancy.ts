@@ -17,6 +17,16 @@ type OutcomeSignalRow = {
     signal_confidence: number | null;
 };
 
+type CrossEventOutcomeRow = {
+    outcome_id: string;
+    action_id: string | null;
+    success: boolean;
+    signal_confidence: number | null;
+    cross_event_status: string | null;
+    inconsistency_type: string | null;
+    inconsistency_reason: string | null;
+};
+
 type ContractRow = {
     contract_id: string;
     action_id: string;
@@ -107,6 +117,9 @@ discrepancyRoute.post('/detect', async (c) => {
         let expired = 0;
         let mismatch = 0;
         let lowConfidence = 0;
+        let crossEventConflict = 0;
+        let pendingStateMismatch = 0;
+        let ingestionInconsistency = 0;
 
         const nowIso = new Date().toISOString();
 
@@ -366,12 +379,209 @@ discrepancyRoute.post('/detect', async (c) => {
             }
         }
 
+        const { data: crossEventRows, error: crossEventError } = await supabase
+            .from('fact_outcomes')
+            .select('outcome_id, action_id, success, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason')
+            .eq('customer_id', customerId)
+            .eq('cross_event_status', 'conflict')
+            .not('outcome_id', 'is', null);
+
+        if (crossEventError) {
+            return c.json({ error: 'Failed to load cross-event conflicts', details: crossEventError.message }, 500);
+        }
+
+        const crossEventOutcomeIds = [...new Set((crossEventRows ?? []).map((row: any) => row.outcome_id))];
+        const existingCrossEventSet = new Set<string>();
+        if (crossEventOutcomeIds.length > 0) {
+            const { data: existingCrossEvent } = await supabase
+                .from('dim_discrepancy_log')
+                .select('outcome_id')
+                .eq('customer_id', customerId)
+                .eq('discrepancy_type', 'cross_event_conflict')
+                .eq('resolved', false)
+                .in('outcome_id', crossEventOutcomeIds.slice(0, 1000));
+
+            for (const row of existingCrossEvent ?? []) {
+                existingCrossEventSet.add((row as any).outcome_id);
+            }
+        }
+
+        const crossEventInserts = ((crossEventRows ?? []) as CrossEventOutcomeRow[])
+            .filter((row) => !existingCrossEventSet.has(row.outcome_id))
+            .map((row) => ({
+                customer_id: customerId,
+                outcome_id: row.outcome_id,
+                action_name: row.action_id ? `action:${row.action_id}` : 'unknown_action',
+                discrepancy_type: 'cross_event_conflict',
+                expected_outcome: row.success,
+                actual_outcome: row.success,
+                signal_confidence: row.signal_confidence,
+                detail: row.inconsistency_reason
+                    ?? 'Cross-event delayed signal conflict detected.',
+            }));
+
+        if (crossEventInserts.length > 0) {
+            const { error: crossEventInsertError } = await supabase
+                .from('dim_discrepancy_log')
+                .insert(crossEventInserts);
+
+            if (crossEventInsertError) {
+                return c.json({ error: 'Failed to write cross-event discrepancies', details: crossEventInsertError.message }, 500);
+            }
+
+            detected += crossEventInserts.length;
+            crossEventConflict += crossEventInserts.length;
+        }
+
+        const { data: pendingOutcomes, error: pendingOutcomesError } = await supabase
+            .from('fact_outcomes')
+            .select('outcome_id')
+            .eq('customer_id', customerId)
+            .eq('signal_pending', true)
+            .not('outcome_id', 'is', null);
+
+        if (pendingOutcomesError) {
+            return c.json({ error: 'Failed to load pending outcomes', details: pendingOutcomesError.message }, 500);
+        }
+
+        const { data: unresolvedRegs, error: unresolvedRegsError } = await supabase
+            .from('dim_pending_signal_registrations')
+            .select('registration_id, outcome_id, event_type, platform')
+            .eq('customer_id', customerId)
+            .eq('resolved', false)
+            .not('outcome_id', 'is', null);
+
+        if (unresolvedRegsError) {
+            return c.json({ error: 'Failed to load unresolved registrations', details: unresolvedRegsError.message }, 500);
+        }
+
+        const pendingOutcomeSet = new Set<string>((pendingOutcomes ?? []).map((row: any) => row.outcome_id));
+        const unresolvedByOutcome = new Map<string, { registration_id: string; event_type: string; platform: string }>();
+        for (const reg of (unresolvedRegs ?? []) as Array<{ registration_id: string; outcome_id: string; event_type: string; platform: string }>) {
+            if (!unresolvedByOutcome.has(reg.outcome_id)) {
+                unresolvedByOutcome.set(reg.outcome_id, {
+                    registration_id: reg.registration_id,
+                    event_type: reg.event_type,
+                    platform: reg.platform,
+                });
+            }
+        }
+
+        const mismatchOutcomeIds = new Set<string>();
+        const pendingMismatchCandidates: Array<{
+            customer_id: string;
+            outcome_id: string;
+            registration_id: string | null;
+            action_name: string;
+            discrepancy_type: 'pending_state_mismatch';
+            detail: string;
+        }> = [];
+
+        for (const outcomeId of pendingOutcomeSet) {
+            if (!unresolvedByOutcome.has(outcomeId)) {
+                mismatchOutcomeIds.add(outcomeId);
+                pendingMismatchCandidates.push({
+                    customer_id: customerId,
+                    outcome_id: outcomeId,
+                    registration_id: null,
+                    action_name: 'signal_pending',
+                    discrepancy_type: 'pending_state_mismatch',
+                    detail: 'Outcome marked signal_pending=true but no unresolved registration exists.',
+                });
+            }
+        }
+
+        for (const [outcomeId, reg] of unresolvedByOutcome.entries()) {
+            if (!pendingOutcomeSet.has(outcomeId)) {
+                mismatchOutcomeIds.add(outcomeId);
+                pendingMismatchCandidates.push({
+                    customer_id: customerId,
+                    outcome_id: outcomeId,
+                    registration_id: reg.registration_id,
+                    action_name: `${reg.platform}:${reg.event_type}`,
+                    discrepancy_type: 'pending_state_mismatch',
+                    detail: 'Unresolved pending registration exists while outcome.signal_pending is false.',
+                });
+            }
+        }
+
+        if (pendingMismatchCandidates.length > 0) {
+            const { data: existingPendingMismatch } = await supabase
+                .from('dim_discrepancy_log')
+                .select('outcome_id')
+                .eq('customer_id', customerId)
+                .eq('discrepancy_type', 'pending_state_mismatch')
+                .eq('resolved', false)
+                .in('outcome_id', [...mismatchOutcomeIds].slice(0, 1000));
+
+            const existingSet = new Set<string>((existingPendingMismatch ?? []).map((row: any) => row.outcome_id));
+            const inserts = pendingMismatchCandidates.filter((row) => !existingSet.has(row.outcome_id));
+
+            if (inserts.length > 0) {
+                const { error: pendingMismatchInsertError } = await supabase
+                    .from('dim_discrepancy_log')
+                    .insert(inserts);
+
+                if (pendingMismatchInsertError) {
+                    return c.json({ error: 'Failed to write pending-state mismatches', details: pendingMismatchInsertError.message }, 500);
+                }
+
+                detected += inserts.length;
+                pendingStateMismatch += inserts.length;
+            }
+        }
+
+        const inconsistentRows = ((crossEventRows ?? []) as CrossEventOutcomeRow[])
+            .filter((row) => row.inconsistency_type !== null);
+        const inconsistencyOutcomeIds = [...new Set(inconsistentRows.map((row) => row.outcome_id))];
+        if (inconsistencyOutcomeIds.length > 0) {
+            const { data: existingInconsistency } = await supabase
+                .from('dim_discrepancy_log')
+                .select('outcome_id')
+                .eq('customer_id', customerId)
+                .eq('discrepancy_type', 'ingestion_inconsistency')
+                .eq('resolved', false)
+                .in('outcome_id', inconsistencyOutcomeIds.slice(0, 1000));
+
+            const existingSet = new Set<string>((existingInconsistency ?? []).map((row: any) => row.outcome_id));
+            const inserts = inconsistentRows
+                .filter((row) => !existingSet.has(row.outcome_id))
+                .map((row) => ({
+                    customer_id: customerId,
+                    outcome_id: row.outcome_id,
+                    action_name: row.action_id ? `action:${row.action_id}` : 'unknown_action',
+                    discrepancy_type: 'ingestion_inconsistency',
+                    signal_confidence: row.signal_confidence,
+                    detail:
+                        row.inconsistency_reason
+                        ?? `Inconsistency taxonomy flagged type=${row.inconsistency_type}.`,
+                }));
+
+            if (inserts.length > 0) {
+                const { error: inconsistencyInsertError } = await supabase
+                    .from('dim_discrepancy_log')
+                    .insert(inserts);
+
+                if (inconsistencyInsertError) {
+                    return c.json({ error: 'Failed to write ingestion inconsistencies', details: inconsistencyInsertError.message }, 500);
+                }
+
+                detected += inserts.length;
+                ingestionInconsistency += inserts.length;
+            }
+        }
+
         return c.json({
             detected,
             cases: {
                 expired,
                 mismatch,
                 low_confidence: lowConfidence,
+            },
+            advanced_cases: {
+                cross_event_conflict: crossEventConflict,
+                pending_state_mismatch: pendingStateMismatch,
+                ingestion_inconsistency: ingestionInconsistency,
             },
         }, 200);
     } catch (err: any) {
