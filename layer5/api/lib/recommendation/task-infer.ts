@@ -67,34 +67,100 @@ export function validateTaskName(raw: string | null | undefined): string {
 }
 
 /**
+ * Confidence tiers for issue_type → task_name mapping.
+ *
+ * DEVELOPER_PROVIDED (1.0): Developer explicitly set task_name — authoritative.
+ * EXACT_MATCH        (0.90): issue_type found verbatim in ISSUE_TYPE_TO_TASK table.
+ * PREFIX_MATCH       (0.70): issue_type shares a known prefix — plausible but inferred.
+ * SLUGIFIED_FALLBACK (0.50): No known mapping; issue_type used directly after slugify.
+ * UNKNOWN            (0.30): issue_type was blank or produced 'unknown_task'.
+ */
+export type TaskMappingTier =
+  | 'developer_provided'
+  | 'exact_match'
+  | 'prefix_match'
+  | 'slugified_fallback'
+  | 'unknown';
+
+export const TASK_MAPPING_CONFIDENCE: Record<TaskMappingTier, number> = {
+  developer_provided: 1.00,
+  exact_match:        0.90,
+  prefix_match:       0.70,
+  slugified_fallback: 0.50,
+  unknown:            0.30,
+};
+
+export interface TaskInferResult {
+  /** Resolved task name — always a non-empty string. */
+  task: string;
+  /**
+   * Confidence that this task name is correct (0.0–1.0).
+   * Store in fact_outcomes.mapping_confidence.
+   * Scoring engine down-weights outcomes with low confidence.
+   */
+  confidence: number;
+  /** Which resolution tier was used. */
+  tier: TaskMappingTier;
+}
+
+/**
  * Infers a task_name from issue_type when the developer did not provide one.
  *
  * Priority:
- *   1. Exact match in ISSUE_TYPE_TO_TASK lookup
- *   2. Prefix match (e.g. "payment_" → "payment_failed")
- *   3. Slugified issue_type (spaces/hyphens → underscores, lowercase)
+ *   1. Exact match in ISSUE_TYPE_TO_TASK lookup  → confidence 0.90
+ *   2. Prefix match (e.g. "payment_" → "payment_failed") → confidence 0.70
+ *   3. Slugified issue_type (spaces/hyphens → underscores, lowercase) → confidence 0.50
+ *   4. Unresolvable → 'unknown_task', confidence 0.30
  *
- * @param issueType - The issue_type field from log_outcome request
- * @returns inferred task_name — always a non-empty string
+ * @param issueType - The issue_type field from the log_outcome request.
+ * @returns TaskInferResult with task name, confidence, and tier.
  */
-export function inferTask(issueType: string): string {
-  if (!issueType || issueType.trim() === '') return 'unknown_task';
+export function inferTask(issueType: string): TaskInferResult {
+  if (!issueType || issueType.trim() === '') {
+    return {
+      task: 'unknown_task',
+      confidence: TASK_MAPPING_CONFIDENCE.unknown,
+      tier: 'unknown',
+    };
+  }
 
   const normalized = issueType.trim().toLowerCase();
 
-  // 1. Exact match
+  // 1. Exact match — highest confidence inferred mapping
   if (ISSUE_TYPE_TO_TASK[normalized]) {
-    return ISSUE_TYPE_TO_TASK[normalized]!;
+    return {
+      task: ISSUE_TYPE_TO_TASK[normalized]!,
+      confidence: TASK_MAPPING_CONFIDENCE.exact_match,
+      tier: 'exact_match',
+    };
   }
 
-  // 2. Prefix match — find any key that shares a prefix with normalized
+  // 2. Prefix match — plausible but not certain
   for (const [key, value] of Object.entries(ISSUE_TYPE_TO_TASK)) {
     const prefix = key.split('_')[0];
     if (prefix && normalized.startsWith(prefix)) {
-      return value;
+      return {
+        task: value,
+        confidence: TASK_MAPPING_CONFIDENCE.prefix_match,
+        tier: 'prefix_match',
+      };
     }
   }
 
-  // 3. Fallback: slugify issue_type and validate
-  return validateTaskName(normalized);
+  // 3. Slugified fallback — structural normalization only, no semantic claim
+  const slugified = validateTaskName(normalized);
+  if (slugified !== 'unknown_task') {
+    return {
+      task: slugified,
+      confidence: TASK_MAPPING_CONFIDENCE.slugified_fallback,
+      tier: 'slugified_fallback',
+    };
+  }
+
+  // 4. Unresolvable
+  return {
+    task: 'unknown_task',
+    confidence: TASK_MAPPING_CONFIDENCE.unknown,
+    tier: 'unknown',
+  };
 }

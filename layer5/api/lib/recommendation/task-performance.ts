@@ -46,8 +46,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function normalizeTaskName(value: unknown): string | null {
     if (typeof value !== 'string') return null;
-    const task = value.trim();
-    return task.length > 0 ? task : null;
+    const normalized = value
+        .trim()
+        .toLowerCase()
+        .replace(/[\s\-]+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .replace(/^_+|_+$/g, '');
+    return normalized.length > 0 ? normalized : null;
 }
 
 function parseIso(iso: string | null): number {
@@ -169,7 +174,9 @@ async function getTaskResolutionStatsByAction(
 ): Promise<Map<string, TaskResolutionStats>> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, outcome_score, success, timestamp')
+        // Include data_quality so the scoring engine can down-weight low-quality events.
+        // Pre-migration rows will have data_quality=NULL — treated as 1.0 (no penalty).
+        .select('action_id, outcome_score, outcome_score_raw, success, timestamp, data_quality')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -201,7 +208,10 @@ async function getTaskResolutionStatsByAction(
         const actionId = typeof row.action_id === 'string' ? row.action_id : null;
         if (!actionId) continue;
 
-        const explicitScore = parseBoundedScore(row.outcome_score);
+        // Prefer outcome_score_raw (exact developer signal) over the potentially
+        // inferred outcome_score. Falls back to binary success if both are null.
+        const rawScore = parseBoundedScore(row.outcome_score_raw);
+        const explicitScore = rawScore ?? parseBoundedScore(row.outcome_score);
         const fallbackScore = row.success === true ? 1 : 0;
         const score = explicitScore ?? fallbackScore;
 
@@ -215,7 +225,16 @@ async function getTaskResolutionStatsByAction(
         current.score_sum += score;
 
         const timestamp = typeof row.timestamp === 'string' ? row.timestamp : null;
-        const effectiveWeight = computeOutcomeEffectiveWeightForScore(score, timestamp);
+        const recencyWeight = computeOutcomeEffectiveWeightForScore(score, timestamp);
+
+        // data_quality: NULL on pre-migration rows → default to 1.0 (no penalty).
+        // This ensures existing data is not retroactively penalised.
+        const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
+        const qualityMultiplier = rawQuality !== null
+            ? Math.max(0, Math.min(1, rawQuality))
+            : 1.0;
+
+        const effectiveWeight = recencyWeight * qualityMultiplier;
         if (effectiveWeight > 0) {
             current.weight_total += effectiveWeight;
             current.weighted_score_sum += score * effectiveWeight;
@@ -247,7 +266,7 @@ async function queryTaskPerformanceFromFacts(
 ): Promise<TaskPerformanceRow[]> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, success, outcome_score, timestamp, dim_actions!inner(action_name)')
+        .select('action_id, success, outcome_score, outcome_score_raw, data_quality, timestamp, dim_actions!inner(action_name)')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -313,13 +332,24 @@ async function queryTaskPerformanceFromFacts(
             existing.success_count += 1;
         }
 
-        const explicitScore = parseBoundedScore(row.outcome_score);
+        // Prefer outcome_score_raw (exact developer signal) over the potentially
+        // inferred outcome_score. Falls back to binary success if both are null.
+        const rawScore = parseBoundedScore(row.outcome_score_raw);
+        const explicitScore = rawScore ?? parseBoundedScore(row.outcome_score);
         const fallbackScore = row.success === true ? 1 : 0;
         const score = explicitScore ?? fallbackScore;
         existing.resolution_score_total += score;
 
         const ts = typeof row.timestamp === 'string' ? row.timestamp : null;
-        const effectiveWeight = computeOutcomeEffectiveWeightForScore(score, ts);
+        const recencyWeight = computeOutcomeEffectiveWeightForScore(score, ts);
+
+        // data_quality: NULL on pre-migration rows → default to 1.0 (no penalty).
+        const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
+        const qualityMultiplier = rawQuality !== null
+            ? Math.max(0, Math.min(1, rawQuality))
+            : 1.0;
+
+        const effectiveWeight = recencyWeight * qualityMultiplier;
         if (effectiveWeight > 0) {
             existing.resolution_weight_total += effectiveWeight;
             existing.resolution_weighted_score_total += score * effectiveWeight;

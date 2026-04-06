@@ -32,9 +32,17 @@ export interface GetScoresResponse {
         exploit_gate_min_samples: number;
     } | null;
     cold_start: boolean;
+    /** How many more outcomes to log before LI activates recommendations for this task. 0 when not cold-starting. */
+    outcomes_needed: number;
     context_id: string;
     agent_id: string;
     served_from_cache?: boolean;
+    /**
+     * True when the top two actions are statistically indistinguishable
+     * (score gap ≤ 0.05, both in the 40–65% win-rate band).
+     * LI is abstaining correctly — exclude this task from accuracy metrics.
+     */
+    is_ambiguous_task?: boolean;
 }
 
 /**

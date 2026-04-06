@@ -833,7 +833,13 @@ class Layerinfinite:
         """
         scores_resp = self._fetch_scores(task)
         if scores_resp is None:
-            return GetScoresResponse(ranked_actions=[])
+            return GetScoresResponse(ranked_actions=[], cold_start=True, outcomes_needed=50)
+        if scores_resp.cold_start and scores_resp.outcomes_needed > 0:
+            logger.info(
+                "[layerinfinite] Cold start for task '%s': log %d more outcome(s) to activate recommendations.",
+                task,
+                scores_resp.outcomes_needed,
+            )
         return scores_resp
 
     def observe(self, task: str) -> ObservationSummary:

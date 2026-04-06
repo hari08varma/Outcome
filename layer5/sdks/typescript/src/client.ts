@@ -27,12 +27,81 @@ import type {
 
 const DEFAULT_BASE_URL = 'https://api.layerinfinite.app';
 const BASE_URLS_ENV = 'LAYERINFINITE_BASE_URLS';
+const PENDING_OUTCOMES_FILE_ENV = 'LAYERINFINITE_PENDING_OUTCOMES_FILE';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
 const SDK_VERSION = '0.3.2';
 const VALID_MODES = ['recommend', 'assist', 'auto'] as const;
 const TRUST_STATUSES: readonly TrustStatus[] = ['trusted', 'probation', 'sandbox', 'suspended', 'new'];
+const PENDING_REPLAY_INTERVAL_MS = 5_000;
+
+// ── Pending outcome queue (Node.js only) ─────────────────────────────
+// Uses dynamic import so the SDK stays importable in browser/edge envs.
+// In non-Node environments the queue silently no-ops.
+
+function getPendingOutcomesFile(): string {
+    if (typeof process === 'undefined' || !process.env) return '';
+    const custom = process.env[PENDING_OUTCOMES_FILE_ENV];
+    if (custom) return custom;
+    const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/tmp';
+    return `${home}/.layerinfinite/pending_outcomes.jsonl`;
+}
+
+async function enqueuePendingOutcome(payload: Record<string, unknown>): Promise<void> {
+    const file = getPendingOutcomesFile();
+    if (!file) return;
+    try {
+        const { appendFile, mkdir } = await import('node:fs/promises');
+        const path = await import('node:path');
+        await mkdir(path.dirname(file), { recursive: true });
+        await appendFile(file, JSON.stringify(payload) + '\n', 'utf8');
+    } catch {
+        // Non-Node env or filesystem unavailable — silently skip
+    }
+}
+
+async function flushPendingOutcomes(
+    poster: (payload: Record<string, unknown>) => Promise<void>
+): Promise<{ sent: number; remaining: number }> {
+    const file = getPendingOutcomesFile();
+    if (!file) return { sent: 0, remaining: 0 };
+    try {
+        const { readFile, writeFile, unlink } = await import('node:fs/promises');
+        let raw: string;
+        try {
+            raw = await readFile(file, 'utf8');
+        } catch {
+            return { sent: 0, remaining: 0 }; // file doesn't exist yet
+        }
+        const lines = raw.split('\n').filter(l => l.trim());
+        if (lines.length === 0) {
+            await unlink(file).catch(() => undefined);
+            return { sent: 0, remaining: 0 };
+        }
+        let sent = 0;
+        const remaining: string[] = [];
+        for (let i = 0; i < lines.length; i++) {
+            try {
+                const payload = JSON.parse(lines[i]!) as Record<string, unknown>;
+                await poster(payload);
+                sent++;
+            } catch {
+                // Stop replaying on first failure — keep the rest
+                remaining.push(...lines.slice(i));
+                break;
+            }
+        }
+        if (remaining.length > 0) {
+            await writeFile(file, remaining.join('\n') + '\n', 'utf8');
+        } else {
+            await unlink(file).catch(() => undefined);
+        }
+        return { sent, remaining: remaining.length };
+    } catch {
+        return { sent: 0, remaining: 0 };
+    }
+}
 
 function normalizeTrustStatus(value: unknown): TrustStatus {
     const normalized = String(value ?? '').toLowerCase();
@@ -87,6 +156,7 @@ export class Layerinfinite {
     private readonly timeout: number;
     private readonly maxRetries: number;
     private activeEndpointIndex: number;
+    private lastPendingReplayAt: number = 0;
 
     /** task → (actionName → ActionEntry) */
     private readonly actions: Map<string, Map<string, ActionEntry>> = new Map();
@@ -560,7 +630,7 @@ export class Layerinfinite {
      */
     async scores(task: string): Promise<GetScoresResponse> {
         const result = await this.fetchScores(task);
-        return result ?? { ranked_actions: [], top_action: null, policy: 'explore', cold_start: true, context_id: '', agent_id: this.agentId, served_from_cache: false };
+        return result ?? { ranked_actions: [], top_action: null, policy: 'explore', cold_start: true, outcomes_needed: 50, context_id: '', agent_id: this.agentId, served_from_cache: false };
     }
 
     /**
@@ -762,6 +832,23 @@ export class Layerinfinite {
             payload.metadata = { error: params.error };
         }
 
+        // Replay pending outcomes from previous failed calls (throttled to once per 5s)
+        const now = Date.now();
+        if (now - this.lastPendingReplayAt >= PENDING_REPLAY_INTERVAL_MS) {
+            this.lastPendingReplayAt = now;
+            flushPendingOutcomes(async (queued) => {
+                await this.fetchWithRetry(
+                    '/v1/log-outcome',
+                    { method: 'POST', headers: this.authHeaders(true), body: JSON.stringify(queued) },
+                    code => code >= 500,
+                );
+            }).then(({ sent, remaining }) => {
+                if (sent > 0) {
+                    console.info(`[layerinfinite] Replayed ${sent} pending outcome(s) (${remaining} remaining).`);
+                }
+            }).catch(() => undefined); // never throws to caller
+        }
+
         try {
             await this.fetchWithRetry(
                 '/v1/log-outcome',
@@ -773,9 +860,18 @@ export class Layerinfinite {
                 code => code >= 500,
             );
         } catch (err) {
-            console.warn(
-                `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName}: ${err}`
-            );
+            if (err instanceof LayerinfiniteAuthError) {
+                // Auth errors are permanent — do not queue (retrying won't help)
+                console.warn(
+                    `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName} — auth error, not queued: ${err}`
+                );
+            } else {
+                // Network/server errors — queue for replay on next call
+                enqueuePendingOutcome(payload as unknown as Record<string, unknown>).catch(() => undefined);
+                console.warn(
+                    `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName} — queued for replay: ${err}`
+                );
+            }
         }
     }
 

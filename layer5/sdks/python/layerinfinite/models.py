@@ -30,6 +30,9 @@ class GetScoresResponse(BaseModel):
     top_action: ScoredAction | None = None
     policy: Literal["exploit", "explore", "escalate", "SANDBOX"] = "explore"
     cold_start: bool = False
+    # How many more outcomes to log before LI activates recommendations.
+    # 0 when not cold-starting. Surfaced directly from the API.
+    outcomes_needed: int = 0
     context_id: str = ""
     agent_id: str = ""
     served_from_cache: bool = False

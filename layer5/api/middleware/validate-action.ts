@@ -81,6 +81,41 @@ function getActionCacheKey(customerId: string, actionName: string): string {
     return `${customerId}:${actionName}`;
 }
 
+/**
+ * Normalize action_name to lowercase snake_case so that variant spellings
+ * (camelCase, PascalCase, SCREAMING_SNAKE, kebab-case, spaces) all map to
+ * the same canonical key in dim_actions.
+ *
+ * Examples:
+ *   retryWithBackoff       → retry_with_backoff
+ *   RETRY_WITH_BACKOFF     → retry_with_backoff
+ *   RetryWithBackoff       → retry_with_backoff
+ *   retry-with-backoff     → retry_with_backoff
+ *   "retry with backoff"   → retry_with_backoff
+ *
+ * Rules (applied in order):
+ *   1. Trim whitespace
+ *   2. Insert underscore before every uppercase letter that follows a
+ *      lowercase letter or digit (camelCase/PascalCase split)
+ *   3. Replace hyphens and spaces with underscores
+ *   4. Collapse consecutive underscores
+ *   5. Lowercase the whole string
+ */
+export function normalizeActionName(raw: string): string {
+    return raw
+        .trim()
+        // camelCase / PascalCase → snake_case  (e.g. retryWith → retry_With → retry_with)
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        // Replace hyphens and spaces with underscores
+        .replace(/[-\s]+/g, '_')
+        // Collapse consecutive underscores
+        .replace(/_+/g, '_')
+        // Lowercase everything
+        .toLowerCase()
+        // Strip leading/trailing underscores
+        .replace(/^_+|_+$/g, '');
+}
+
 // Evict expired entries every 5 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60_000;
 setInterval(() => {
@@ -145,7 +180,14 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         return c.json({ error: 'Invalid JSON body', code: 'PARSE_ERROR' }, 400);
     }
 
-    const actionName = body.action_name ?? body.actionName;
+    const rawActionName = body.action_name ?? body.actionName;
+    const actionName = rawActionName && typeof rawActionName === 'string'
+        ? normalizeActionName(rawActionName)
+        : rawActionName;
+    // Write the normalized name back so downstream handlers see the canonical form
+    if (actionName && typeof actionName === 'string') {
+        body.action_name = actionName;
+    }
     const customerId = ((c as any).get('customerId') ?? c.get('customer_id')) as string | undefined;
 
     // If action_name is absent but action_id is present,
@@ -164,7 +206,8 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
     }
 
     // ── Cache check (fast path — skip DB on hit) ─────────────────
-    const cacheKey = getActionCacheKey(customerId, actionName.trim());
+    // actionName is already normalized above — no further trim needed
+    const cacheKey = getActionCacheKey(customerId, actionName);
     const cachedEntry = actionCache.get(cacheKey);
 
     if (cachedEntry && cachedEntry.expires_at > Date.now()) {
@@ -194,7 +237,7 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
     const { data: existingAction } = await supabase
         .from('dim_actions')
         .select('action_id, action_name, action_category, required_params, validation_mode, is_active')
-        .eq('action_name', actionName.trim())
+        .eq('action_name', actionName)
         .eq('customer_id', customerId)
         .maybeSingle();
 
@@ -235,7 +278,7 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
     const { data: newAction, error: insertError } = await supabase
         .from('dim_actions')
         .upsert({
-            action_name: actionName.trim(),
+            action_name: actionName,
             customer_id: customerId,
             is_active: true,
             action_category: 'auto-discovered',
@@ -298,6 +341,7 @@ export async function validateAction(
     customerId: string,
     params?: Record<string, unknown>
 ): Promise<ActionValidationResult> {
+    actionName = normalizeActionName(actionName);
     const cacheKey = getActionCacheKey(customerId, actionName);
     const cached = actionCache.get(cacheKey);
 
@@ -394,8 +438,9 @@ function validateParams(
 // Invalidate action cache (call after admin registers new action)
 export function invalidateActionCache(actionName?: string): void {
     if (actionName) {
+        const normalized = normalizeActionName(actionName);
         for (const key of actionCache.keys()) {
-            if (key.endsWith(`:${actionName}`)) {
+            if (key.endsWith(`:${normalized}`)) {
                 actionCache.delete(key);
             }
         }

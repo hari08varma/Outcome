@@ -2,7 +2,7 @@ import { Context, Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import { supabase } from '../lib/supabase.js';
-import { invalidateCache, getCachedScore, getScores, computeEffectiveScore } from '../lib/scoring.js';
+import { invalidateCache, getCachedScore, getScores } from '../lib/scoring.js';
 import {
     getPolicyDecision,
 } from '../lib/policy-engine.js';
@@ -10,9 +10,60 @@ import type { AgentTrustScore, CustomerPolicyConfig } from '../lib/policy-engine
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
-import { inferTask, validateTaskName } from '../lib/recommendation/task-infer.js';
+import { inferTask, validateTaskName, TASK_MAPPING_CONFIDENCE } from '../lib/recommendation/task-infer.js';
+import type { TaskInferResult } from '../lib/recommendation/task-infer.js';
 
 export const logOutcomeRouter = new Hono();
+
+// ── Data Quality Scoring ──────────────────────────────────────
+// Computes a 0.0–1.0 quality score for each incoming event.
+// High-quality events get full weight in the scoring engine.
+// Low-quality events are stored but their influence is reduced.
+//
+// Based on what the SDK actually sends automatically:
+//   ALWAYS present (SDK captures automatically):
+//     agent_id, action_name, issue_type, success, session_id, response_ms
+//   ONLY present if developer provides score_fn:
+//     outcome_score
+//   NEVER sent by SDK auto-logging:
+//     business_outcome, task_name (always inferred from issue_type)
+//
+// Deductions (cumulative, floored at 0.0):
+//   -0.25  outcome_score absent     (no score_fn provided — primary signal missing)
+//   -0.20  is_inconsistent          (success=true but score < 0.3)
+//   -0.20  mapping_confidence < 0.7 (issue_type → task mapping is uncertain)
+//   -0.10  business_outcome absent  (SDK never sends this — developer must add explicitly)
+//
+// NOT penalised (SDK always provides these):
+//   session_id  — SDK generates UUID per call
+//   response_ms — SDK measures latency automatically
+//
+// Never throws. Returns a value in [0.0, 1.0].
+interface DataQualityInput {
+    outcomeScoreRaw: number | null | undefined;
+    isInconsistent: boolean;
+    mappingConfidence: number;
+    businessOutcome: string | null | undefined;
+}
+
+function computeDataQuality(input: DataQualityInput): number {
+    let score = 1.0;
+
+    if (input.outcomeScoreRaw === null || input.outcomeScoreRaw === undefined) {
+        score -= 0.25;
+    }
+    if (input.isInconsistent) {
+        score -= 0.20;
+    }
+    if (input.mappingConfidence < 0.70) {
+        score -= 0.20;
+    }
+    if (!input.businessOutcome) {
+        score -= 0.10;
+    }
+
+    return Number(Math.max(0.0, score).toFixed(4));
+}
 
 // ── Payload size guard (64KB) ─────────────────────────────────
 const MAX_RAW_CONTEXT_BYTES = 64 * 1024;
@@ -217,7 +268,10 @@ export async function parseAndSanitizeRequest(c: Context) {
         throw new Error(`VALIDATION_ERROR:${details}`);
     }
 
-    // Auto-generate session_id when SDK does not send it
+    // Auto-generate session_id when not provided.
+    // SDK always sends one (UUID per call), so this fallback is for
+    // edge cases only (e.g. direct API callers). No quality penalty applied —
+    // the SDK guarantees session_id is always present.
     if (!body.session_id) {
         body.session_id = crypto.randomUUID();
     }
@@ -327,7 +381,8 @@ async function resolveActionId(c: Context, body: any, customerId: string): Promi
     if (!body.action_name) {
         throw new Error('UNKNOWN_ACTION:MISSING_FIELD:action_name or action_id is required');
     }
-    const { validateAction } = await import('../middleware/validate-action.js');
+    const { validateAction, normalizeActionName } = await import('../middleware/validate-action.js');
+    body.action_name = normalizeActionName(body.action_name);
     const result = await validateAction(body.action_name, customerId, body.action_params);
     if (!result.valid) throw new Error(`UNKNOWN_ACTION:${result.error_code ?? 'UNKNOWN_ACTION'}:${result.error}`);
     return result.action_id!;
@@ -383,7 +438,14 @@ async function resolveContextId(body: any, customerId: string): Promise<string> 
 
 async function insertCoreOutcome(
     agentId: string, customerId: string, actionId: string, contextId: string,
-    body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any
+    body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any,
+    outcomeScoreRaw: number | null,
+    dataQuality: number,
+    isInconsistent: boolean,
+    mappingConfidence: number,
+    scoreOrigin: 'provided' | 'inferred',
+    mappingTier: string,
+    inconsistencyRuleVersion: string | null,
 ) {
     // RULE: backprop_episode_id is INTERNAL — set by the backprop engine only.
     // NEVER map body.episode_id to this column. body.episode_id is the SDK's
@@ -425,6 +487,21 @@ async function insertCoreOutcome(
             // ── Decision Recommendation Engine ───────────────────────
             // Task resolution rule: developer-provided wins, else infer.
             task_name: body._resolved_task_name ?? null,
+            // ── Ingestion Quality Layer ───────────────────────────────
+            // Raw developer signal — never fabricated, null if not provided.
+            outcome_score_raw: outcomeScoreRaw,
+            // 0.0–1.0 completeness score for this event.
+            data_quality: dataQuality,
+            // TRUE when success=true but outcome_score_raw < 0.3 — flagged, not overridden.
+            is_inconsistent: isInconsistent,
+            // Confidence of issue_type → task_name mapping (1.0 = developer provided).
+            mapping_confidence: mappingConfidence,
+            // 'provided' = developer sent outcome_score; 'inferred' = absent, fell back to binary.
+            score_origin: scoreOrigin,
+            // Exact tier from TaskInferResult: 'developer_provided' | 'exact_match' | etc.
+            mapping_tier: mappingTier,
+            // Encodes which rule/threshold flagged is_inconsistent (null if not flagged).
+            inconsistency_rule_version: inconsistencyRuleVersion,
         })
         .select('outcome_id, timestamp')
         .single();
@@ -602,19 +679,31 @@ logOutcomeRouter.post('/', async (c) => {
 
         // ── Task resolution (Decision Recommendation Engine) ──────
         // Apply BEFORE idempotency check so the task_name is part of the record.
-        // RULE: developer-provided task_name always wins.
-        //       If absent, auto-infer from issue_type.
-        // RULE: developer-provided task_name wins; empty string treated as absent.
-        // validateTaskName normalizes, strips garbage, and guarantees non-empty output.
+        // RULE: developer-provided task_name always wins — confidence 1.0.
+        //       If absent, inferTask() returns a tiered confidence result.
         const rawTask = body.task_name?.trim() || null;
-        (body as any)._resolved_task_name = validateTaskName(
-            rawTask ?? inferTask(body.issue_type)
-        );
-        // Logging for ingestion traceability (#9)
+        let taskInferResult: TaskInferResult;
+        if (rawTask) {
+            // Developer explicitly provided task_name — authoritative, full confidence.
+            taskInferResult = {
+                task: validateTaskName(rawTask),
+                confidence: TASK_MAPPING_CONFIDENCE.developer_provided,
+                tier: 'developer_provided',
+            };
+        } else {
+            // Auto-infer from issue_type with confidence tier.
+            taskInferResult = inferTask(body.issue_type);
+        }
+        (body as any)._resolved_task_name = taskInferResult.task;
+        (body as any)._mapping_confidence = taskInferResult.confidence;
+
+        // Logging for ingestion traceability
         console.info('[log-outcome] task_resolved', {
             provided: body.task_name ?? null,
             inferred_from: rawTask ? null : body.issue_type,
-            resolved: (body as any)._resolved_task_name,
+            resolved: taskInferResult.task,
+            tier: taskInferResult.tier,
+            confidence: taskInferResult.confidence,
             customer_id: customerId,
             agent_id: agentId,
         });
@@ -637,17 +726,70 @@ logOutcomeRouter.post('/', async (c) => {
         // 3. Verification Layer
         const verification = await verifyOutcome(body, customerId, agentId);
         const finalSuccess = verification.verified_success;
-        const finalOutcomeScore = computeEffectiveScore(
-            finalSuccess,
-            verification.confidence_override ?? body.outcome_score
-        );
+
+        // outcome_score_raw: the exact value the developer sent — never fabricated.
+        // NULL if the developer did not provide one. Preserved permanently.
+        const outcomeScoreRaw: number | null =
+            (body.outcome_score !== undefined && body.outcome_score !== null)
+                ? body.outcome_score
+                : null;
+
+        // If the verifier overrides confidence, use that as the effective score.
+        // Otherwise: use developer score if provided, else null (no fabrication).
+        // The scoring engine in task-performance.ts handles null via fallback to
+        // binary success (0 or 1) — but now it knows the signal is inferred, not real.
+        const finalOutcomeScore: number | null =
+            verification.confidence_override !== null
+                ? verification.confidence_override
+                : outcomeScoreRaw;
+
+        // score_origin: was outcome_score explicitly provided by the developer?
+        const scoreOrigin: 'provided' | 'inferred' = outcomeScoreRaw !== null ? 'provided' : 'inferred';
+
+        // mapping_tier: exact tier string from TaskInferResult (persisted for audit trail).
+        const mappingTier: string = taskInferResult.tier;
+
+        // Configurable inconsistency threshold — overridable via env for A/B testing.
+        // Default 0.3: developer says success=true but scored it below 0.3 → suspicious.
+        const inconsistencyThresholdRaw = process.env.LI_INCONSISTENCY_THRESHOLD;
+        const inconsistencyThreshold = inconsistencyThresholdRaw !== undefined
+            ? Math.max(0, Math.min(1, Number(inconsistencyThresholdRaw)))
+            : 0.3;
+
+        // is_inconsistent: developer said success=true but scored it below threshold.
+        // Both facts are preserved — neither is overridden. The inconsistency is
+        // flagged so the scoring engine can apply reduced trust to this event.
+        const isInconsistent: boolean =
+            finalSuccess === true
+            && outcomeScoreRaw !== null
+            && outcomeScoreRaw < inconsistencyThreshold;
+
+        // Rule version string encodes which threshold produced this flag.
+        // NULL when not flagged — avoids writing misleading version strings for clean events.
+        const inconsistencyRuleVersion: string | null = isInconsistent
+            ? `v1:threshold=${inconsistencyThreshold}`
+            : null;
+
+        // Data quality score: 0.0–1.0 completeness of this event.
+        const mappingConfidence: number = (body as any)._mapping_confidence ?? 1.0;
+        const dataQuality = computeDataQuality({
+            outcomeScoreRaw,
+            isInconsistent,
+            mappingConfidence,
+            businessOutcome: body.business_outcome ?? null,
+        });
 
         // 4. Resolve References
         const actionId = await resolveActionId(c, body, customerId);
         const contextId = await resolveContextId(body, customerId); // ← FIX: pass customerId
 
         // 5. Insert Core Fact
-        const outcome = await insertCoreOutcome(agentId, customerId, actionId, contextId, body, finalSuccess, finalOutcomeScore, verification);
+        const outcome = await insertCoreOutcome(
+            agentId, customerId, actionId, contextId,
+            body, finalSuccess, finalOutcomeScore, verification,
+            outcomeScoreRaw, dataQuality, isInconsistent, mappingConfidence,
+            scoreOrigin, mappingTier, inconsistencyRuleVersion,
+        );
 
         // 6. Post-Insert Synchronous Updates
         await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id, customerId);
@@ -709,6 +851,14 @@ logOutcomeRouter.post('/', async (c) => {
             sequence_position: sequencePosition,
             idempotency_replayed: false,
             validation_warnings: finalValidatedAction?.validation_warnings ?? [],
+            // ── Ingestion quality feedback — lets SDK callers see exactly what was stored.
+            ingestion_quality: {
+                data_quality: dataQuality,
+                score_origin: scoreOrigin,
+                is_inconsistent: isInconsistent,
+                mapping_tier: mappingTier,
+                mapping_confidence: mappingConfidence,
+            },
             // ISSUE 4: Tell developer exactly when and how to improve logging quality.
             // outcome_score_tip is null when they already provided outcome_score (no nagging).
             logging_guidance: {

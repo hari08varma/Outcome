@@ -337,6 +337,9 @@ getScoresRouter.get('/', async (c) => {
                     top_action: null,
                     suggested_action: null,
                     cold_start: true,
+                    outcomes_needed: rolloutConfig.simulationExploitGateEnabled
+                        ? rolloutConfig.simulationExploitGateMinSamples
+                        : 50,
                     context_id: '',
                     agent_id: agentId ?? '',
                     policy: 'explore',
@@ -630,6 +633,22 @@ getScoresRouter.get('/', async (c) => {
             };
         }
 
+        // ── Ambiguity detection (abstention fairness) ────────
+        // A task is ambiguous when the top two actions are statistically
+        // indistinguishable: score gap ≤ 0.05 AND both win rates in the
+        // 40–65% band. LI is doing the right thing by not strongly preferring
+        // one action — callers should exclude these from accuracy metrics.
+        const top2 = ranked.slice(0, 2);
+        const isAmbiguousTask = (() => {
+            if (top2.length < 2) return false;
+            const [first, second] = top2;
+            const gap = Math.abs(first.composite_score - second.composite_score);
+            const inAmbiguousBand = (s: number) => s >= 0.40 && s <= 0.65;
+            return gap <= 0.05
+                && inAmbiguousBand(first.composite_score)
+                && inAmbiguousBand(second.composite_score);
+        })();
+
         // ── Staleness signal ─────────────────────────────────
         const lastRefresh = result.view_refreshed_at ?? null;
         const ageMinutes = lastRefresh
@@ -642,6 +661,18 @@ getScoresRouter.get('/', async (c) => {
             top_action: topActionForResponse,
             should_escalate: result.should_escalate,
             cold_start: result.cold_start,
+            outcomes_needed: result.cold_start
+                ? (() => {
+                    // How many more outcomes does the top action need before LI
+                    // fires confident recommendations? Use exploit gate threshold
+                    // as the canonical target — it's the lowest bar to cross.
+                    const target = rolloutConfig.simulationExploitGateEnabled
+                        ? rolloutConfig.simulationExploitGateMinSamples
+                        : 50; // conservative default when gate is off
+                    const topAttempts = topActionForResponse?.total_attempts ?? 0;
+                    return Math.max(0, target - topAttempts);
+                })()
+                : 0,
             context_id: resolvedContextId,
             agent_id: agentId ?? '',
             customer_id: customerId,
@@ -687,6 +718,7 @@ getScoresRouter.get('/', async (c) => {
             // uses this to decide whether to use the contract or fall back
             // to Causal Graph Tracking.
             signal_contract: null,
+            is_ambiguous_task: isAmbiguousTask,
         });
     } catch (err: any) {
         console.error('[get-scores] Error:', err.message);
