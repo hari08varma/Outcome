@@ -58,12 +58,28 @@ class LogOutcomeRequest(BaseModel):
     feedback_signal: str = "immediate"
 
 
+class IngestionQuality(BaseModel):
+    """Ingestion quality metadata returned in every log-outcome 201 response."""
+    # 0.0–1.0 completeness score for this event.
+    data_quality: float
+    # 'provided' = developer sent outcome_score; 'inferred' = absent, fell back to binary.
+    score_origin: Literal["provided", "inferred"]
+    # TRUE when success=True but outcome_score < inconsistency threshold.
+    is_inconsistent: bool
+    # Exact tier from issue_type → task_name resolution.
+    mapping_tier: str
+    # Confidence (0.0–1.0) of issue_type → task_name mapping.
+    mapping_confidence: float
+
+
 class LogOutcomeResponse(BaseModel):
     logged: bool
     outcome_id: str
     agent_trust_score: float
     trust_status: TrustStatus
     policy: str
+    # Ingestion quality metadata for this event. Present on all 201 responses.
+    ingestion_quality: IngestionQuality | None = None
 
     @field_validator("trust_status", mode="before")
     @classmethod

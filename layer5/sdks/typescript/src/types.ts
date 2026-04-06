@@ -71,12 +71,27 @@ export type TrustStatus =
     | 'suspended'
     | 'new';
 
+export interface IngestionQuality {
+    /** 0.0–1.0 completeness score for this event. */
+    data_quality: number;
+    /** 'provided' = developer sent outcome_score; 'inferred' = absent, fell back to binary. */
+    score_origin: 'provided' | 'inferred';
+    /** TRUE when success=true but outcome_score < inconsistency threshold. */
+    is_inconsistent: boolean;
+    /** Exact tier from issue_type → task_name resolution. */
+    mapping_tier: string;
+    /** Confidence (0.0–1.0) of issue_type → task_name mapping. */
+    mapping_confidence: number;
+}
+
 export interface LogOutcomeResponse {
     logged: boolean;
     outcome_id: string;
     agent_trust_score: number;
     trust_status: TrustStatus;
     policy: string;
+    /** Ingestion quality metadata for this event. Present on all 201 responses. */
+    ingestion_quality?: IngestionQuality;
 }
 
 // ── v0.3.0 Config ──────────────────────────────────────────────────

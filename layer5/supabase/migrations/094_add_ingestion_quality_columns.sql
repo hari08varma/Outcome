@@ -30,9 +30,9 @@ ALTER TABLE fact_outcomes
 --    Ingestion-time completeness score for this event (0.0–1.0).
 --    Computed by computeDataQuality() in log-outcome.ts.
 --    NULL = pre-migration row (treat as 1.0 in scoring engine for safety).
---    Factors: missing score (-0.25), missing session_id (-0.15),
---             inconsistent signal (-0.20), low mapping confidence (-0.20),
---             missing response_ms (-0.10), missing business_outcome (-0.10).
+--    Factors: missing outcome_score (-0.25), inconsistent signal (-0.20),
+--             low mapping confidence (-0.20), missing business_outcome (-0.10).
+--             session_id and response_ms are NOT penalised (SDK always sends them).
 ALTER TABLE fact_outcomes
   ADD COLUMN IF NOT EXISTS data_quality DOUBLE PRECISION DEFAULT NULL;
 

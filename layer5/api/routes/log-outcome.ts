@@ -467,7 +467,11 @@ async function insertCoreOutcome(
             raw_context: body.raw_context ?? {},
             is_synthetic: false,
             salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
-            outcome_score: finalOutcomeScore,
+            // outcome_score is NOT NULL in DB (migration 044 adds constraint + DEFAULT 0.5).
+            // finalOutcomeScore can be null when developer omits outcome_score and verifier
+            // has no override. Fall back to 0.5 (neutral prior) to satisfy the constraint
+            // without fabricating a signal — the raw truth is preserved in outcome_score_raw.
+            outcome_score: finalOutcomeScore ?? 0.5,
             business_outcome: body.business_outcome ?? null,
             feedback_signal: body.feedback_signal ?? 'immediate',
             verifier_source: body.verifier_signal?.source ?? null,
