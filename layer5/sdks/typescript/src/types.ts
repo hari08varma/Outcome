@@ -19,6 +19,18 @@ export interface GetScoresResponse {
     ranked_actions: ScoredAction[];
     top_action: ScoredAction | null;
     policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX';
+    policy_selected_action?: string | null;
+    policy_exploration_target?: string | null;
+    runtime_guardrail?: {
+        enabled: boolean;
+        shadow_applied?: boolean;
+        assisted_actions?: number;
+        top_action_shadow_weight?: number;
+        confidence_ceiling_applied: boolean;
+        exploit_gate_applied: boolean;
+        confidence_ceiling: number;
+        exploit_gate_min_samples: number;
+    } | null;
     cold_start: boolean;
     context_id: string;
     agent_id: string;

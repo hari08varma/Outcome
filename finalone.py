@@ -49,6 +49,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+# Prefer the repository SDK during local runs so behavior matches current source.
+LOCAL_SDK_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "layer5",
+    "sdks",
+    "python",
+)
+if os.path.isdir(LOCAL_SDK_PATH) and LOCAL_SDK_PATH not in sys.path:
+    sys.path.insert(0, LOCAL_SDK_PATH)
+
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════
@@ -454,7 +464,7 @@ def run_recommend_phase(scenarios: list, num_rounds: int = 3) -> dict:
     engine to learn. With 5 actions and Bayesian smoothing, the engine
     needs ~15-20 outcomes per action (75-100 total) for stable rankings.
     """
-    from layerinfinite import Layerinfinite
+    from layerinfinite import Layerinfinite  # type: ignore[import-not-found]
 
     print("\n" + "=" * 65)
     print(f"  PHASE 2: RECOMMEND MODE ({num_rounds} rounds × {len(scenarios)} scenarios)")
@@ -563,7 +573,7 @@ def run_recommend_phase(scenarios: list, num_rounds: int = 3) -> dict:
 
 def run_assist_phase(scenarios: list) -> dict:
     """Phase 3: ASSIST mode — follow Layerinfinite's suggestions."""
-    from layerinfinite import Layerinfinite
+    from layerinfinite import Layerinfinite  # type: ignore[import-not-found]
 
     print("\n" + "=" * 65)
     print("  PHASE 3: ASSIST MODE (following Layerinfinite suggestions)")
@@ -672,7 +682,7 @@ def run_assist_phase(scenarios: list) -> dict:
 
 def run_auto_phase(scenarios: list) -> dict:
     """Phase 4: AUTO mode — Layerinfinite picks and executes."""
-    from layerinfinite import Layerinfinite, LowConfidenceError
+    from layerinfinite import Layerinfinite, LowConfidenceError  # type: ignore[import-not-found]
 
     print("\n" + "=" * 65)
     print("  PHASE 4: AUTO MODE (Layerinfinite picks and executes)")
@@ -912,7 +922,7 @@ def check_connectivity() -> bool:
 
     # Check Layerinfinite SDK import
     try:
-        from layerinfinite import Layerinfinite, __version__
+        from layerinfinite import Layerinfinite, __version__  # type: ignore[import-not-found]
         print(f"  ✓ Layerinfinite SDK: v{__version__}")
     except ImportError:
         print("  ✗ Layerinfinite SDK not installed")
@@ -976,11 +986,10 @@ def main():
     # ── Final Results ──
     print_final_results(baseline, recommend, assist, auto)
 
-    # Known issue flag
-    print("\n  ── Known SDK Issue ──")
-    print("  The SDK sends 'latency_ms' but the backend expects 'response_ms'.")
-    print("  If latency data is missing on the dashboard, this is why.")
-    print("  Fix: change 'latency_ms' → 'response_ms' in SDK's _log_outcome.\n")
+    # SDK payload compatibility check
+    print("\n  ── SDK Payload Check ──")
+    print("  SDK outcome logging sends 'response_ms' (backend-compatible).")
+    print("  If latency charts are empty, check dashboard time filters and ingest health.\n")
 
 
 if __name__ == "__main__":

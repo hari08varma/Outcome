@@ -199,6 +199,8 @@ getRecommendationsRouter.get('/', async (c) => {
                 data_freshness: dataFreshness,
                 cohort_cycle: cohortCycle,
                 customer_id: customerId,
+                noise_gate: result._noise_gate ?? null,
+                simulation_guardrail: result._simulation_guardrail ?? null,
                 // ISSUE 1: Action registry validation.
                 // Tells the developer if the recommended action matches what they have registered.
                 // action_mismatch=true means the recommended action name does not exist in

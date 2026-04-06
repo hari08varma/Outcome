@@ -856,9 +856,45 @@ export class Layerinfinite {
             const scoresResp = await this.fetchScores(task);
             if (!scoresResp?.ranked_actions?.length) return registeredNames;
 
-            const scoredNames = scoresResp.ranked_actions
-                .map(a => a.action_name)
-                .filter(name => registeredSet.has(name));
+            const scoredActions = scoresResp.ranked_actions
+                .filter(a => registeredSet.has(a.action_name));
+            let scoredNames = scoredActions.map(a => a.action_name);
+
+            const actionIdToName = new Map<string, string>(
+                scoredActions.map((a) => [a.action_id, a.action_name])
+            );
+
+            if (scoresResp.policy === 'explore') {
+                const targetName = scoresResp.policy_exploration_target
+                    ? actionIdToName.get(scoresResp.policy_exploration_target)
+                    : null;
+
+                if (targetName && scoredNames.includes(targetName)) {
+                    scoredNames = [
+                        targetName,
+                        ...scoredNames.filter((name) => name !== targetName),
+                    ];
+                } else if (scoredNames.length > 1) {
+                    const fallback = scoredNames[1]!;
+                    scoredNames = [
+                        fallback,
+                        ...scoredNames.filter((name) => name !== fallback),
+                    ];
+                }
+            }
+
+            if (scoresResp.policy === 'exploit') {
+                const selectedName = scoresResp.policy_selected_action
+                    ? actionIdToName.get(scoresResp.policy_selected_action)
+                    : scoredNames[0] ?? null;
+
+                if (selectedName && scoredNames.includes(selectedName)) {
+                    scoredNames = [
+                        selectedName,
+                        ...scoredNames.filter((name) => name !== selectedName),
+                    ];
+                }
+            }
 
             const unscored = registeredNames.filter(name => !scoredNames.includes(name));
             return [...scoredNames, ...unscored];

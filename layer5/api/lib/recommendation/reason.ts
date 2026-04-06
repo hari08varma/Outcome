@@ -69,6 +69,7 @@ function toConfidenceMeta(confidence: number | null): InternalConfidenceMeta {
 function templateNoData(
     taskName: string,
     totalOutcomes: number,
+    warmupSamples: number,
     ctx?: RecommendationResult['_qualification_context'],
 ): string {
     if (totalOutcomes === 0) {
@@ -95,11 +96,11 @@ function templateNoData(
     // Generic: multiple actions but none qualified
     if (ctx && ctx.actions_needing_more.length > 0) {
         const needing = ctx.actions_needing_more
-            .map((a) => `${a.action_name} (${a.current}/${MIN_SAMPLES})`)
+            .map((a) => `${a.action_name} (${a.current}/${warmupSamples})`)
             .join(', ');
         return (
             `Collecting data for "${taskName}". ` +
-            `Actions need ${MIN_SAMPLES}+ outcomes each: ${needing}.`
+            `Actions need ${warmupSamples}+ outcomes each: ${needing}.`
         );
     }
 
@@ -107,7 +108,7 @@ function templateNoData(
         `Collecting data for "${taskName}" ` +
         `(${totalOutcomes} outcome${totalOutcomes === 1 ? '' : 's'} ` +
         `logged so far, ` +
-        `need ${MIN_SAMPLES}+ per action across 2+ distinct actions).`
+        `need ${warmupSamples}+ per action across 2+ distinct actions).`
     );
 }
 
@@ -407,9 +408,12 @@ function buildMessage(
         `This recommendation has ${confidenceMeta.percent}% confidence.`;
 }
 
-function buildProgress(minSampleCount: number): ActionableOutput['progress'] {
+function buildProgress(
+    minSampleCount: number,
+    targetSamples: number,
+): ActionableOutput['progress'] {
     const current = minSampleCount;
-    const target = MIN_SAMPLES_HIGH_CONFIDENCE;
+    const target = Math.max(1, targetSamples);
     const pctComplete = Math.min(100, Math.round((current / target) * 100));
     return {
         current_samples: current,
@@ -418,9 +422,37 @@ function buildProgress(minSampleCount: number): ActionableOutput['progress'] {
     };
 }
 
+function warmupSamplesFor(result: RecommendationResult): number {
+    return Math.max(
+        MIN_SAMPLES,
+        Math.floor(Number((result as any)._noise_gate?.required_samples ?? MIN_SAMPLES)),
+    );
+}
+
+function stableSamplesFor(result: RecommendationResult): number {
+    const stable = Math.floor(Number((result as any)._noise_gate?.stable_samples ?? MIN_SAMPLES_STABLE));
+    return Math.max(warmupSamplesFor(result), stable);
+}
+
+function highConfidenceSamplesFor(result: RecommendationResult): number {
+    const high = Math.floor(
+        Number((result as any)._noise_gate?.high_confidence_samples ?? MIN_SAMPLES_HIGH_CONFIDENCE),
+    );
+    return Math.max(stableSamplesFor(result), high);
+}
+
+function noiseGateActive(result: RecommendationResult): boolean {
+    return (result as any)._noise_gate?.is_noisy_task === true;
+}
+
+function simulationExploitGateActive(result: RecommendationResult): boolean {
+    return (result as any)._simulation_guardrail?.exploit_gate_applied === true;
+}
+
 function buildReason(
     r: RecommendationResult,
     confidenceMeta: InternalConfidenceMeta,
+    warmupSamples: number,
 ): ActionableOutput['reason'] {
     if (r.state === 'no_data') {
         const trustBlocked = (r as any)._trust_gate_blocked === true;
@@ -430,7 +462,7 @@ function buildReason(
         );
         const reasonText = trustBlocked
             ? `Agent suspended (trust_status: ${(r as any)._trust_status ?? 'suspended'})`
-            : templateNoData(r.task, totalOutcomes, r._qualification_context);
+            : templateNoData(r.task, totalOutcomes, warmupSamples, r._qualification_context);
         return {
             summary: trustBlocked
                 ? 'Agent is suspended'
@@ -478,11 +510,29 @@ export function buildActionableOutput(
     const confidenceMeta = toConfidenceMeta(r.confidence);
     const confidenceLabel = confidenceMeta.label;
     const stateMeta = STATE_META[r.state];
+    const warmupSamples = warmupSamplesFor(r);
+    const stableSamples = stableSamplesFor(r);
+    const highConfidenceSamples = highConfidenceSamplesFor(r);
+    const noisyGate = noiseGateActive(r);
+    const simulationExploitGate = simulationExploitGateActive(r);
 
     // Issue 7: threshold hint — always present
-    const thresholdHint =
-        `Recommendations appear at 50%+ confidence and stabilize at 80%+. ` +
-        `High-confidence (80%+) recommendations include a direct "replace" action.`;
+    const thresholdHint = (() => {
+        const base =
+            `Recommendations appear at 50%+ confidence and stabilize at 80%+. ` +
+            `High-confidence recommendations include a direct "replace" action ` +
+            `after ~${stableSamples}+ effective samples per action.`;
+
+        if (simulationExploitGate) {
+            return `${base} Simulation exploit gate is active for this task; monitor mode is enforced until real evidence improves.`;
+        }
+
+        if (noisyGate) {
+            return `${base} Noise-aware gate is active: this task requires ${warmupSamples}+ effective samples before stronger recommendations.`;
+        }
+
+        return base;
+    })();
 
     // Issue 8: scope label — placeholder, overwritten by route via spread
     const scopeLabel = '';
@@ -497,7 +547,7 @@ export function buildActionableOutput(
             percent: confidenceMeta.percent,
             label: confidenceMeta.label,
         },
-        progress: buildProgress(r.min_sample_count),
+        progress: buildProgress(Math.floor(r.min_sample_count), highConfidenceSamples),
         generated_at: r.generated_at,
     };
 
@@ -522,19 +572,20 @@ export function buildActionableOutput(
                 ? 'This agent has critically low trust. Acting on its history may cause regressions.'
                 : 'Evidence is insufficient. Acting now may cause regressions without measurable upside.',
             expected_improvement: null,
-            reason: buildReason(r, confidenceMeta),
+            reason: buildReason(r, confidenceMeta, warmupSamples),
             confidence: 0,
             confidence_label: confidenceLabel,
             validated: 'insufficient_data' as const,
             confidence_explanation: 'Not enough data to estimate confidence yet. ' +
-                `Log outcomes with task_name="${r.task}" to unlock a recommendation.`,
+                `Log outcomes with task_name="${r.task}" to unlock a recommendation ` +
+                `(target: ${warmupSamples}+ effective samples per action).`,
             insight: noDataInsight,
             message: buildMessage('no_data', false, confidenceMeta, null, null),
             validation_hint: null,
             sample_size: null,
             improvement_display: null,
             monitor_steps: null,
-            unlock_hint: buildUnlockHint(0, MIN_SAMPLES_HIGH_CONFIDENCE, 0),
+            unlock_hint: buildUnlockHint(0, highConfidenceSamples, 0),
             data_window: null,
             action_uncertainty: null,
             threshold_hint: thresholdHint,
@@ -585,7 +636,7 @@ export function buildActionableOutput(
                         `Effective reliable gain: ~${((delta * (r.confidence ?? 0)) * 100).toFixed(1)}%.`,
                 };
             })(),
-            reason: buildReason(r, confidenceMeta),
+            reason: buildReason(r, confidenceMeta, warmupSamples),
             confidence: r.confidence ?? 0,
             confidence_label: confidenceLabel,
             validated: 'provisional' as const,
@@ -593,7 +644,7 @@ export function buildActionableOutput(
                 const confPct = Math.round((r.confidence ?? 0) * 100);
                 const samples = r.min_sample_count;
                 const sampleNote = `${samples} outcomes per action recorded ` +
-                    `(need ${MIN_SAMPLES_STABLE} for stable signal).`;
+                    `(need ${stableSamples} for stable signal).`;
                 if (confPct >= 50) {
                     return `${confPct}% confidence - moderate signal. ${sampleNote} ` +
                         `The performance gap is real but more data would make it more reliable.`;
@@ -636,7 +687,7 @@ export function buildActionableOutput(
             ),
             monitor_steps: buildMonitorSteps(
                 r.min_sample_count,
-                MIN_SAMPLES_HIGH_CONFIDENCE,
+                highConfidenceSamples,
                 b.action_name,
                 r.task,
                 bestRate,
@@ -646,7 +697,7 @@ export function buildActionableOutput(
             ),
             unlock_hint: buildUnlockHint(
                 r.min_sample_count,
-                MIN_SAMPLES_HIGH_CONFIDENCE,
+                highConfidenceSamples,
                 Math.round((r.confidence ?? 0) * 100),
             ),
             data_window: {
@@ -696,12 +747,12 @@ export function buildActionableOutput(
                 ? `Based on ${r.min_sample_count} outcomes per action. Result may shift with more data.`
                 : null,
         },
-        reason: buildReason(r, confidenceMeta),
+        reason: buildReason(r, confidenceMeta, warmupSamples),
         confidence: r.confidence ?? 0,
         confidence_label: confidenceLabel,
         validated: (
             (r.confidence ?? 0) >= 0.5 &&
-            r.min_sample_count >= MIN_SAMPLES_STABLE
+            r.min_sample_count >= stableSamples
         ) ? 'validated' as const : 'provisional' as const,
         confidence_explanation: (() => {
             const confPct = Math.round((r.confidence ?? 0) * 100);
@@ -745,7 +796,7 @@ export function buildActionableOutput(
         ),
         monitor_steps: shouldAct ? null : buildMonitorSteps(
             r.min_sample_count,
-            MIN_SAMPLES_HIGH_CONFIDENCE,
+            highConfidenceSamples,
             b.action_name,
             r.task,
             resolutionMetric(b),
@@ -755,7 +806,7 @@ export function buildActionableOutput(
         ),
         unlock_hint: shouldAct ? null : buildUnlockHint(
             r.min_sample_count,
-            MIN_SAMPLES_HIGH_CONFIDENCE,
+            highConfidenceSamples,
             Math.round((r.confidence ?? 0) * 100),
         ),
         data_window: {

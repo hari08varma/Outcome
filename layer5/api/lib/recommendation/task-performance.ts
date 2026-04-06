@@ -14,11 +14,17 @@ export interface TaskPerformanceRow {
     action_id: string;
     action_name: string;
     total_count: number;
+    effective_sample_count: number;
     success_count: number;
     success_rate: number;
     resolution_rate: number;
     ml_score: number | null;
     last_seen_at: string | null;
+}
+
+interface TaskResolutionStats {
+    resolutionRate: number;
+    effectiveSamples: number;
 }
 
 interface FetchTaskPerformanceParams {
@@ -85,6 +91,7 @@ async function queryTaskPerformanceFromMV(
         action_id: String(row.action_id),
         action_name: String(row.action_name ?? row.action_id),
         total_count: Number(row.total_count ?? 0),
+        effective_sample_count: Number(row.total_count ?? 0),
         success_count: Number(row.success_count ?? 0),
         success_rate: Number(row.success_rate ?? 0),
         resolution_rate: Number(row.success_rate ?? 0),
@@ -96,10 +103,15 @@ async function queryTaskPerformanceFromMV(
 
     // Derive task-specific resolution quality from fact_outcomes.outcome_score
     // so recommendations track incident resolution semantics (not just binary success).
-    const resolutionRateByAction = await getTaskResolutionRateByAction(params);
+    const resolutionStatsByAction = await getTaskResolutionStatsByAction(params);
     const hydratedRows = rows.map((row) => ({
         ...row,
-        resolution_rate: resolutionRateByAction.get(row.action_id) ?? row.resolution_rate,
+        resolution_rate:
+            resolutionStatsByAction.get(row.action_id)?.resolutionRate
+            ?? row.resolution_rate,
+        effective_sample_count:
+            resolutionStatsByAction.get(row.action_id)?.effectiveSamples
+            ?? row.effective_sample_count,
     }));
 
     return { rows: hydratedRows, error: null };
@@ -152,9 +164,9 @@ function parseBoundedScore(value: unknown): number | null {
     return Math.max(0, Math.min(1, parsed));
 }
 
-async function getTaskResolutionRateByAction(
+async function getTaskResolutionStatsByAction(
     params: FetchTaskPerformanceParams,
-): Promise<Map<string, number>> {
+): Promise<Map<string, TaskResolutionStats>> {
     let query = supabase
         .from('fact_outcomes')
         .select('action_id, outcome_score, success, timestamp')
@@ -175,7 +187,7 @@ async function getTaskResolutionRateByAction(
 
     const { data, error } = await query;
     if (error || !data) {
-        return new Map<string, number>();
+        return new Map<string, TaskResolutionStats>();
     }
 
     const grouped = new Map<string, {
@@ -212,16 +224,22 @@ async function getTaskResolutionRateByAction(
         grouped.set(actionId, current);
     }
 
-    const rates = new Map<string, number>();
+    const statsByAction = new Map<string, TaskResolutionStats>();
     for (const [actionId, stats] of grouped.entries()) {
         if (stats.total <= 0) continue;
         const weightedRate = stats.weight_total > 0
             ? stats.weighted_score_sum / stats.weight_total
             : stats.score_sum / stats.total;
-        rates.set(actionId, Number(weightedRate.toFixed(4)));
+        const effectiveSamples = stats.weight_total > 0
+            ? stats.weight_total
+            : stats.total;
+        statsByAction.set(actionId, {
+            resolutionRate: Number(weightedRate.toFixed(4)),
+            effectiveSamples: Number(effectiveSamples.toFixed(4)),
+        });
     }
 
-    return rates;
+    return statsByAction;
 }
 
 async function queryTaskPerformanceFromFacts(
@@ -333,6 +351,11 @@ async function queryTaskPerformanceFromFacts(
             action_id: row.action_id,
             action_name: row.action_name,
             total_count: row.total_count,
+            effective_sample_count: Number((
+                row.resolution_weight_total > 0
+                    ? row.resolution_weight_total
+                    : row.total_count
+            ).toFixed(4)),
             success_count: row.success_count,
             success_rate: successRate,
             resolution_rate: resolutionRate,

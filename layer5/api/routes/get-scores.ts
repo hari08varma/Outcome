@@ -23,6 +23,7 @@ import {
     CustomerPolicyConfig,
 } from '../lib/policy-engine.js';
 import { computePropensities, RankedActionEntry } from '../lib/ips-engine.js';
+import { getRecommendationRolloutConfig } from '../lib/recommendation/rollout-flags.js';
 
 // ── Helper: fetch real agent trust from DB (falls back to DEFAULT_TRUST) ──
 async function getAgentTrust(agentId: string | undefined): Promise<AgentTrustScore> {
@@ -72,6 +73,7 @@ async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConf
 }
 
 const STALE_THRESHOLD_MINUTES = 10;
+const RUNTIME_SIMULATION_SHADOW_DECISION_CHUNK_SIZE = 50;
 
 export const getScoresRouter = new Hono();
 
@@ -91,6 +93,144 @@ function normalizeEnvironment(value: string | undefined): 'production' | 'stagin
         development: 'development',
     };
     return aliases[normalized] ?? 'production';
+}
+
+interface RuntimeCounterfactualSignalRow {
+    unchosen_action_id: string | null;
+    counterfactual_est: number | null;
+    ips_weight: number | null;
+    created_at: string | null;
+}
+
+function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+}
+
+function computeRuntimeShadowBlendWeight(
+    sampleCount: number,
+    rolloutConfig: ReturnType<typeof getRecommendationRolloutConfig>,
+): number {
+    if (sampleCount >= rolloutConfig.simulationShadowBlendUntilSamples) {
+        return 0;
+    }
+
+    const ratio =
+        (rolloutConfig.simulationShadowBlendUntilSamples - sampleCount)
+        / rolloutConfig.simulationShadowBlendUntilSamples;
+    return Number(
+        Math.min(rolloutConfig.simulationShadowBlendCap, ratio * rolloutConfig.simulationShadowBlendCap)
+            .toFixed(4),
+    );
+}
+
+async function fetchRuntimeCounterfactualShadowSignals(
+    actionIds: string[],
+    customerId: string,
+    agentId: string | undefined,
+    rolloutConfig: ReturnType<typeof getRecommendationRolloutConfig>,
+): Promise<Map<string, number>> {
+    const uniqueActionIds = [...new Set(actionIds.filter(Boolean))];
+    if (uniqueActionIds.length === 0) return new Map<string, number>();
+
+    let decisionsQuery = supabase
+        .from('fact_decisions')
+        .select('id, dim_agents!inner(customer_id, agent_id)')
+        .eq('dim_agents.customer_id', customerId)
+        .order('created_at', { ascending: false })
+        .limit(rolloutConfig.simulationShadowDecisionLookback);
+
+    if (agentId) {
+        decisionsQuery = decisionsQuery.eq('agent_id', agentId);
+    }
+
+    const { data: decisions, error: decisionError } = await decisionsQuery;
+    if (decisionError) {
+        console.warn('[get-scores] runtime shadow decision lookup failed:', decisionError.message);
+        return new Map<string, number>();
+    }
+
+    const decisionIds = (decisions ?? [])
+        .map((decision: any) => decision.id)
+        .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0);
+
+    if (decisionIds.length === 0) {
+        return new Map<string, number>();
+    }
+
+    const chunks: string[][] = [];
+    for (let idx = 0; idx < decisionIds.length; idx += RUNTIME_SIMULATION_SHADOW_DECISION_CHUNK_SIZE) {
+        chunks.push(decisionIds.slice(idx, idx + RUNTIME_SIMULATION_SHADOW_DECISION_CHUNK_SIZE));
+    }
+
+    const chunkRows = await Promise.all(chunks.map(async (chunk, chunkIndex) => {
+        const { data, error } = await supabase
+            .from('fact_outcome_counterfactuals')
+            .select('unchosen_action_id, counterfactual_est, ips_weight, created_at')
+            .in('decision_id', chunk)
+            .in('unchosen_action_id', uniqueActionIds)
+            .order('created_at', { ascending: false })
+            .limit(rolloutConfig.simulationShadowRecentPerAction * uniqueActionIds.length);
+
+        if (error) {
+            console.warn(
+                '[get-scores] runtime shadow counterfactual lookup failed:',
+                error.message,
+                '| chunk:',
+                chunkIndex,
+            );
+            return [] as RuntimeCounterfactualSignalRow[];
+        }
+
+        return (data ?? []) as RuntimeCounterfactualSignalRow[];
+    }));
+
+    const dedupedRows = new Map<string, RuntimeCounterfactualSignalRow>();
+    for (const row of chunkRows.flat()) {
+        if (!row.unchosen_action_id || !row.created_at) continue;
+        const key = `${row.unchosen_action_id}:${row.created_at}`;
+        if (!dedupedRows.has(key)) dedupedRows.set(key, row);
+    }
+
+    const grouped = new Map<string, RuntimeCounterfactualSignalRow[]>();
+    for (const row of dedupedRows.values()) {
+        if (!row.unchosen_action_id) continue;
+        const existing = grouped.get(row.unchosen_action_id) ?? [];
+        existing.push(row);
+        grouped.set(row.unchosen_action_id, existing);
+    }
+
+    const signals = new Map<string, number>();
+    for (const actionId of uniqueActionIds) {
+        const rows = (grouped.get(actionId) ?? [])
+            .sort(
+                (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+            )
+            .slice(0, rolloutConfig.simulationShadowRecentPerAction);
+
+        if (rows.length === 0) continue;
+
+        let weightedTotal = 0;
+        let weightTotal = 0;
+        let simpleTotal = 0;
+
+        for (const row of rows) {
+            const estimate = clamp01(Number(row.counterfactual_est ?? 0));
+            const weight = clamp01(Number(row.ips_weight ?? 0));
+            simpleTotal += estimate;
+            if (weight > 0) {
+                weightedTotal += estimate * weight;
+                weightTotal += weight;
+            }
+        }
+
+        const signal = weightTotal > 0
+            ? weightedTotal / weightTotal
+            : simpleTotal / rows.length;
+        signals.set(actionId, Number(clamp01(signal).toFixed(4)));
+    }
+
+    return signals;
 }
 
 // ── GET /v1/get-scores ────────────────────────────────────────
@@ -138,6 +278,7 @@ getScoresRouter.get('/', async (c) => {
         getAgentTrust(agentId),
         getCustomerConfig(customerId),
     ]);
+    const rolloutConfig = getRecommendationRolloutConfig();
 
     if (!issueType && !contextId) {
         return c.json(
@@ -269,6 +410,47 @@ getScoresRouter.get('/', async (c) => {
             ranked.sort((a, b) => b.composite_score - a.composite_score);
         }
 
+        const shadowWeightByActionId = new Map<string, number>();
+        let simulationShadowAppliedCount = 0;
+
+        if (!forcedColdStartExplore && rolloutConfig.simulationShadowEnabled && ranked.length > 0) {
+            const shadowSignals = await fetchRuntimeCounterfactualShadowSignals(
+                ranked.map((action) => action.action_id),
+                customerId,
+                agentId,
+                rolloutConfig,
+            );
+
+            ranked = ranked
+                .map((action) => {
+                    const shadowSignal = shadowSignals.get(action.action_id);
+                    const shadowWeight = shadowSignal === undefined
+                        ? 0
+                        : computeRuntimeShadowBlendWeight(action.total_attempts, rolloutConfig);
+
+                    shadowWeightByActionId.set(action.action_id, shadowWeight);
+
+                    if (shadowSignal === undefined || shadowWeight <= 0) {
+                        return action;
+                    }
+
+                    simulationShadowAppliedCount += 1;
+
+                    const blendedScore = clamp01(
+                        action.composite_score * (1 - shadowWeight)
+                        + shadowSignal * shadowWeight,
+                    );
+
+                    return {
+                        ...action,
+                        composite_score: Number(blendedScore.toFixed(4)),
+                    };
+                })
+                .sort((a, b) => b.composite_score - a.composite_score);
+        }
+
+        topActionForResponse = ranked[0] ?? null;
+
         // ── Context drift check (Gap 2) ──────────────────────
         const { count: contextOutcomeCount } = await supabase
             .from('mv_action_scores')
@@ -361,13 +543,92 @@ getScoresRouter.get('/', async (c) => {
             already_resolved: false,  // caller can check via episode state
         } : null;
 
+        const topForGuardrail = topActionForResponse ?? ranked[0] ?? null;
+        const topActionShadowWeight = Number((
+            topForGuardrail
+                ? shadowWeightByActionId.get(topForGuardrail.action_id) ?? 0
+                : 0
+        ).toFixed(4));
+
+        let runtimeGuardrail = {
+            enabled:
+                rolloutConfig.simulationShadowEnabled
+                || rolloutConfig.simulationExploitGateEnabled
+                || rolloutConfig.simulationConfidenceCeilingEnabled,
+            shadow_applied: simulationShadowAppliedCount > 0,
+            assisted_actions: simulationShadowAppliedCount,
+            top_action_shadow_weight: topActionShadowWeight,
+            confidence_ceiling_applied: false,
+            exploit_gate_applied: false,
+            confidence_ceiling: rolloutConfig.simulationConfidenceCeiling,
+            exploit_gate_min_samples: rolloutConfig.simulationExploitGateMinSamples,
+        };
+
+        if (
+            !forcedColdStartExplore
+            && rolloutConfig.simulationConfidenceCeilingEnabled
+            && topForGuardrail
+            && runtimeGuardrail.top_action_shadow_weight > 0
+            && topForGuardrail.confidence > rolloutConfig.simulationConfidenceCeiling
+        ) {
+            const capped = Number(rolloutConfig.simulationConfidenceCeiling.toFixed(4));
+            ranked = ranked.map((action) =>
+                action.action_id === topForGuardrail.action_id
+                    ? { ...action, confidence: capped }
+                    : action
+            );
+            topActionForResponse = topActionForResponse && topActionForResponse.action_id === topForGuardrail.action_id
+                ? { ...topActionForResponse, confidence: capped }
+                : topActionForResponse;
+            runtimeGuardrail = {
+                ...runtimeGuardrail,
+                confidence_ceiling_applied: true,
+            };
+        }
+
         // ── Policy recommendation ────────────────────────────
+        // Policy decision runs after simulation shadow + confidence guardrails
+        // so runtime execution order matches the same controls.
         const policy = getPolicyDecision({
             rankedActions: ranked,
             agentTrust: agentTrust,
             customerConfig: customerConfig,
             coldStartActive: result.cold_start,
         });
+
+        let policyForResponse = policy.policy;
+        let policyReasonForResponse = policy.reason;
+        let policySelectedAction = policy.selectedAction;
+        let policyExplorationTarget = policy.explorationTarget;
+
+        if (forcedColdStartExplore) {
+            policyForResponse = 'explore';
+            policyReasonForResponse = 'cold_start_unregistered_global_fallback';
+            policySelectedAction = null;
+            policyExplorationTarget = null;
+        }
+
+        if (
+            !forcedColdStartExplore
+            && rolloutConfig.simulationExploitGateEnabled
+            && policyForResponse === 'exploit'
+            && topForGuardrail
+            && runtimeGuardrail.top_action_shadow_weight > 0
+            && topForGuardrail.total_attempts < rolloutConfig.simulationExploitGateMinSamples
+        ) {
+            const fallbackExploreTarget = ranked.find((a) => a.action_id !== topForGuardrail.action_id)?.action_id
+                ?? ranked.find((a) => a.action_id === topForGuardrail.action_id)?.action_id
+                ?? null;
+
+            policyForResponse = 'explore';
+            policyReasonForResponse = 'runtime_simulation_exploit_gate';
+            policySelectedAction = null;
+            policyExplorationTarget = fallbackExploreTarget;
+            runtimeGuardrail = {
+                ...runtimeGuardrail,
+                exploit_gate_applied: true,
+            };
+        }
 
         // ── Staleness signal ─────────────────────────────────
         const lastRefresh = result.view_refreshed_at ?? null;
@@ -402,10 +663,11 @@ getScoresRouter.get('/', async (c) => {
                 stale_threshold_minutes: STALE_THRESHOLD_MINUTES,
             },
             served_from_cache: result.served_from_cache,
-            policy: forcedColdStartExplore ? 'explore' : policy.policy,
-            policy_reason: forcedColdStartExplore
-                ? 'cold_start_unregistered_global_fallback'
-                : policy.reason,
+            policy: policyForResponse,
+            policy_reason: policyReasonForResponse,
+            policy_selected_action: policySelectedAction,
+            policy_exploration_target: policyExplorationTarget,
+            runtime_guardrail: runtimeGuardrail.enabled ? runtimeGuardrail : null,
             agent_trust: {
                 score: agentTrust.trust_score,
                 status: agentTrust.trust_status,
