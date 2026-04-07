@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle } from 'lucide-react';
-import { supabase } from '../../supabaseClient';
 import { useToast } from '../../hooks/useToast';
+import { createAgentFetch } from '../../lib/api';
 import { getApiBase } from '../../lib/config';
+import { useAgentApiKey } from '../../hooks/useAgentApiKey';
 
 type DiscrepancyRow = {
     discrepancy_id: string;
@@ -66,16 +67,25 @@ export default function DiscrepanciesPage(): React.ReactElement {
     const [resolvingId, setResolvingId] = useState<string | null>(null);
     const [detecting, setDetecting] = useState(false);
 
+    const { apiKey, isValid, error: keyError, handleAuthFailure } = useAgentApiKey();
     const { showToast, toasts, dismissToast } = useToast();
 
+    const agentRequest = useCallback(
+        async (path: string, init?: RequestInit): Promise<Response> => {
+            if (!isValid || !apiKey) {
+                throw new Error('API key required');
+            }
+
+            const apiBase = getApiBase();
+            const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
+            return agentFetch(`${apiBase}${path}`, init);
+        },
+        [apiKey, handleAuthFailure, isValid],
+    );
+
     const loadDiscrepancies = async (): Promise<void> => {
-        const apiBase = getApiBase();
-        const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`${apiBase}/v1/discrepancies`, {
-            headers: {
-                Authorization: `Bearer ${session?.access_token}`,
-                'Content-Type': 'application/json',
-            },
+        const res = await agentRequest('/v1/discrepancies', {
+            headers: { 'Content-Type': 'application/json' },
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
@@ -83,13 +93,8 @@ export default function DiscrepanciesPage(): React.ReactElement {
     };
 
     const loadSummary = async (): Promise<void> => {
-        const apiBase = getApiBase();
-        const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`${apiBase}/v1/discrepancies/summary`, {
-            headers: {
-                Authorization: `Bearer ${session?.access_token}`,
-                'Content-Type': 'application/json',
-            },
+        const res = await agentRequest('/v1/discrepancies/summary', {
+            headers: { 'Content-Type': 'application/json' },
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
@@ -97,6 +102,11 @@ export default function DiscrepanciesPage(): React.ReactElement {
     };
 
     useEffect(() => {
+        if (!isValid || !apiKey) {
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         setError(null);
 
@@ -108,20 +118,14 @@ export default function DiscrepanciesPage(): React.ReactElement {
             .finally(() => {
                 setLoading(false);
             });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [apiKey, isValid]);
 
     const onDetect = async (): Promise<void> => {
         setDetecting(true);
         try {
-            const apiBase = getApiBase();
-            const { data: { session } } = await supabase.auth.getSession();
-            const res = await fetch(`${apiBase}/v1/discrepancies/detect`, {
+            const res = await agentRequest('/v1/discrepancies/detect', {
                 method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${session?.access_token}`,
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
             });
             if (!res.ok) throw new Error(await res.text());
             const body = await res.json() as { detected?: number };
@@ -142,14 +146,9 @@ export default function DiscrepanciesPage(): React.ReactElement {
     const onResolve = async (id: string): Promise<void> => {
         setResolvingId(id);
         try {
-            const apiBase = getApiBase();
-            const { data: { session } } = await supabase.auth.getSession();
-            const res = await fetch(`${apiBase}/v1/discrepancies/${id}/resolve`, {
+            const res = await agentRequest(`/v1/discrepancies/${id}/resolve`, {
                 method: 'PATCH',
-                headers: {
-                    Authorization: `Bearer ${session?.access_token}`,
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
             });
             if (!res.ok) throw new Error(await res.text());
             showToast('Discrepancy resolved', 'success');
@@ -166,6 +165,24 @@ export default function DiscrepanciesPage(): React.ReactElement {
             setResolvingId(null);
         }
     };
+
+    if (!isValid) {
+        return (
+            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-8 text-center space-y-3">
+                <AlertTriangle size={24} className="mx-auto text-[#a1a1aa]" />
+                <p className="text-white font-medium">API Key Required</p>
+                <p className="text-[#a1a1aa] text-sm max-w-md mx-auto">
+                    {keyError ?? 'Configure your agent API key in Settings to view discrepancies.'}
+                </p>
+                <a
+                    href="/dashboard/settings/api-keys"
+                    className="inline-block mt-2 px-4 py-2 rounded-lg bg-[#b8ff00] text-black text-sm font-semibold hover:bg-[#a0e600] transition-colors"
+                >
+                    Go to Settings
+                </a>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-8">

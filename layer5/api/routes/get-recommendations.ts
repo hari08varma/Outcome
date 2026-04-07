@@ -76,6 +76,9 @@ getRecommendationsRouter.get('/', async (c) => {
     // When absent, returns customer-wide blended view (backward compatible)
     const rawAgentId = c.req.query('agent_id') ?? null;
     const scopedAgentId = rawAgentId?.trim() || null;
+    const strictAgentScope = ['1', 'true', 'yes', 'on'].includes(
+        (c.req.query('strict_agent_scope') ?? '').trim().toLowerCase(),
+    );
 
     if (!rawTask || rawTask.trim() === '') {
         return c.json(
@@ -126,17 +129,27 @@ getRecommendationsRouter.get('/', async (c) => {
                 getRecommendation(customerId, taskName, null),
             ]);
 
-            const selection = chooseScopedOrBlendedCandidate(
-                toScopeTransitionCandidate(scopedResult),
-                toScopeTransitionCandidate(blendedResult),
-            );
+            if (strictAgentScope) {
+                result = scopedResult;
+                servedScope = 'agent_scoped';
+                scopeReason = 'Strict agent scope requested; blended fallback disabled.';
+                scopeThresholdProgress = chooseScopedOrBlendedCandidate(
+                    toScopeTransitionCandidate(scopedResult),
+                    toScopeTransitionCandidate(blendedResult),
+                ).threshold_progress;
+            } else {
+                const selection = chooseScopedOrBlendedCandidate(
+                    toScopeTransitionCandidate(scopedResult),
+                    toScopeTransitionCandidate(blendedResult),
+                );
 
-            result = selection.servedScope === 'customer_blended'
-                ? blendedResult
-                : scopedResult;
-            servedScope = selection.servedScope;
-            scopeReason = selection.reason;
-            scopeThresholdProgress = selection.threshold_progress;
+                result = selection.servedScope === 'customer_blended'
+                    ? blendedResult
+                    : scopedResult;
+                servedScope = selection.servedScope;
+                scopeReason = selection.reason;
+                scopeThresholdProgress = selection.threshold_progress;
+            }
         } else {
             result = await getRecommendation(customerId, taskName, null);
         }

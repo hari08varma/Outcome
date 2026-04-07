@@ -631,10 +631,11 @@ export default function RecommendationsPage(): React.ReactElement {
     const [agents, setAgents] = useState<Array<{ agent_id: string; agent_name: string }>>([]);
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
     const [agentsLoading, setAgentsLoading] = useState(false);
-    // Dynamic task list — scoped to selected agent (or all agents if null)
+    // Dynamic task list — always scoped to selected agent.
     const [agentTasks, setAgentTasks] = useState<string[]>([]);
     const [agentTasksLoading, setAgentTasksLoading] = useState(false);
     const fetchRef = useRef<(() => Promise<void>) | null>(null);
+    const latestFetchTokenRef = useRef(0);
 
     useEffect(() => {
         if (!isValid) return;
@@ -646,41 +647,47 @@ export default function RecommendationsPage(): React.ReactElement {
                     .select('agent_id, agent_name')
                     .order('agent_name', { ascending: true });
                 setAgents(data ?? []);
-                // Auto-select first agent if only one exists
-                if (data && data.length === 1) {
-                    setSelectedAgentId(data[0]!.agent_id);
-                }
+
+                setSelectedAgentId((current) => {
+                    if (!data || data.length === 0) return null;
+                    if (current && data.some((agent) => agent.agent_id === current)) {
+                        return current;
+                    }
+                    return data[0]!.agent_id;
+                });
             } finally {
                 setAgentsLoading(false);
             }
         })();
     }, [isValid]);
 
-    // Fetch distinct task_names from the MV scoped to the selected agent.
-    // RLS on mv_task_action_performance enforces customer_id via JWT automatically.
-    // Fetch tasks via the authenticated API endpoint — avoids silent RLS failures
-    // that occur when querying MVs directly via the Supabase anon client.
+    // Fetch tasks via the authenticated API endpoint scoped to selected agent.
     useEffect(() => {
-        if (!isValid || !apiKey || !API_BASE) {
+        if (!isValid || !apiKey || !API_BASE || !selectedAgentId) {
             setAgentTasks([]);
+            setAgentTasksLoading(false);
             return;
         }
+
         setAgentTasksLoading(true);
         const controller = new AbortController();
+
         void (async () => {
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const qs = selectedAgentId
-                    ? `?agent_id=${encodeURIComponent(selectedAgentId)}`
-                    : '';
-                const res = await agentFetch(`${API_BASE}/v1/recommendations/tasks${qs}`);
+                const qs = `?agent_id=${encodeURIComponent(selectedAgentId)}`;
+                const res = await agentFetch(`${API_BASE}/v1/recommendations/tasks${qs}`, {
+                    signal: controller.signal,
+                });
+
                 if (res.ok) {
                     const json = await res.json() as { tasks: string[] };
                     setAgentTasks(json.tasks ?? []);
                 } else {
                     setAgentTasks([]);
                 }
-            } catch {
+            } catch (err: any) {
+                if (err?.name === 'AbortError') return;
                 setAgentTasks([]);
             } finally {
                 setAgentTasksLoading(false);
@@ -689,12 +696,7 @@ export default function RecommendationsPage(): React.ReactElement {
         return () => controller.abort();
     }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
 
-    // -- Agent scope reset -------------------------------------------------
-    // Fires every time the user switches to a different agent or
-    // clicks "All Agents". Clears the task input, active task,
-    // current result, and any error so the new agent starts clean.
-    // The auto-select effect below then picks the first available
-    // task once agentTasks finishes loading.
+    // Reset selected task/result when agent scope changes.
     useEffect(() => {
         setTaskInput('');
         setActiveTask('');
@@ -719,18 +721,17 @@ export default function RecommendationsPage(): React.ReactElement {
 
     const fetchRecommendation = useCallback(
         async (task: string, showLoading = true): Promise<void> => {
-            if (!isValid || !apiKey || !API_BASE) return;
+            if (!isValid || !apiKey || !API_BASE || !selectedAgentId) return;
+
+            const fetchToken = ++latestFetchTokenRef.current;
 
             if (showLoading) setLoading(true);
             setError(null);
 
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const agentParam = selectedAgentId
-                    ? `&agent_id=${encodeURIComponent(selectedAgentId)}`
-                    : '';
                 const res = await agentFetch(
-                    `${API_BASE}/v1/recommendations?task=${encodeURIComponent(task)}${agentParam}`
+                    `${API_BASE}/v1/recommendations?task=${encodeURIComponent(task)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=true`
                 );
 
                 if (!res.ok) {
@@ -739,19 +740,24 @@ export default function RecommendationsPage(): React.ReactElement {
                 }
 
                 const json = (await res.json()) as RecommendationResponse;
+
+                if (fetchToken !== latestFetchTokenRef.current) return;
                 setData(json);
             } catch (err: any) {
+                if (fetchToken !== latestFetchTokenRef.current) return;
                 setError(err.message ?? 'Failed to load recommendation.');
                 setData(null);
             } finally {
-                setLoading(false);
+                if (fetchToken === latestFetchTokenRef.current) {
+                    setLoading(false);
+                }
             }
         },
         [apiKey, isValid, handleAuthFailure, selectedAgentId],
     );
 
     useEffect(() => {
-        if (!isValid) return;
+        if (!isValid || !selectedAgentId) return;
         // Guard: activeTask is '' right after an agent switch (cleared
         // by the agent-reset effect). Do not fetch — wait for the
         // auto-select effect to populate activeTask with a valid task.
@@ -780,8 +786,27 @@ export default function RecommendationsPage(): React.ReactElement {
 
     const handleSubmit = (e: React.FormEvent): void => {
         e.preventDefault();
+
+        if (!selectedAgentId) {
+            setError('Select an agent first.');
+            return;
+        }
+
         const normalized = taskInput.trim().toLowerCase().replace(/\s+/g, '_');
         if (!normalized) return;
+
+        if (agentTasks.length === 0) {
+            setError('No tasks logged for this agent yet.');
+            setData(null);
+            return;
+        }
+
+        if (!agentTasks.includes(normalized)) {
+            setError('Task not found for selected agent. Choose from Quick Select.');
+            setData(null);
+            return;
+        }
+
         setActiveTask(normalized);
         setTaskInput(normalized);
     };
@@ -839,21 +864,12 @@ export default function RecommendationsPage(): React.ReactElement {
                 </div>
             )}
 
-            {agents.length > 1 && (
+            {agents.length > 0 && (
                 <div>
                     <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-3">
                         Agent Scope
                     </p>
                     <div className="flex flex-wrap gap-2 items-center">
-                        <button
-                            onClick={() => setSelectedAgentId(null)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${selectedAgentId === null
-                                ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
-                                }`}
-                        >
-                            All Agents
-                        </button>
                         {agentsLoading ? (
                             <span className="text-xs text-[#a1a1aa]">Loading agents…</span>
                         ) : (
@@ -871,17 +887,19 @@ export default function RecommendationsPage(): React.ReactElement {
                             ))
                         )}
                     </div>
-                    {selectedAgentId && (
+                    {selectedAgentId ? (
                         <p className="text-xs text-[#a1a1aa] mt-2">
                             Showing recommendations scoped to this agent only.
-                            <button
-                                className="ml-2 text-[#b8ff00] hover:underline"
-                                onClick={() => setSelectedAgentId(null)}
-                            >
-                                Clear
-                            </button>
                         </p>
+                    ) : (
+                        <p className="text-xs text-[#52525b] mt-2">Select an agent to continue.</p>
                     )}
+                </div>
+            )}
+
+            {!agentsLoading && agents.length === 0 && (
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 text-sm text-[#a1a1aa]">
+                    No agents found for this workspace.
                 </div>
             )}
 
@@ -919,11 +937,7 @@ export default function RecommendationsPage(): React.ReactElement {
                         ))}
                     </div>
                 ) : (
-                    <p className="text-xs text-[#52525b]">
-                        {selectedAgentId
-                            ? 'No tasks logged for this agent yet.'
-                            : 'No tasks found. Log outcomes to see tasks here.'}
-                    </p>
+                    <p className="text-xs text-[#52525b]">No tasks logged for this agent yet.</p>
                 )}
             </div>
 
@@ -933,13 +947,13 @@ export default function RecommendationsPage(): React.ReactElement {
                         type="text"
                         value={taskInput}
                         onChange={(e) => setTaskInput(e.target.value)}
-                        placeholder="Enter task name e.g. subscription_cancel"
+                        placeholder="Enter a task from Quick Select"
                         className="w-full bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-3 text-sm text-white placeholder-[#52525b] focus:outline-none focus:border-[#b8ff00]/50 font-mono transition-colors"
                     />
                 </div>
                 <button
                     type="submit"
-                    disabled={loading || !taskInput.trim()}
+                    disabled={loading || !taskInput.trim() || !selectedAgentId || agentTasks.length === 0}
                     className="px-5 py-3 rounded-xl bg-[#b8ff00] text-black text-sm font-semibold hover:bg-[#a0e600] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                     Analyse
