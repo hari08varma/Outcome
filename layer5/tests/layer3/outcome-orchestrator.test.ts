@@ -238,7 +238,7 @@ function createSupabaseQuery(table: string, state: MockState): any {
 function wireSupabaseMocks(state: MockState): void {
     vi.mocked(supabase.from).mockImplementation((table: string) => createSupabaseQuery(table, state));
 
-    vi.mocked(supabase.rpc).mockImplementation(async (fn: string, args?: Record<string, any>) => {
+    (vi.mocked(supabase.rpc) as any).mockImplementation(async (fn: string, args?: Record<string, any>) => {
         state.rpcCalls.push({ fn, args: args ?? {} });
 
         if (fn === 'detect_coordinated_failures') {
