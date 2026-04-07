@@ -252,14 +252,14 @@ app.get('/health', async (c) => {
     try {
         const { supabase } = await import('./lib/supabase.js');
         const { error: tapErr } = await supabase
-            .from('mv_task_action_performance')
+            .from('mv_task_action_performance_180d')
             .select('customer_id')
             .limit(1);
-        checks.mv_task_action_performance = tapErr
+        checks.mv_task_action_performance_180d = tapErr
             ? `error: ${tapErr.message}`
             : 'ok';
     } catch {
-        checks.mv_task_action_performance = 'error';
+        checks.mv_task_action_performance_180d = 'error';
     }
 
     if (Object.values(checks).some(v => v === 'error' || v.startsWith('error'))) {
@@ -342,14 +342,14 @@ app.get('/health/deep', async (c) => {
     try {
         const { supabase } = await import('./lib/supabase.js');
         const { error: tapErr } = await supabase
-            .from('mv_task_action_performance')
+            .from('mv_task_action_performance_180d')
             .select('customer_id')
             .limit(1);
-        checks.mv_task_action_performance = tapErr
+        checks.mv_task_action_performance_180d = tapErr
             ? `error: ${tapErr.message}`
             : 'ok';
     } catch {
-        checks.mv_task_action_performance = 'error';
+        checks.mv_task_action_performance_180d = 'error';
     }
 
     // ── mv_episode_patterns: regression guard ──────────────

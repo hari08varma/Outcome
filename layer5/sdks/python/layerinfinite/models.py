@@ -28,7 +28,8 @@ class ScoredAction(BaseModel):
 class GetScoresResponse(BaseModel):
     ranked_actions: list[ScoredAction]
     top_action: ScoredAction | None = None
-    policy: Literal["exploit", "explore", "escalate", "SANDBOX"] = "explore"
+    policy: Literal["exploit", "explore", "escalate", "SANDBOX", "abstain"] = "explore"
+    policy_abstain_message: str | None = None
     cold_start: bool = False
     # How many more outcomes to log before LI activates recommendations.
     # 0 when not cold-starting. Surfaced directly from the API.

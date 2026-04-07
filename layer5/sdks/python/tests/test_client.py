@@ -17,6 +17,7 @@ from layerinfinite import (
     LayerinfiniteClient,
     LayerinfiniteAuthError,
     LayerinfiniteError,
+    LowConfidenceError,
     LayerinfiniteRateLimitError,
     LogOutcomeRequest,
 )
@@ -142,7 +143,7 @@ def test_get_scores_returns_typed_response():
     assert isinstance(response, GetScoresResponse)
     assert isinstance(response.top_action, ScoredAction)
     assert response.top_action.action_name == "escalate_to_senior"
-    assert response.policy in ("exploit", "explore", "escalate")
+    assert response.policy in ("exploit", "explore", "escalate", "SANDBOX", "abstain")
     assert response.top_action.composite_score == pytest.approx(0.87)
 
 
@@ -447,6 +448,67 @@ def test_run_uses_cached_ranking_when_get_scores_temporarily_unreachable(monkeyp
 
     assert result['action'] == 'best_action'
     assert executed[0] == 'best_action'
+
+
+def test_run_raises_low_confidence_on_policy_abstain_and_skips_execution(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        mode='auto',
+        auto_register=False,
+    )
+
+    executed: list[str] = []
+
+    def candidate_action(**kwargs):
+        executed.append('candidate_action')
+        return {'ok': True}
+
+    client.register_action('billing_dispute', 'candidate_action', candidate_action)
+
+    abstain_scores = GetScoresResponse.model_validate({
+        'ranked_actions': [
+            {
+                'action_id': 'act-uuid-1',
+                'action_name': 'candidate_action',
+                'action_category': 'remediation',
+                'composite_score': 0.59,
+                'confidence': 0.58,
+                'total_attempts': 12,
+                'policy_reason': 'near_tie',
+                'is_cold_start': False,
+            }
+        ],
+        'top_action': {
+            'action_id': 'act-uuid-1',
+            'action_name': 'candidate_action',
+            'action_category': 'remediation',
+            'composite_score': 0.59,
+            'confidence': 0.58,
+            'total_attempts': 12,
+            'policy_reason': 'near_tie',
+            'is_cold_start': False,
+        },
+        'policy': 'abstain',
+        'policy_abstain_message': 'Top actions are statistically indistinguishable.',
+        'cold_start': False,
+        'context_id': 'ctx-uuid-abstain',
+        'agent_id': 'my-agent',
+        'served_from_cache': False,
+    })
+
+    monkeypatch.setattr(client, '_build_execution_order', lambda task: ['candidate_action'])
+    monkeypatch.setattr(client, '_fetch_scores', lambda task: abstain_scores)
+    monkeypatch.setattr(client, '_log_outcome', lambda **kwargs: pytest.fail('_log_outcome should not be called'))
+
+    with pytest.raises(LowConfidenceError) as exc_info:
+        client.run('billing_dispute', ticket_id='t-2')
+
+    assert 'Policy abstain for task' in str(exc_info.value)
+    assert exc_info.value.suggestion.action_name == 'candidate_action'
+    assert exc_info.value.suggestion.reason == 'Top actions are statistically indistinguishable.'
+    assert executed == []
 
 
 def test_recommend_uses_cached_snapshot_on_network_error(monkeypatch):

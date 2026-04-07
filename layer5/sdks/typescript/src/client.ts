@@ -397,7 +397,33 @@ export class Layerinfinite {
                 topConfidence = scoresResp.top_action.confidence;
                 topReason = scoresResp.top_action.policy_reason ?? 'Ranked by outcome history.';
             }
-        } catch {
+
+            if (scoresResp?.policy === 'abstain') {
+                const ranked = this.buildRankedFromScores(scoresResp);
+                const topName = scoresResp.top_action?.action_name
+                    ?? executionOrder[0]
+                    ?? 'unknown';
+                const abstainReason = scoresResp.policy_abstain_message
+                    ?? topReason
+                    ?? 'Top actions are statistically indistinguishable. Gather more outcomes or escalate.';
+                const suggestion: Suggestion = {
+                    actionName: topName,
+                    confidence: topConfidence,
+                    reason: abstainReason,
+                    ranked,
+                };
+
+                throw new LowConfidenceError(
+                    `Policy abstain for task '${task}'. ${abstainReason}`,
+                    suggestion,
+                    topConfidence,
+                    this.confidenceThreshold,
+                );
+            }
+        } catch (err) {
+            if (err instanceof LowConfidenceError) {
+                throw err;
+            }
             // fetchScores already logs a warning — continue with registration order
         }
 

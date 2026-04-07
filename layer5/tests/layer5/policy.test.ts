@@ -177,4 +177,24 @@ describe('Phase 5 — Adaptive Policy Engine', () => {
         expect(result.reason).toBe('no_reliable_action');
         expect(result.selectedAction).toBeNull();
     });
+
+    // ── Test 7: Ambiguous low-separation rankings → abstain ─────
+    it('ambiguous low-separation rankings trigger strict abstain', () => {
+        const actions = [
+            makeAction({ action_id: 'a1', action_name: 'retry_with_context', composite_score: 0.58, confidence: 0.62 }),
+            makeAction({ action_id: 'a2', action_name: 'escalate_to_human', composite_score: 0.56, confidence: 0.61 }),
+        ];
+
+        const result = getPolicyDecision({
+            rankedActions: actions,
+            agentTrust: TRUSTED_AGENT,
+            customerConfig: DEFAULT_POLICY_CONFIG,
+            coldStartActive: false,
+        });
+
+        expect(result.policy).toBe('abstain');
+        expect(result.reason).toBe('ambiguous_low_separation');
+        expect(result.human_review_required).toBe(true);
+        expect(result.selectedAction).toBeNull();
+    });
 });

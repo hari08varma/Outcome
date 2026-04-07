@@ -15,6 +15,7 @@ export {
 export const TRUST_GATE_STATUSES: string[] = ['suspended'];
 export const TRUST_GATE_MIN_SCORE = 0.10;
 export const RECOMMENDATION_WINDOW_DAYS = 180;
+const SEMANTIC_CONVERGENCE_STABLE_FLOOR = 0.55;
 
 export type RecommendationState =
     | 'no_data'
@@ -29,6 +30,7 @@ export interface ActionPerformance {
     success_count: number;
     success_rate: number;
     resolution_rate: number;
+    semantic_cluster_convergence: number;
     ml_score: number | null;
     last_seen_at: string | null;
     shadow_signal?: number | null;
@@ -154,10 +156,17 @@ function rankingScore(a: ActionPerformance): number {
     const n = effectiveSampleCount(a);
     const taskSignal = (resolutionRateForRanking(a) * n + 1) / (n + 2);
 
+    // Semantic cluster convergence dampens unstable action semantics.
+    // 0.5 is neutral; low convergence applies a penalty, high convergence
+    // yields a modest boost so rankings favor coherent action behavior.
+    const semanticConvergence = clamp01(Number(a.semantic_cluster_convergence ?? 0.5));
+    const convergenceAdjustment = Math.max(0.8, Math.min(1.1, 1 + ((semanticConvergence - 0.5) * 0.4)));
+    const convergenceAdjustedSignal = clamp01(taskSignal * convergenceAdjustment);
+
     // Secondary prior: global ML score from mv_action_scores.
     // Keep this as a stabilizer, but prioritize task-specific resolution evidence.
     if (a.ml_score === null || a.ml_score === undefined) {
-        return taskSignal;
+        return convergenceAdjustedSignal;
     }
 
     const globalSignal = Math.max(0, Math.min(1, a.ml_score));
@@ -166,7 +175,7 @@ function rankingScore(a: ActionPerformance): number {
         : n >= MIN_SAMPLES
             ? 0.30
             : 0.40;
-    return taskSignal * (1 - globalWeight) + globalSignal * globalWeight;
+    return convergenceAdjustedSignal * (1 - globalWeight) + globalSignal * globalWeight;
 }
 
 function confidenceFromSamplesAndLift(
@@ -585,14 +594,8 @@ export async function getRecommendation(
     }
 
     try {
-        // NOTE: This filter excludes actions that haven't been seen in 180 days
-        // (dormant action suppression). It does NOT window individual outcome counts -
-        // mv_task_action_performance aggregates all-time totals, not rolling windows.
-        // total_count and success_count reflect the full history of any action that
-        // passes this filter. A true rolling window requires a separate MV or
-        // a raw fact_outcomes query with a per-row timestamp filter.
-        // TODO: Add a windowed MV (mv_task_action_performance_180d) that computes
-        // rolling 180-day counts natively in SQL before enabling true windowing here.
+        // Primary source is a rolling 180-day MV.
+        // windowStart is still passed so fallback fact queries stay aligned.
         const windowStart = new Date(
             Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000
         ).toISOString();
@@ -614,6 +617,7 @@ export async function getRecommendation(
                 success_count: Number(row.success_count),
                 success_rate: Number(row.success_rate),
                 resolution_rate: Number(row.resolution_rate ?? row.success_rate ?? 0),
+                semantic_cluster_convergence: Number(row.semantic_cluster_convergence ?? 0.5),
                 ml_score: mlScoreRaw !== null
                     && mlScoreRaw !== undefined
                     ? Number(mlScoreRaw)
@@ -985,6 +989,31 @@ export async function getRecommendation(
                 ...simulationMeta,
                 exploit_gate_applied: true,
             });
+        }
+
+        const semanticStability = Number(
+            Math.min(
+                clamp01(best.semantic_cluster_convergence),
+                clamp01(worst.semantic_cluster_convergence),
+            ).toFixed(4),
+        );
+        if (semanticStability < SEMANTIC_CONVERGENCE_STABLE_FLOOR) {
+            return withGuardrailMeta({
+                ...makeResult('early_signal', actions, best, worst),
+                confidence: rawConfidence,
+                min_sample_count: minSamples,
+                _silent_failure_warning: silentFailureActive,
+                registered_actions: registeredActions,
+                action_mismatch: registeredActions.length > 0
+                    && !registeredActions.includes(best.action_name),
+                _data_source: source,
+            }, {
+                ...noiseMetaBase,
+                effective_samples: minSamples,
+                decision_gate_reason: noiseMetaBase.decision_gate_reason
+                    ? `${noiseMetaBase.decision_gate_reason}+semantic_cluster_low_convergence`
+                    : 'semantic_cluster_low_convergence',
+            }, simulationMeta);
         }
 
         return withGuardrailMeta({

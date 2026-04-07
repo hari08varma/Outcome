@@ -2,6 +2,8 @@ import { supabase } from '../supabase.js';
 import { computeOutcomeEffectiveWeightForScore } from './outcome-weighting.js';
 
 export const ZERO_UUID_AGENT_ID = '00000000-0000-0000-0000-000000000000';
+const TASK_PERFORMANCE_MV = 'mv_task_action_performance_180d';
+const LEGACY_TASK_PERFORMANCE_MV = 'mv_task_action_performance';
 
 type QueryError = {
     message: string;
@@ -18,6 +20,7 @@ export interface TaskPerformanceRow {
     success_count: number;
     success_rate: number;
     resolution_rate: number;
+    semantic_cluster_convergence: number;
     ml_score: number | null;
     last_seen_at: string | null;
 }
@@ -25,6 +28,7 @@ export interface TaskPerformanceRow {
 interface TaskResolutionStats {
     resolutionRate: number;
     effectiveSamples: number;
+    semanticClusterConvergence: number;
 }
 
 interface FetchTaskPerformanceParams {
@@ -37,7 +41,7 @@ interface FetchTaskPerformanceParams {
 function isMissingMvError(error: QueryError): boolean {
     const msg = (error.message ?? '').toLowerCase();
     return error.code === '42P01'
-        || (msg.includes('mv_task_action_performance') && msg.includes('relation'));
+        || ((msg.includes(TASK_PERFORMANCE_MV) || msg.includes(LEGACY_TASK_PERFORMANCE_MV)) && msg.includes('relation'));
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -67,11 +71,47 @@ function latestTimestamp(current: string | null, candidate: string | null): stri
     return parseIso(candidate) >= parseIso(current) ? candidate : current;
 }
 
+function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+}
+
+function computeSemanticClusterConvergence(params: {
+    clusterCounts: Map<string, number>;
+    clusterSamples: number;
+    clusterConfidenceSum: number;
+    clusterConfidenceCount: number;
+}): number {
+    const {
+        clusterCounts,
+        clusterSamples,
+        clusterConfidenceSum,
+        clusterConfidenceCount,
+    } = params;
+
+    if (clusterSamples <= 0) {
+        return 0.5;
+    }
+
+    let dominantClusterCount = 0;
+    for (const count of clusterCounts.values()) {
+        if (count > dominantClusterCount) dominantClusterCount = count;
+    }
+
+    const dominantShare = dominantClusterCount / clusterSamples;
+    const avgConfidence = clusterConfidenceCount > 0
+        ? clusterConfidenceSum / clusterConfidenceCount
+        : 0.5;
+
+    const convergence = clamp01((dominantShare * 0.7) + (avgConfidence * 0.3));
+    return Number(convergence.toFixed(4));
+}
+
 async function queryTaskPerformanceFromMV(
     params: FetchTaskPerformanceParams,
 ): Promise<{ rows: TaskPerformanceRow[]; error: QueryError | null }> {
     let query = supabase
-        .from('mv_task_action_performance')
+        .from(TASK_PERFORMANCE_MV)
         .select('action_id, action_name, total_count, success_count, success_rate, ml_score, last_seen_at')
         .eq('customer_id', params.customerId)
         .eq('task_name', params.taskName);
@@ -100,6 +140,7 @@ async function queryTaskPerformanceFromMV(
         success_count: Number(row.success_count ?? 0),
         success_rate: Number(row.success_rate ?? 0),
         resolution_rate: Number(row.success_rate ?? 0),
+        semantic_cluster_convergence: 0.5,
         ml_score: row.ml_score === null || row.ml_score === undefined
             ? null
             : Number(row.ml_score),
@@ -117,6 +158,9 @@ async function queryTaskPerformanceFromMV(
         effective_sample_count:
             resolutionStatsByAction.get(row.action_id)?.effectiveSamples
             ?? row.effective_sample_count,
+        semantic_cluster_convergence:
+            resolutionStatsByAction.get(row.action_id)?.semanticClusterConvergence
+            ?? row.semantic_cluster_convergence,
     }));
 
     return { rows: hydratedRows, error: null };
@@ -176,7 +220,7 @@ async function getTaskResolutionStatsByAction(
         .from('fact_outcomes')
         // Include data_quality so the scoring engine can down-weight low-quality events.
         // Pre-migration rows will have data_quality=NULL — treated as 1.0 (no penalty).
-        .select('action_id, outcome_score, outcome_score_raw, success, timestamp, data_quality')
+        .select('action_id, outcome_score, outcome_score_raw, success, timestamp, data_quality, semantic_cluster_key, semantic_cluster_confidence')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -202,6 +246,10 @@ async function getTaskResolutionStatsByAction(
         score_sum: number;
         weighted_score_sum: number;
         weight_total: number;
+        cluster_counts: Map<string, number>;
+        cluster_samples: number;
+        cluster_confidence_sum: number;
+        cluster_confidence_count: number;
     }>();
 
     for (const row of data as Array<Record<string, unknown>>) {
@@ -220,6 +268,10 @@ async function getTaskResolutionStatsByAction(
             score_sum: 0,
             weighted_score_sum: 0,
             weight_total: 0,
+            cluster_counts: new Map<string, number>(),
+            cluster_samples: 0,
+            cluster_confidence_sum: 0,
+            cluster_confidence_count: 0,
         };
         current.total += 1;
         current.score_sum += score;
@@ -240,6 +292,19 @@ async function getTaskResolutionStatsByAction(
             current.weighted_score_sum += score * effectiveWeight;
         }
 
+        const clusterKey = typeof row.semantic_cluster_key === 'string'
+            ? row.semantic_cluster_key.trim()
+            : '';
+        if (clusterKey.length > 0) {
+            current.cluster_counts.set(clusterKey, (current.cluster_counts.get(clusterKey) ?? 0) + 1);
+            current.cluster_samples += 1;
+        }
+
+        if (typeof row.semantic_cluster_confidence === 'number') {
+            current.cluster_confidence_sum += clamp01(row.semantic_cluster_confidence);
+            current.cluster_confidence_count += 1;
+        }
+
         grouped.set(actionId, current);
     }
 
@@ -255,6 +320,12 @@ async function getTaskResolutionStatsByAction(
         statsByAction.set(actionId, {
             resolutionRate: Number(weightedRate.toFixed(4)),
             effectiveSamples: Number(effectiveSamples.toFixed(4)),
+            semanticClusterConvergence: computeSemanticClusterConvergence({
+                clusterCounts: stats.cluster_counts,
+                clusterSamples: stats.cluster_samples,
+                clusterConfidenceSum: stats.cluster_confidence_sum,
+                clusterConfidenceCount: stats.cluster_confidence_count,
+            }),
         });
     }
 
@@ -266,7 +337,7 @@ async function queryTaskPerformanceFromFacts(
 ): Promise<TaskPerformanceRow[]> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, success, outcome_score, outcome_score_raw, data_quality, timestamp, dim_actions!inner(action_name)')
+        .select('action_id, success, outcome_score, outcome_score_raw, data_quality, timestamp, semantic_cluster_key, semantic_cluster_confidence, dim_actions!inner(action_name)')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -296,6 +367,10 @@ async function queryTaskPerformanceFromFacts(
         resolution_score_total: number;
         resolution_weighted_score_total: number;
         resolution_weight_total: number;
+        cluster_counts: Map<string, number>;
+        cluster_samples: number;
+        cluster_confidence_sum: number;
+        cluster_confidence_count: number;
         last_seen_at: string | null;
     }>();
 
@@ -324,6 +399,10 @@ async function queryTaskPerformanceFromFacts(
             resolution_score_total: 0,
             resolution_weighted_score_total: 0,
             resolution_weight_total: 0,
+            cluster_counts: new Map<string, number>(),
+            cluster_samples: 0,
+            cluster_confidence_sum: 0,
+            cluster_confidence_count: 0,
             last_seen_at: null,
         };
 
@@ -353,6 +432,19 @@ async function queryTaskPerformanceFromFacts(
         if (effectiveWeight > 0) {
             existing.resolution_weight_total += effectiveWeight;
             existing.resolution_weighted_score_total += score * effectiveWeight;
+        }
+
+        const clusterKey = typeof row.semantic_cluster_key === 'string'
+            ? row.semantic_cluster_key.trim()
+            : '';
+        if (clusterKey.length > 0) {
+            existing.cluster_counts.set(clusterKey, (existing.cluster_counts.get(clusterKey) ?? 0) + 1);
+            existing.cluster_samples += 1;
+        }
+
+        if (typeof row.semantic_cluster_confidence === 'number') {
+            existing.cluster_confidence_sum += clamp01(row.semantic_cluster_confidence);
+            existing.cluster_confidence_count += 1;
         }
 
         existing.last_seen_at = latestTimestamp(existing.last_seen_at, ts);
@@ -389,6 +481,12 @@ async function queryTaskPerformanceFromFacts(
             success_count: row.success_count,
             success_rate: successRate,
             resolution_rate: resolutionRate,
+            semantic_cluster_convergence: computeSemanticClusterConvergence({
+                clusterCounts: row.cluster_counts,
+                clusterSamples: row.cluster_samples,
+                clusterConfidenceSum: row.cluster_confidence_sum,
+                clusterConfidenceCount: row.cluster_confidence_count,
+            }),
             ml_score: mlScoreByAction.get(row.action_id) ?? null,
             last_seen_at: row.last_seen_at,
         };
@@ -406,7 +504,7 @@ export async function fetchTaskActionPerformance(
     const reason = isMissingMvError(mvResult.error)
         ? 'materialized view is missing'
         : mvResult.error.message;
-    console.warn('[task-performance] mv_task_action_performance unavailable, using fallback:', reason);
+    console.warn(`[task-performance] ${TASK_PERFORMANCE_MV} unavailable, using fallback:`, reason);
 
     const fallbackRows = await queryTaskPerformanceFromFacts(params);
     return { rows: fallbackRows, source: 'fact_fallback' };
@@ -417,7 +515,7 @@ export async function fetchAvailableTasks(
     scopedAgentId: string | null,
 ): Promise<{ tasks: string[]; source: 'mv' | 'fact_fallback' }> {
     let mvQuery = supabase
-        .from('mv_task_action_performance')
+        .from(TASK_PERFORMANCE_MV)
         .select('task_name')
         .eq('customer_id', customerId)
         .neq('agent_id', ZERO_UUID_AGENT_ID);

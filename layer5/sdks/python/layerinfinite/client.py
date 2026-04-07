@@ -503,7 +503,34 @@ class Layerinfinite:
                     scores_resp.top_action.policy_reason
                     or "Ranked by outcome history."
                 )
+
+            if scores_resp and scores_resp.policy == "abstain":
+                ranked = self._build_ranked_from_scores(scores_resp)
+                top_name = (
+                    scores_resp.top_action.action_name
+                    if scores_resp.top_action
+                    else (execution_order[0] if execution_order else "unknown")
+                )
+                abstain_reason = (
+                    scores_resp.policy_abstain_message
+                    or top_reason
+                    or "Top actions are statistically indistinguishable. Gather more outcomes or escalate."
+                )
+                suggestion = Suggestion(
+                    action_name=top_name,
+                    confidence=top_confidence,
+                    reason=abstain_reason,
+                    ranked=ranked,
+                )
+                raise LowConfidenceError(
+                    f"Policy abstain for task '{task}'. {abstain_reason}",
+                    suggestion=suggestion,
+                    confidence=top_confidence,
+                    threshold=self._confidence_threshold,
+                )
         except Exception as exc:
+            if isinstance(exc, LowConfidenceError):
+                raise
             logger.warning("[layerinfinite] Could not fetch confidence scores: %s", exc)
 
         if top_confidence > 0.0 and top_confidence < self._confidence_threshold:

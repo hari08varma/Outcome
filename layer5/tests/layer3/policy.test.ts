@@ -178,4 +178,22 @@ describe('Policy Engine — Decision Tree', () => {
         expect(result.policy).toBe('escalate');
         expect(result.reason).toBe('no_actions_available');
     });
+
+    it('ambiguous low-separation rankings return abstain', () => {
+        const actions = [
+            makeAction({ action_id: 'a1', action_name: 'retry_with_context', composite_score: 0.58, confidence: 0.62 }),
+            makeAction({ action_id: 'a2', action_name: 'escalate_to_human', composite_score: 0.56, confidence: 0.61 }),
+        ];
+
+        const result = getPolicyDecision({
+            rankedActions: actions,
+            agentTrust: EXISTING_TRUST,
+            customerConfig: DEFAULT_POLICY_CONFIG,
+            coldStartActive: false,
+        });
+
+        expect(result.policy).toBe('abstain');
+        expect(result.reason).toBe('ambiguous_low_separation');
+        expect(result.human_review_required).toBe(true);
+    });
 });

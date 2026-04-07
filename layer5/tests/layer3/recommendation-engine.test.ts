@@ -98,7 +98,7 @@ describe('Recommendation Engine - silent failure propagation', () => {
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'dim_actions') return dimActionsQuery;
-            if (table === 'mv_task_action_performance') return taskActionsQuery;
+            if (table === 'mv_task_action_performance_180d') return taskActionsQuery;
             if (table === 'fact_outcomes') return resolutionQuery;
             if (table === 'degradation_alert_events') return alertsQuery;
             throw new Error(`Unexpected table: ${table}`);
@@ -152,7 +152,7 @@ describe('Recommendation Engine - silent failure propagation', () => {
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'dim_actions') return dimActionsQuery;
-            if (table === 'mv_task_action_performance') return taskActionsQuery;
+            if (table === 'mv_task_action_performance_180d') return taskActionsQuery;
             if (table === 'fact_outcomes') return resolutionQuery;
             if (table === 'degradation_alert_events') return alertsQuery;
             throw new Error(`Unexpected table: ${table}`);
@@ -205,7 +205,7 @@ describe('Recommendation Engine - silent failure propagation', () => {
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'dim_actions') return dimActionsQuery;
-            if (table === 'mv_task_action_performance') return taskActionsQuery;
+            if (table === 'mv_task_action_performance_180d') return taskActionsQuery;
             if (table === 'fact_outcomes') return resolutionQuery;
             throw new Error(`Unexpected table: ${table}`);
         });
@@ -276,7 +276,7 @@ describe('Recommendation Engine - silent failure propagation', () => {
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'dim_actions') return dimActionsQuery;
-            if (table === 'mv_task_action_performance') return taskActionsQuery;
+            if (table === 'mv_task_action_performance_180d') return taskActionsQuery;
             if (table === 'fact_outcomes') return resolutionQuery;
             if (table === 'degradation_alert_events') return alertsQuery;
             if (table === 'fact_decisions') return decisionsQuery;

@@ -18,9 +18,10 @@ export interface ScoredAction {
 export interface GetScoresResponse {
     ranked_actions: ScoredAction[];
     top_action: ScoredAction | null;
-    policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX';
+    policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX' | 'abstain';
     policy_selected_action?: string | null;
     policy_exploration_target?: string | null;
+    policy_abstain_message?: string | null;
     runtime_guardrail?: {
         enabled: boolean;
         shadow_applied?: boolean;

@@ -33,7 +33,7 @@ describe('task performance fallback', () => {
         vi.clearAllMocks();
     });
 
-    it('uses mv_task_action_performance when available', async () => {
+    it('uses mv_task_action_performance_180d when available', async () => {
         const mvRows = [
             {
                 action_id: 'a1',
@@ -47,7 +47,7 @@ describe('task performance fallback', () => {
         ];
 
         vi.mocked(supabase.from).mockImplementation((table: string) => {
-            if (table === 'mv_task_action_performance') {
+            if (table === 'mv_task_action_performance_180d') {
                 return makeQuery({ data: mvRows, error: null }) as any;
             }
 
@@ -76,19 +76,19 @@ describe('task performance fallback', () => {
             ml_score: 0.77,
         });
         expect(vi.mocked(supabase.from).mock.calls.map((c) => c[0])).toEqual([
-            'mv_task_action_performance',
+            'mv_task_action_performance_180d',
             'fact_outcomes',
         ]);
     });
 
     it('falls back to fact_outcomes aggregation when mv is missing', async () => {
         vi.mocked(supabase.from).mockImplementation((table: string) => {
-            if (table === 'mv_task_action_performance') {
+            if (table === 'mv_task_action_performance_180d') {
                 return makeQuery({
                     data: null,
                     error: {
                         code: '42P01',
-                        message: 'relation "mv_task_action_performance" does not exist',
+                        message: 'relation "mv_task_action_performance_180d" does not exist',
                     },
                 }) as any;
             }
@@ -171,7 +171,7 @@ describe('task performance fallback', () => {
         });
 
         expect(vi.mocked(supabase.from).mock.calls.map((c) => c[0])).toEqual([
-            'mv_task_action_performance',
+            'mv_task_action_performance_180d',
             'fact_outcomes',
             'mv_action_scores',
         ]);
@@ -179,12 +179,12 @@ describe('task performance fallback', () => {
 
     it('falls back to fact_outcomes task list and normalizes task names', async () => {
         vi.mocked(supabase.from).mockImplementation((table: string) => {
-            if (table === 'mv_task_action_performance') {
+            if (table === 'mv_task_action_performance_180d') {
                 return makeQuery({
                     data: null,
                     error: {
                         code: '42P01',
-                        message: 'relation "mv_task_action_performance" does not exist',
+                        message: 'relation "mv_task_action_performance_180d" does not exist',
                     },
                 }) as any;
             }
@@ -212,7 +212,7 @@ describe('task performance fallback', () => {
 
     it('keeps mv task source when mv is healthy', async () => {
         vi.mocked(supabase.from).mockImplementation((table: string) => {
-            expect(table).toBe('mv_task_action_performance');
+            expect(table).toBe('mv_task_action_performance_180d');
             return makeQuery({
                 data: [
                     { task_name: 'billing_issue' },
@@ -228,18 +228,18 @@ describe('task performance fallback', () => {
         expect(result.source).toBe('mv');
         expect(result.tasks).toEqual(['billing_issue', 'incident_resolution']);
         expect(vi.mocked(supabase.from).mock.calls.map((c) => c[0])).toEqual([
-            'mv_task_action_performance',
+            'mv_task_action_performance_180d',
         ]);
     });
 
     it('excludes low-quality outcomes older than 30 days when aggregating fallback resolution rates', async () => {
         vi.mocked(supabase.from).mockImplementation((table: string) => {
-            if (table === 'mv_task_action_performance') {
+            if (table === 'mv_task_action_performance_180d') {
                 return makeQuery({
                     data: null,
                     error: {
                         code: '42P01',
-                        message: 'relation "mv_task_action_performance" does not exist',
+                        message: 'relation "mv_task_action_performance_180d" does not exist',
                     },
                 }) as any;
             }

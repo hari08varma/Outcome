@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     LayerinfiniteAuthError,
     LayerinfiniteClient,
+    LowConfidenceError,
     LayerinfiniteRateLimitError,
 } from '../src/index.js';
 
@@ -79,6 +80,47 @@ const MOCK_GET_SCORES_BODY_WITH_EXPLORE_TARGET = {
     policy_exploration_target: 'act-uuid-3',
     cold_start: false,
     context_id: 'ctx-uuid-2',
+    agent_id: 'my-agent',
+    served_from_cache: false,
+};
+
+const MOCK_GET_SCORES_BODY_ABSTAIN = {
+    ranked_actions: [
+        {
+            action_id: 'act-uuid-1',
+            action_name: 'candidate_action',
+            action_category: 'remediation',
+            composite_score: 0.59,
+            confidence: 0.58,
+            total_attempts: 12,
+            policy_reason: 'near_tie',
+            is_cold_start: false,
+        },
+        {
+            action_id: 'act-uuid-2',
+            action_name: 'alternate_action',
+            action_category: 'escalation',
+            composite_score: 0.58,
+            confidence: 0.57,
+            total_attempts: 11,
+            policy_reason: 'near_tie',
+            is_cold_start: false,
+        },
+    ],
+    top_action: {
+        action_id: 'act-uuid-1',
+        action_name: 'candidate_action',
+        action_category: 'remediation',
+        composite_score: 0.59,
+        confidence: 0.58,
+        total_attempts: 12,
+        policy_reason: 'near_tie',
+        is_cold_start: false,
+    },
+    policy: 'abstain',
+    policy_abstain_message: 'Top actions are statistically indistinguishable.',
+    cold_start: false,
+    context_id: 'ctx-uuid-abstain',
     agent_id: 'my-agent',
     served_from_cache: false,
 };
@@ -199,7 +241,7 @@ describe('LayerinfiniteClient', () => {
         expect(result.top_action).toBeDefined();
         expect(result.top_action?.action_name).toBe('escalate_to_senior');
         expect(result.top_action?.composite_score).toBeCloseTo(0.87);
-        expect(['exploit', 'explore', 'escalate']).toContain(result.policy);
+        expect(['exploit', 'explore', 'escalate', 'SANDBOX', 'abstain']).toContain(result.policy);
         expect(result.ranked_actions).toHaveLength(1);
     });
 
@@ -226,6 +268,28 @@ describe('LayerinfiniteClient', () => {
             'escalate_to_senior',
             'retry_with_backoff',
         ]);
+    });
+
+    it('Test 1c: auto mode raises LowConfidenceError on policy abstain and skips execution', async () => {
+        const client = new LayerinfiniteClient({
+            apiKey: API_KEY,
+            agentId: 'my-agent',
+            baseUrl: BASE_URL,
+            mode: 'auto',
+        });
+
+        const executed: string[] = [];
+        client.registerAction('billing_dispute', 'candidate_action', async () => {
+            executed.push('candidate_action');
+            return true;
+        });
+
+        vi.spyOn(client as any, 'buildExecutionOrder').mockResolvedValue(['candidate_action']);
+        vi.spyOn(client as any, 'fetchScores').mockResolvedValue(MOCK_GET_SCORES_BODY_ABSTAIN);
+
+        await expect(client.run('billing_dispute')).rejects.toBeInstanceOf(LowConfidenceError);
+
+        expect(executed).toHaveLength(0);
     });
 
     // ── Test 2 ─────────────────────────────────────────────────

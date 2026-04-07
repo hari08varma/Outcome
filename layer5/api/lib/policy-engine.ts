@@ -29,12 +29,13 @@ export interface CustomerPolicyConfig {
 }
 
 export interface PolicyDecision {
-    policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX';
+    policy: 'exploit' | 'explore' | 'escalate' | 'SANDBOX' | 'abstain';
     reason: string;
     selectedAction: string | null;
     explorationTarget: string | null;
     human_review_required?: boolean;
     sandbox_message?: string;
+    abstain_message?: string;
 }
 
 // ── Default config (used when customer config is missing) ────
@@ -154,6 +155,35 @@ export function getPolicyDecision(
 
     const topScore = topAction.composite_score;
     const topConf = topAction.confidence;
+
+    // ── Rule 2.5: Ambiguous low-separation rankings → abstain ───
+    // When top actions are statistically too close, return explicit abstain
+    // rather than forcing exploration/exploitation.
+    const secondAction = rankedActions.length > 1 ? rankedActions[1] : null;
+    if (secondAction) {
+        const scoreGap = Math.abs(topAction.composite_score - secondAction.composite_score);
+        const bothInAmbiguousBand =
+            topAction.composite_score >= 0.40
+            && topAction.composite_score <= 0.70
+            && secondAction.composite_score >= 0.40
+            && secondAction.composite_score <= 0.70;
+        const bothConfidentEnough =
+            Math.min(topAction.confidence, secondAction.confidence) >= customerConfig.min_confidence;
+
+        if (scoreGap <= 0.03 && bothInAmbiguousBand && bothConfidentEnough) {
+            return {
+                policy: 'abstain',
+                reason: 'ambiguous_low_separation',
+                selectedAction: null,
+                explorationTarget: null,
+                human_review_required: true,
+                abstain_message:
+                    'Top actions are statistically indistinguishable. ' +
+                    `gap=${scoreGap.toFixed(4)} between ${topAction.action_name} and ${secondAction.action_name}. ` +
+                    'Escalate or gather additional outcomes before auto-execution.',
+            };
+        }
+    }
 
     // ── Rule 3: Conservative + top > 0.8 → always exploit ─────
     if (customerConfig.risk_tolerance === 'conservative' && topScore > 0.8) {

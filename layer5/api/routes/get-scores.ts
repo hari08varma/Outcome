@@ -603,12 +603,14 @@ getScoresRouter.get('/', async (c) => {
         let policyReasonForResponse = policy.reason;
         let policySelectedAction = policy.selectedAction;
         let policyExplorationTarget = policy.explorationTarget;
+        let policyAbstainMessage = policy.abstain_message ?? null;
 
         if (forcedColdStartExplore) {
             policyForResponse = 'explore';
             policyReasonForResponse = 'cold_start_unregistered_global_fallback';
             policySelectedAction = null;
             policyExplorationTarget = null;
+            policyAbstainMessage = null;
         }
 
         if (
@@ -627,6 +629,7 @@ getScoresRouter.get('/', async (c) => {
             policyReasonForResponse = 'runtime_simulation_exploit_gate';
             policySelectedAction = null;
             policyExplorationTarget = fallbackExploreTarget;
+            policyAbstainMessage = null;
             runtimeGuardrail = {
                 ...runtimeGuardrail,
                 exploit_gate_applied: true,
@@ -640,6 +643,7 @@ getScoresRouter.get('/', async (c) => {
         // one action — callers should exclude these from accuracy metrics.
         const top2 = ranked.slice(0, 2);
         const isAmbiguousTask = (() => {
+            if (policyForResponse === 'abstain') return true;
             if (top2.length < 2) return false;
             const [first, second] = top2;
             const gap = Math.abs(first.composite_score - second.composite_score);
@@ -698,6 +702,7 @@ getScoresRouter.get('/', async (c) => {
             policy_reason: policyReasonForResponse,
             policy_selected_action: policySelectedAction,
             policy_exploration_target: policyExplorationTarget,
+            policy_abstain_message: policyAbstainMessage,
             runtime_guardrail: runtimeGuardrail.enabled ? runtimeGuardrail : null,
             agent_trust: {
                 score: agentTrust.trust_score,
