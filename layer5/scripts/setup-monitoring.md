@@ -42,6 +42,13 @@ Set custom domain if desired: `status.layerinfinite.dev`
 
 Run these checks from CI or a scheduled job:
 
+Preferred single command (auto-detects single vs multi endpoint mode):
+
+`npm --prefix layer5 run check:production`
+
+- If only `PRIMARY_API_URL` is configured, it runs `/health` + `/health/deep` sanity checks and skips parity/failover.
+- If `FALLBACK_API_URLS` contains at least one independent fallback origin, it runs full independence/parity/failover checks.
+
 1. Endpoint independence:
 
   `npm --prefix layer5 run check:endpoint-independence`
