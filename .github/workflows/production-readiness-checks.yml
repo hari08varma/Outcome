@@ -23,6 +23,16 @@ jobs:
       COHORT_ENVIRONMENTS: ${{ vars.COHORT_ENVIRONMENTS || secrets.COHORT_ENVIRONMENTS }}
       SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ vars.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DRIFT_MONITOR_CUSTOMER_ID: ${{ vars.DRIFT_MONITOR_CUSTOMER_ID || secrets.DRIFT_MONITOR_CUSTOMER_ID }}
+      DRIFT_LOOKBACK_DAYS: ${{ vars.DRIFT_LOOKBACK_DAYS || '7' }}
+      DRIFT_MONITOR_TIMEOUT_MS: ${{ vars.DRIFT_MONITOR_TIMEOUT_MS || '15000' }}
+      DRIFT_DISCREPANCY_RATE_THRESHOLD: ${{ vars.DRIFT_DISCREPANCY_RATE_THRESHOLD || '0.03' }}
+      DRIFT_CONFLICT_RATE_THRESHOLD: ${{ vars.DRIFT_CONFLICT_RATE_THRESHOLD || '0.01' }}
+      DRIFT_CONFLICT_SHARE_THRESHOLD: ${{ vars.DRIFT_CONFLICT_SHARE_THRESHOLD || '0.35' }}
+      DRIFT_OPEN_DISCREPANCY_THRESHOLD: ${{ vars.DRIFT_OPEN_DISCREPANCY_THRESHOLD || '80' }}
+      DRIFT_OPEN_CONFLICT_THRESHOLD: ${{ vars.DRIFT_OPEN_CONFLICT_THRESHOLD || '30' }}
+      DRIFT_MIN_OPEN_FOR_SHARE: ${{ vars.DRIFT_MIN_OPEN_FOR_SHARE || '10' }}
+      DRIFT_FAIL_ON_BREACH: ${{ vars.DRIFT_FAIL_ON_BREACH || 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -150,3 +160,23 @@ jobs:
       - name: Skip cohort deployment artifacts check
         if: steps.cohort_mode.outputs.enabled != 'true'
         run: echo "Skipped cohort deployment verification due to missing GitHub configuration."
+
+      - name: Determine discrepancy drift monitor mode
+        id: drift_mode
+        shell: bash
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Discrepancy drift monitor enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Discrepancy drift monitor skipped: configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in GitHub repo variables/secrets."
+          fi
+
+      - name: Monitor discrepancy and conflict drift
+        if: steps.drift_mode.outputs.enabled == 'true'
+        run: node layer5/scripts/check-discrepancy-drift.js
+
+      - name: Skip discrepancy and conflict drift monitor
+        if: steps.drift_mode.outputs.enabled != 'true'
+        run: echo "Skipped discrepancy drift monitor due to missing GitHub configuration."

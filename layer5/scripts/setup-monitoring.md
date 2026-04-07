@@ -70,6 +70,33 @@ The repository includes a scheduled workflow that runs these checks:
 
 - `.github/workflows/production-readiness-checks.yml`
 
+## Step 5 — Monitor discrepancy and conflict drift
+
+Run drift detection and unresolved discrepancy/conflict rate checks:
+
+`npm --prefix layer5 run check:discrepancy-drift`
+
+Required environment variables:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Optional environment variables:
+
+- `DRIFT_MONITOR_CUSTOMER_ID` (limit monitor to one customer/tenant scope)
+- `DRIFT_LOOKBACK_DAYS` (default `7`)
+- `DRIFT_MONITOR_TIMEOUT_MS` (default `15000`)
+- `DRIFT_DISCREPANCY_RATE_THRESHOLD` (default `0.03`)
+- `DRIFT_CONFLICT_RATE_THRESHOLD` (default `0.01`)
+- `DRIFT_CONFLICT_SHARE_THRESHOLD` (default `0.35`)
+- `DRIFT_OPEN_DISCREPANCY_THRESHOLD` (default `80`)
+- `DRIFT_OPEN_CONFLICT_THRESHOLD` (default `30`)
+- `DRIFT_MIN_OPEN_FOR_SHARE` (default `10`)
+- `DRIFT_FAIL_ON_BREACH` (default `true`)
+
+The production-readiness workflow now runs this monitor automatically when
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are configured as repository vars/secrets.
+
 ## Alerting thresholds recommended
 
 | Alert condition | Response |

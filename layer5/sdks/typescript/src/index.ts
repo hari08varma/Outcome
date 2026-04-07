@@ -21,6 +21,16 @@ export type {
     ScoredAction,
     LogOutcomeRequest,
     LogOutcomeResponse,
+    PendingProviderHint,
+    PendingSignalRequest,
+    PendingSignalResponse,
+    OutcomeFeedbackRequest,
+    OutcomeFeedbackResponse,
+    DiscrepancyDetectResponse,
+    DiscrepancySummaryResponse,
+    DiscrepancyDriftOptions,
+    DiscrepancyDriftSnapshot,
+    DelayedSignalMetadata,
 } from './types.js';
 
 // ── All error classes ────────────────────────────────────────────

@@ -24,10 +24,17 @@ from .exceptions import (
 )
 from .models import (
     ActionEntry,
+    DiscrepancyDetectResponse,
+    DiscrepancyDriftSnapshot,
+    DiscrepancySummaryResponse,
     GetScoresResponse,
     LogOutcomeRequest,
     LogOutcomeResponse,
     ObservationSummary,
+    OutcomeFeedbackRequest,
+    OutcomeFeedbackResponse,
+    PendingSignalRequest,
+    PendingSignalResponse,
     RankedAction,
     Recommendation,
     RecommendationDataFreshness,
@@ -37,7 +44,7 @@ from .models import (
 logger = logging.getLogger("layerinfinite")
 
 _VALID_MODES = ("recommend", "assist", "auto")
-_SDK_VERSION = "0.3.1"
+_SDK_VERSION = "0.3.2"
 _DEFAULT_BASE_URL = "https://api.layerinfinite.app"
 _BASE_URLS_ENV = "LAYERINFINITE_BASE_URLS"
 _SCORES_CACHE_TTL_SECONDS = 15 * 60
@@ -1003,8 +1010,113 @@ class Layerinfinite:
         payload = request.model_dump(exclude_none=True)
         if not payload.get("session_id"):
             payload["session_id"] = str(uuid.uuid4())
+        if not payload.get("idempotency_key"):
+            payload["idempotency_key"] = str(uuid.uuid4())
         response = self._request("POST", "/v1/log-outcome", json=payload)
         return LogOutcomeResponse.model_validate(response.json())
+
+    def register_pending_signal(self, request: PendingSignalRequest) -> PendingSignalResponse:
+        """
+        Register a delayed feedback signal so external webhooks can reconcile later.
+        """
+        payload = request.model_dump(exclude_none=True)
+        payload["feedback_signal"] = "delayed"
+        response = self._request("POST", "/v1/pending-signals", json=payload)
+        return PendingSignalResponse.model_validate(response.json())
+
+    def submit_outcome_feedback(self, request: OutcomeFeedbackRequest) -> OutcomeFeedbackResponse:
+        """
+        Submit delayed feedback to finalize an outcome after provider callbacks.
+        """
+        payload = request.model_dump(exclude_none=True)
+        response = self._request("POST", "/v1/outcome-feedback", json=payload)
+        return OutcomeFeedbackResponse.model_validate(response.json())
+
+    def build_delayed_signal_metadata(self, outcome_id: str) -> Dict[str, Any]:
+        """
+        Build provider-specific metadata payloads from an outcome_id.
+        """
+        normalized_outcome_id = str(outcome_id).strip()
+        if not normalized_outcome_id:
+            raise LayerinfiniteError("outcome_id must be a non-empty string.")
+
+        return {
+            "outcome_id": normalized_outcome_id,
+            "stripe": {
+                "metadata": {
+                    "layerinfinite_outcome_id": normalized_outcome_id,
+                }
+            },
+            "sendgrid": {
+                "unique_args": {
+                    "outcome_id": normalized_outcome_id,
+                }
+            },
+            "generic": {
+                "outcome_id": normalized_outcome_id,
+            },
+        }
+
+    def detect_discrepancies(self) -> DiscrepancyDetectResponse:
+        """
+        Trigger discrepancy detection and return the current detection summary.
+        """
+        response = self._request("POST", "/v1/discrepancies/detect", json={})
+        return DiscrepancyDetectResponse.model_validate(response.json())
+
+    def discrepancy_summary(self) -> DiscrepancySummaryResponse:
+        """
+        Get unresolved discrepancy totals by discrepancy type.
+        """
+        response = self._request("GET", "/v1/discrepancies/summary")
+        return DiscrepancySummaryResponse.model_validate(response.json())
+
+    def monitor_discrepancy_drift(
+        self,
+        observed_outcomes: int | None = None,
+        run_detection: bool = True,
+    ) -> DiscrepancyDriftSnapshot:
+        """
+        Compute discrepancy and conflict drift rates for production monitoring.
+        """
+        detected = self.detect_discrepancies() if run_detection else None
+        summary = self.discrepancy_summary()
+
+        open_total_discrepancies = int(summary.total)
+        open_conflict_discrepancies = int(summary.by_type.get("cross_event_conflict", 0))
+        open_conflict_share = (
+            open_conflict_discrepancies / open_total_discrepancies
+            if open_total_discrepancies > 0
+            else 0.0
+        )
+
+        denominator = observed_outcomes if isinstance(observed_outcomes, int) and observed_outcomes > 0 else None
+
+        discrepancy_rate = (
+            open_total_discrepancies / denominator
+            if denominator is not None
+            else None
+        )
+        conflict_rate = (
+            open_conflict_discrepancies / denominator
+            if denominator is not None
+            else None
+        )
+
+        return DiscrepancyDriftSnapshot(
+            open_total_discrepancies=open_total_discrepancies,
+            open_conflict_discrepancies=open_conflict_discrepancies,
+            open_conflict_share=open_conflict_share,
+            discrepancy_rate=discrepancy_rate,
+            conflict_rate=conflict_rate,
+            detected_now=detected.detected if detected is not None else None,
+            detected_conflicts_now=(
+                detected.advanced_cases.cross_event_conflict
+                if detected is not None
+                else None
+            ),
+            by_type=summary.by_type,
+        )
 
     def _log_outcome(
         self,
@@ -1031,6 +1143,7 @@ class Layerinfinite:
             "success": success,
             "session_id": session_id,
             "response_ms": latency_ms,  # backend alias: response_ms → response_time_ms
+            "idempotency_key": str(uuid.uuid4()),
         }
         if outcome_score is not None:
             payload["outcome_score"] = outcome_score

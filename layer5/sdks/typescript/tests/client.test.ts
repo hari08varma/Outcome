@@ -99,6 +99,49 @@ const MOCK_LOG_OUTCOME_BODY_LEGACY_DEGRADED = {
     policy: 'SANDBOX',
 };
 
+const MOCK_PENDING_SIGNAL_RESPONSE = {
+    registration_id: 'reg-uuid-1',
+    outcome_id: 'out-uuid-1',
+    created_at: '2026-04-07T10:00:00.000Z',
+    idempotent_replay: false,
+    pending_state: {
+        signal_pending: true,
+        cross_event_status: 'pending_signal',
+    },
+};
+
+const MOCK_OUTCOME_FEEDBACK_RESPONSE = {
+    updated: true,
+    outcome_id: 'out-uuid-1',
+    final_score: 0.25,
+    business_outcome: 'failed',
+    cross_event_status: 'conflict',
+    cross_event_conflict: true,
+};
+
+const MOCK_DISCREPANCY_DETECT_RESPONSE = {
+    detected: 8,
+    cases: {
+        expired: 2,
+        mismatch: 3,
+        low_confidence: 1,
+    },
+    advanced_cases: {
+        cross_event_conflict: 2,
+        pending_state_mismatch: 0,
+        ingestion_inconsistency: 0,
+    },
+};
+
+const MOCK_DISCREPANCY_SUMMARY_RESPONSE = {
+    total: 20,
+    by_type: {
+        cross_event_conflict: 5,
+        outcome_mismatch: 9,
+        ingestion_inconsistency: 6,
+    },
+};
+
 const MOCK_RECOMMENDATION_BODY = {
     task: 'billing_dispute',
     state: 'stable',
@@ -263,6 +306,25 @@ describe('LayerinfiniteClient', () => {
         expect(response.trust_status).toBe('sandbox');
     });
 
+    it('Test 4c: logOutcome auto-populates idempotency_key when omitted', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_LOG_OUTCOME_BODY));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        await client.logOutcome({
+            agent_id: 'my-agent',
+            action_id: 'act-uuid-1',
+            context_id: 'ctx-uuid-1',
+            issue_type: 'billing_dispute',
+            success: true,
+            outcome_score: 0.92,
+        });
+
+        const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body)) as { idempotency_key?: string };
+        expect(typeof body.idempotency_key).toBe('string');
+        expect((body.idempotency_key ?? '').length).toBeGreaterThan(0);
+    });
+
     // ── Test 5 ─────────────────────────────────────────────────
     it('Test 5: health check sends no X-API-Key header', async () => {
         fetchSpy.mockResolvedValueOnce(
@@ -326,5 +388,64 @@ describe('LayerinfiniteClient', () => {
         expect(rec.dataFreshness?.ageHours).toBe(4);
         expect(rec.dataFreshness?.isStale).toBe(false);
         expect(rec.dataFreshness?.staleThresholdHours).toBe(72);
+    });
+
+    it('Test 8: registerPendingSignal enforces delayed feedback signal', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_PENDING_SIGNAL_RESPONSE, 201));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        const result = await client.registerPendingSignal({
+            outcome_id: '8fc5b70f-3d48-4dc8-a937-5464248f22f8',
+            action_name: 'retry_payment',
+            provider_hint: 'stripe',
+        });
+
+        expect(result.registration_id).toBe('reg-uuid-1');
+        expect(result.pending_state?.cross_event_status).toBe('pending_signal');
+
+        const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body)) as { feedback_signal?: string };
+        expect(body.feedback_signal).toBe('delayed');
+    });
+
+    it('Test 9: submitOutcomeFeedback maps cross-event response fields', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_OUTCOME_FEEDBACK_RESPONSE));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        const result = await client.submitOutcomeFeedback({
+            outcome_id: 'out-uuid-1',
+            final_score: 0.25,
+            business_outcome: 'failed',
+            feedback_notes: 'webhook status=failed',
+        });
+
+        expect(result.updated).toBe(true);
+        expect(result.cross_event_conflict).toBe(true);
+        expect(result.cross_event_status).toBe('conflict');
+    });
+
+    it('Test 10: monitorDiscrepancyDrift computes discrepancy and conflict rates', async () => {
+        fetchSpy
+            .mockResolvedValueOnce(mockResponse(MOCK_DISCREPANCY_DETECT_RESPONSE))
+            .mockResolvedValueOnce(mockResponse(MOCK_DISCREPANCY_SUMMARY_RESPONSE));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        const drift = await client.monitorDiscrepancyDrift({ observedOutcomes: 200 });
+
+        expect(drift.open_total_discrepancies).toBe(20);
+        expect(drift.open_conflict_discrepancies).toBe(5);
+        expect(drift.discrepancy_rate).toBeCloseTo(0.1);
+        expect(drift.conflict_rate).toBeCloseTo(0.025);
+        expect(drift.detected_now).toBe(8);
+        expect(drift.detected_conflicts_now).toBe(2);
+    });
+
+    it('Test 11: buildDelayedSignalMetadata maps provider-specific payload fields', () => {
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        const metadata = client.buildDelayedSignalMetadata('out-123');
+
+        expect(metadata.stripe.metadata.layerinfinite_outcome_id).toBe('out-123');
+        expect(metadata.sendgrid.unique_args.outcome_id).toBe('out-123');
+        expect(metadata.generic.outcome_id).toBe('out-123');
     });
 });

@@ -20,7 +20,16 @@ from layerinfinite import (
     LayerinfiniteRateLimitError,
     LogOutcomeRequest,
 )
-from layerinfinite.models import GetScoresResponse, LogOutcomeResponse, ScoredAction
+from layerinfinite.models import (
+    DiscrepancyDriftSnapshot,
+    GetScoresResponse,
+    LogOutcomeResponse,
+    OutcomeFeedbackRequest,
+    OutcomeFeedbackResponse,
+    PendingSignalRequest,
+    PendingSignalResponse,
+    ScoredAction,
+)
 
 BASE_URL = "https://test.layerinfinite.ai"
 API_KEY = "layerinfinite_testkey123456789"
@@ -74,6 +83,49 @@ MOCK_RECOMMENDATION_RESPONSE = {
     },
     "reason": "historically strongest action",
     "confidence": 0.91,
+}
+
+MOCK_PENDING_SIGNAL_RESPONSE = {
+    "registration_id": "reg-uuid-1",
+    "outcome_id": "out-uuid-1",
+    "created_at": "2026-04-07T10:00:00.000Z",
+    "idempotent_replay": False,
+    "pending_state": {
+        "signal_pending": True,
+        "cross_event_status": "pending_signal",
+    },
+}
+
+MOCK_OUTCOME_FEEDBACK_RESPONSE = {
+    "updated": True,
+    "outcome_id": "out-uuid-1",
+    "final_score": 0.3,
+    "business_outcome": "failed",
+    "cross_event_status": "conflict",
+    "cross_event_conflict": True,
+}
+
+MOCK_DISCREPANCY_DETECT_RESPONSE = {
+    "detected": 8,
+    "cases": {
+        "expired": 2,
+        "mismatch": 3,
+        "low_confidence": 1,
+    },
+    "advanced_cases": {
+        "cross_event_conflict": 2,
+        "pending_state_mismatch": 0,
+        "ingestion_inconsistency": 0,
+    },
+}
+
+MOCK_DISCREPANCY_SUMMARY_RESPONSE = {
+    "total": 20,
+    "by_type": {
+        "cross_event_conflict": 5,
+        "outcome_mismatch": 9,
+        "ingestion_inconsistency": 6,
+    },
 }
 
 
@@ -184,6 +236,30 @@ def test_log_outcome_normalizes_legacy_degraded_status_to_sandbox():
     assert isinstance(response, LogOutcomeResponse)
     assert response.outcome_id == "out-uuid-legacy"
     assert response.trust_status == "sandbox"
+
+
+def test_log_outcome_auto_populates_idempotency_key_when_missing(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    request = LogOutcomeRequest(
+        agent_id="my-agent",
+        action_name="escalate_to_senior",
+        issue_type="billing_dispute",
+        success=True,
+        outcome_score=0.91,
+    )
+    client.log_outcome(request)
+
+    assert isinstance(captured_payload.get('idempotency_key'), str)
+    assert len(captured_payload.get('idempotency_key', '')) > 0
 
 
 def test_log_outcome_queues_and_replays_after_network_recovery(tmp_path, monkeypatch):
@@ -542,3 +618,75 @@ def test_action_wrapper_logs_response_ms_payload(monkeypatch):
     assert 'response_ms' in captured_payload
     assert isinstance(captured_payload['response_ms'], int)
     assert 'latency_ms' not in captured_payload
+
+
+@respx.mock
+def test_register_pending_signal_returns_typed_response_and_delayed_payload():
+    route = respx.post(f"{BASE_URL}/v1/pending-signals").mock(
+        return_value=httpx.Response(201, json=MOCK_PENDING_SIGNAL_RESPONSE)
+    )
+
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+    response = client.register_pending_signal(PendingSignalRequest(
+        outcome_id='8fc5b70f-3d48-4dc8-a937-5464248f22f8',
+        action_name='retry_payment',
+        provider_hint='stripe',
+    ))
+
+    assert isinstance(response, PendingSignalResponse)
+    assert response.registration_id == 'reg-uuid-1'
+    sent_json = json.loads(route.calls[0].request.content.decode('utf-8'))
+    assert sent_json['feedback_signal'] == 'delayed'
+
+
+@respx.mock
+def test_submit_outcome_feedback_returns_typed_response():
+    respx.post(f"{BASE_URL}/v1/outcome-feedback").mock(
+        return_value=httpx.Response(200, json=MOCK_OUTCOME_FEEDBACK_RESPONSE)
+    )
+
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+    response = client.submit_outcome_feedback(OutcomeFeedbackRequest(
+        outcome_id='out-uuid-1',
+        final_score=0.3,
+        business_outcome='failed',
+        feedback_notes='webhook callback final state failed',
+    ))
+
+    assert isinstance(response, OutcomeFeedbackResponse)
+    assert response.updated is True
+    assert response.cross_event_status == 'conflict'
+    assert response.cross_event_conflict is True
+
+
+def test_monitor_discrepancy_drift_computes_rates(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    def fake_request(method, path, **kwargs):
+        if method == 'POST' and path == '/v1/discrepancies/detect':
+            return httpx.Response(200, json=MOCK_DISCREPANCY_DETECT_RESPONSE)
+        if method == 'GET' and path == '/v1/discrepancies/summary':
+            return httpx.Response(200, json=MOCK_DISCREPANCY_SUMMARY_RESPONSE)
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    drift = client.monitor_discrepancy_drift(observed_outcomes=200)
+
+    assert isinstance(drift, DiscrepancyDriftSnapshot)
+    assert drift.open_total_discrepancies == 20
+    assert drift.open_conflict_discrepancies == 5
+    assert drift.discrepancy_rate == pytest.approx(0.1)
+    assert drift.conflict_rate == pytest.approx(0.025)
+    assert drift.detected_now == 8
+    assert drift.detected_conflicts_now == 2
+
+
+def test_build_delayed_signal_metadata_maps_provider_fields():
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    metadata = client.build_delayed_signal_metadata('out-123')
+
+    assert metadata['stripe']['metadata']['layerinfinite_outcome_id'] == 'out-123'
+    assert metadata['sendgrid']['unique_args']['outcome_id'] == 'out-123'
+    assert metadata['generic']['outcome_id'] == 'out-123'

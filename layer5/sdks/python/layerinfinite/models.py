@@ -6,7 +6,7 @@ Pydantic v2 request/response models.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Literal
+from typing import Any, Callable, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -56,6 +56,7 @@ class LogOutcomeRequest(BaseModel):
     # API accepts any string; known values: immediate | delayed | none
     # Unknown values normalize to "none" (no clear feedback signal).
     feedback_signal: str = "immediate"
+    idempotency_key: str | None = None
 
 
 class IngestionQuality(BaseModel):
@@ -90,6 +91,76 @@ class LogOutcomeResponse(BaseModel):
         if normalized in {"trusted", "probation", "sandbox", "suspended", "new"}:
             return normalized  # type: ignore[return-value]
         return "probation"
+
+
+class PendingSignalRequest(BaseModel):
+    outcome_id: str
+    action_name: str
+    provider_hint: Literal['stripe', 'sendgrid', 'generic'] | None = None
+    feedback_signal: Literal['delayed'] = 'delayed'
+
+
+class PendingSignalState(BaseModel):
+    signal_pending: bool
+    cross_event_status: str
+
+
+class PendingSignalResponse(BaseModel):
+    registration_id: str
+    outcome_id: str
+    created_at: str
+    idempotent_replay: bool = False
+    pending_state: PendingSignalState | None = None
+
+
+class OutcomeFeedbackRequest(BaseModel):
+    outcome_id: str
+    final_score: float = Field(ge=0.0, le=1.0)
+    business_outcome: str
+    feedback_notes: str | None = None
+
+
+class OutcomeFeedbackResponse(BaseModel):
+    updated: bool
+    outcome_id: str
+    final_score: float
+    business_outcome: str
+    cross_event_status: str
+    cross_event_conflict: bool
+
+
+class DiscrepancyDetectCases(BaseModel):
+    expired: int = 0
+    mismatch: int = 0
+    low_confidence: int = 0
+
+
+class DiscrepancyDetectAdvancedCases(BaseModel):
+    cross_event_conflict: int = 0
+    pending_state_mismatch: int = 0
+    ingestion_inconsistency: int = 0
+
+
+class DiscrepancyDetectResponse(BaseModel):
+    detected: int = 0
+    cases: DiscrepancyDetectCases = Field(default_factory=DiscrepancyDetectCases)
+    advanced_cases: DiscrepancyDetectAdvancedCases = Field(default_factory=DiscrepancyDetectAdvancedCases)
+
+
+class DiscrepancySummaryResponse(BaseModel):
+    total: int = 0
+    by_type: Dict[str, int] = Field(default_factory=dict)
+
+
+class DiscrepancyDriftSnapshot(BaseModel):
+    open_total_discrepancies: int
+    open_conflict_discrepancies: int
+    open_conflict_share: float
+    discrepancy_rate: float | None = None
+    conflict_rate: float | None = None
+    detected_now: int | None = None
+    detected_conflicts_now: int | None = None
+    by_type: Dict[str, int] = Field(default_factory=dict)
 
 
 @dataclass

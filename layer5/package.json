@@ -14,6 +14,7 @@
     "check:secrets": "node scripts/check-tracked-secrets.js",
     "check:migration-governance": "node scripts/check-migration-governance.js",
     "check:cohort-deploy": "node scripts/check-cohort-deploy.js",
+    "check:discrepancy-drift": "node scripts/check-discrepancy-drift.js",
     "check:production": "npm run check:endpoint-independence && npm run check:endpoint-parity && npm run drill:failover"
   },
   "keywords": [],

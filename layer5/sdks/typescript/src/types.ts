@@ -62,6 +62,8 @@ export interface LogOutcomeRequest {
     episode_id?: string;
     response_ms?: number;
     feedback_signal?: string;
+    /** Optional idempotency key for replay-safe outcome ingestion. */
+    idempotency_key?: string;
 }
 
 export type TrustStatus =
@@ -92,6 +94,96 @@ export interface LogOutcomeResponse {
     policy: string;
     /** Ingestion quality metadata for this event. Present on all 201 responses. */
     ingestion_quality?: IngestionQuality;
+}
+
+export type PendingProviderHint = 'stripe' | 'sendgrid' | 'generic';
+
+export interface PendingSignalRequest {
+    outcome_id: string;
+    action_name: string;
+    provider_hint?: PendingProviderHint | null;
+    feedback_signal?: 'delayed';
+}
+
+export interface PendingSignalResponse {
+    registration_id: string;
+    outcome_id: string;
+    created_at: string;
+    idempotent_replay: boolean;
+    pending_state?: {
+        signal_pending: boolean;
+        cross_event_status: string;
+    };
+}
+
+export interface OutcomeFeedbackRequest {
+    outcome_id: string;
+    final_score: number;
+    business_outcome: string;
+    feedback_notes?: string;
+}
+
+export interface OutcomeFeedbackResponse {
+    updated: boolean;
+    outcome_id: string;
+    final_score: number;
+    business_outcome: string;
+    cross_event_status: string;
+    cross_event_conflict: boolean;
+}
+
+export interface DiscrepancyDetectResponse {
+    detected: number;
+    cases: {
+        expired: number;
+        mismatch: number;
+        low_confidence: number;
+    };
+    advanced_cases: {
+        cross_event_conflict: number;
+        pending_state_mismatch: number;
+        ingestion_inconsistency: number;
+    };
+}
+
+export interface DiscrepancySummaryResponse {
+    total: number;
+    by_type: Record<string, number>;
+}
+
+export interface DiscrepancyDriftOptions {
+    /** If set, rates are computed against this denominator; otherwise only share metrics are returned. */
+    observedOutcomes?: number;
+    /** Run /v1/discrepancies/detect before reading summary. Default: true. */
+    runDetection?: boolean;
+}
+
+export interface DiscrepancyDriftSnapshot {
+    open_total_discrepancies: number;
+    open_conflict_discrepancies: number;
+    open_conflict_share: number;
+    discrepancy_rate: number | null;
+    conflict_rate: number | null;
+    detected_now: number | null;
+    detected_conflicts_now: number | null;
+    by_type: Record<string, number>;
+}
+
+export interface DelayedSignalMetadata {
+    outcome_id: string;
+    stripe: {
+        metadata: {
+            layerinfinite_outcome_id: string;
+        };
+    };
+    sendgrid: {
+        unique_args: {
+            outcome_id: string;
+        };
+    };
+    generic: {
+        outcome_id: string;
+    };
 }
 
 // ── v0.3.0 Config ──────────────────────────────────────────────────

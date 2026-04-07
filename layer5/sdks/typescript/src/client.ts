@@ -12,11 +12,20 @@ import {
 import type {
     ActionEntry,
     ActionFunction,
+    DelayedSignalMetadata,
+    DiscrepancyDetectResponse,
+    DiscrepancyDriftOptions,
+    DiscrepancyDriftSnapshot,
+    DiscrepancySummaryResponse,
     GetScoresResponse,
     LayerinfiniteConfig,
     LogOutcomeRequest,
     LogOutcomeResponse,
     ObservationSummary,
+    OutcomeFeedbackRequest,
+    OutcomeFeedbackResponse,
+    PendingSignalRequest,
+    PendingSignalResponse,
     RankedAction,
     Recommendation,
     ScoredAction,
@@ -120,7 +129,8 @@ interface InternalLogPayload {
     success: boolean;
     session_id: string;
     response_ms: number;
-    metadata?: { error: string };
+    idempotency_key: string;
+    metadata?: Record<string, unknown>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -721,12 +731,17 @@ export class Layerinfinite {
      * Compatible with old LogOutcomeRequest shape (backward compat).
      */
     async logOutcome(request: LogOutcomeRequest): Promise<LogOutcomeResponse> {
+        const payloadToSend: LogOutcomeRequest = {
+            ...request,
+            idempotency_key: request.idempotency_key ?? crypto.randomUUID(),
+        };
+
         const response = await this.fetchWithRetry(
             '/v1/log-outcome',
             {
                 method: 'POST',
                 headers: this.authHeaders(true),
-                body: JSON.stringify(request),
+                body: JSON.stringify(payloadToSend),
             },
             code => code >= 500,
         );
@@ -737,6 +752,179 @@ export class Layerinfinite {
             agent_trust_score: Number(payload.agent_trust_score ?? 0),
             trust_status: normalizeTrustStatus(payload.trust_status),
             policy: String(payload.policy ?? ''),
+        };
+    }
+
+    /**
+     * Register a delayed outcome signal so provider webhooks can reconcile later.
+     */
+    async registerPendingSignal(request: PendingSignalRequest): Promise<PendingSignalResponse> {
+        const payloadToSend = {
+            ...request,
+            feedback_signal: 'delayed' as const,
+        };
+
+        const response = await this.fetchWithRetry(
+            '/v1/pending-signals',
+            {
+                method: 'POST',
+                headers: this.authHeaders(true),
+                body: JSON.stringify(payloadToSend),
+            },
+            code => code >= 500,
+        );
+
+        const payload = await response.json() as Partial<PendingSignalResponse>;
+        return {
+            registration_id: String(payload.registration_id ?? ''),
+            outcome_id: String(payload.outcome_id ?? ''),
+            created_at: String(payload.created_at ?? ''),
+            idempotent_replay: Boolean(payload.idempotent_replay),
+            pending_state: payload.pending_state,
+        };
+    }
+
+    /**
+     * Submit delayed feedback to finalize an outcome after external signals arrive.
+     */
+    async submitOutcomeFeedback(request: OutcomeFeedbackRequest): Promise<OutcomeFeedbackResponse> {
+        const response = await this.fetchWithRetry(
+            '/v1/outcome-feedback',
+            {
+                method: 'POST',
+                headers: this.authHeaders(true),
+                body: JSON.stringify(request),
+            },
+            code => code >= 500,
+        );
+
+        const payload = await response.json() as Partial<OutcomeFeedbackResponse>;
+        return {
+            updated: Boolean(payload.updated),
+            outcome_id: String(payload.outcome_id ?? ''),
+            final_score: Number(payload.final_score ?? 0),
+            business_outcome: String(payload.business_outcome ?? ''),
+            cross_event_status: String(payload.cross_event_status ?? ''),
+            cross_event_conflict: Boolean(payload.cross_event_conflict),
+        };
+    }
+
+    /**
+     * Build provider metadata from outcome_id for delayed signal callback correlation.
+     */
+    buildDelayedSignalMetadata(outcomeId: string): DelayedSignalMetadata {
+        const normalizedOutcomeId = String(outcomeId ?? '').trim();
+        if (!normalizedOutcomeId) {
+            throw new LayerinfiniteError('outcomeId must be a non-empty string.');
+        }
+
+        return {
+            outcome_id: normalizedOutcomeId,
+            stripe: {
+                metadata: {
+                    layerinfinite_outcome_id: normalizedOutcomeId,
+                },
+            },
+            sendgrid: {
+                unique_args: {
+                    outcome_id: normalizedOutcomeId,
+                },
+            },
+            generic: {
+                outcome_id: normalizedOutcomeId,
+            },
+        };
+    }
+
+    /**
+     * Trigger discrepancy detection and return the detector summary.
+     */
+    async detectDiscrepancies(): Promise<DiscrepancyDetectResponse> {
+        const response = await this.fetchWithRetry(
+            '/v1/discrepancies/detect',
+            {
+                method: 'POST',
+                headers: this.authHeaders(true),
+                body: JSON.stringify({}),
+            },
+            code => code >= 500,
+        );
+
+        const payload = await response.json() as Partial<DiscrepancyDetectResponse>;
+        return {
+            detected: Number(payload.detected ?? 0),
+            cases: {
+                expired: Number(payload.cases?.expired ?? 0),
+                mismatch: Number(payload.cases?.mismatch ?? 0),
+                low_confidence: Number(payload.cases?.low_confidence ?? 0),
+            },
+            advanced_cases: {
+                cross_event_conflict: Number(payload.advanced_cases?.cross_event_conflict ?? 0),
+                pending_state_mismatch: Number(payload.advanced_cases?.pending_state_mismatch ?? 0),
+                ingestion_inconsistency: Number(payload.advanced_cases?.ingestion_inconsistency ?? 0),
+            },
+        };
+    }
+
+    /**
+     * Read unresolved discrepancy counts grouped by discrepancy_type.
+     */
+    async discrepancySummary(): Promise<DiscrepancySummaryResponse> {
+        const response = await this.fetchWithRetry(
+            '/v1/discrepancies/summary',
+            {
+                method: 'GET',
+                headers: this.authHeaders(),
+            },
+            code => code >= 500,
+        );
+
+        const payload = await response.json() as Partial<DiscrepancySummaryResponse>;
+        return {
+            total: Number(payload.total ?? 0),
+            by_type: payload.by_type ?? {},
+        };
+    }
+
+    /**
+     * Compute discrepancy and conflict drift rates for production monitoring.
+     */
+    async monitorDiscrepancyDrift(options: DiscrepancyDriftOptions = {}): Promise<DiscrepancyDriftSnapshot> {
+        const runDetection = options.runDetection ?? true;
+        const observedOutcomes = options.observedOutcomes;
+
+        const detected = runDetection
+            ? await this.detectDiscrepancies()
+            : null;
+
+        const summary = await this.discrepancySummary();
+
+        const openTotalDiscrepancies = Number(summary.total ?? 0);
+        const openConflictDiscrepancies = Number(summary.by_type.cross_event_conflict ?? 0);
+        const openConflictShare = openTotalDiscrepancies > 0
+            ? openConflictDiscrepancies / openTotalDiscrepancies
+            : 0;
+
+        const denominator = typeof observedOutcomes === 'number' && observedOutcomes > 0
+            ? observedOutcomes
+            : null;
+
+        const discrepancyRate = denominator === null
+            ? null
+            : openTotalDiscrepancies / denominator;
+        const conflictRate = denominator === null
+            ? null
+            : openConflictDiscrepancies / denominator;
+
+        return {
+            open_total_discrepancies: openTotalDiscrepancies,
+            open_conflict_discrepancies: openConflictDiscrepancies,
+            open_conflict_share: openConflictShare,
+            discrepancy_rate: discrepancyRate,
+            conflict_rate: conflictRate,
+            detected_now: detected ? detected.detected : null,
+            detected_conflicts_now: detected ? detected.advanced_cases.cross_event_conflict : null,
+            by_type: summary.by_type,
         };
     }
 
@@ -827,6 +1015,7 @@ export class Layerinfinite {
             success: params.success,
             session_id: params.sessionId,
             response_ms: params.latencyMs,
+            idempotency_key: crypto.randomUUID(),
         };
         if (params.error) {
             payload.metadata = { error: params.error };

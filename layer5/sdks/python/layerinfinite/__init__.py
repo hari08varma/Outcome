@@ -28,7 +28,7 @@ Quick start::
 
 from __future__ import annotations
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 __all__ = [
     "Layerinfinite",
     "Suggestion",
@@ -47,6 +47,13 @@ __all__ = [
     "GetScoresResponse",
     "LogOutcomeRequest",
     "LogOutcomeResponse",
+    "PendingSignalRequest",
+    "PendingSignalResponse",
+    "OutcomeFeedbackRequest",
+    "OutcomeFeedbackResponse",
+    "DiscrepancyDetectResponse",
+    "DiscrepancySummaryResponse",
+    "DiscrepancyDriftSnapshot",
 ]
 
 from .client import Layerinfinite, LayerinfiniteClient
@@ -59,10 +66,17 @@ from .exceptions import (
     LowConfidenceError,
 )
 from .models import (
+    DiscrepancyDetectResponse,
+    DiscrepancyDriftSnapshot,
+    DiscrepancySummaryResponse,
     GetScoresResponse,
     LogOutcomeRequest,
     LogOutcomeResponse,
     ObservationSummary,
+    OutcomeFeedbackRequest,
+    OutcomeFeedbackResponse,
+    PendingSignalRequest,
+    PendingSignalResponse,
     RankedAction,
     Recommendation,
     RecommendationDataFreshness,
