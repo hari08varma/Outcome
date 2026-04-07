@@ -34,6 +34,8 @@ class GetScoresResponse(BaseModel):
     # How many more outcomes to log before LI activates recommendations.
     # 0 when not cold-starting. Surfaced directly from the API.
     outcomes_needed: int = 0
+    # Decision id emitted by /v1/get-scores for counterfactual linkage.
+    decision_id: str | None = None
     context_id: str = ""
     agent_id: str = ""
     served_from_cache: bool = False
@@ -52,6 +54,7 @@ class LogOutcomeRequest(BaseModel):
     # NOTE: "pending" (previous SDK value) is not canonical — maps to "unknown".
     # Use "partial" for partial outcomes.
     business_outcome: str | None = None
+    decision_id: str | None = None
     episode_id: str | None = None
     response_ms: int | None = None
     # API accepts any string; known values: immediate | delayed | none

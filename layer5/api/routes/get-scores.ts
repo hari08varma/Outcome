@@ -10,10 +10,9 @@
  */
 
 import { Hono } from 'hono';
-import crypto from 'node:crypto';
 import { getScores, ScoredAction } from '../lib/scoring.js';
 import { supabase } from '../lib/supabase.js';
-import { bufferDecision } from '../lib/decision-writer.js';
+import { persistDecision } from '../lib/decision-writer.js';
 import { generateEmbedding, findClosestContext, buildContextText } from '../lib/context-embed.js';
 import {
     getPolicyDecision,
@@ -482,9 +481,9 @@ getScoresRouter.get('/', async (c) => {
         const contextHash = `${resolvedContextId}:${issueType ?? ''}`;
         const episodePosition = episodeHistory ? episodeHistory.length : 0;
 
-        if (episodeId) {
-            decisionId = bufferDecision({
-                agent_id: agentId ?? null,
+        if (agentId) {
+            decisionId = await persistDecision({
+                agent_id: agentId,
                 context_id: resolvedContextId!,
                 context_hash: contextHash,
                 ranked_actions: rankedWithPropensity,

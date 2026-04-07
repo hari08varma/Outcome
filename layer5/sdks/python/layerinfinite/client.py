@@ -154,6 +154,7 @@ class Layerinfinite:
 
         self._actions: Dict[str, Dict[str, ActionEntry]] = {}
         self._registry_lock = threading.Lock()
+        self._active_run_decision_context: Dict[str, Any] | None = None
 
         self._http_clients = [
             self._build_http_client(base_url=endpoint, timeout=timeout, api_key=api_key)
@@ -395,6 +396,16 @@ class Layerinfinite:
                     raise
                 finally:
                     latency_ms = round((time.monotonic() - start) * 1000)
+                    run_ctx = self._active_run_decision_context
+                    decision_id = None
+                    episode_id = None
+                    if (
+                        isinstance(run_ctx, dict)
+                        and run_ctx.get("task") == task
+                        and run_ctx.get("action_name") == action_name
+                    ):
+                        decision_id = run_ctx.get("decision_id")
+                        episode_id = run_ctx.get("episode_id")
                     self._log_outcome(
                         task=task,
                         action_name=action_name,
@@ -402,6 +413,8 @@ class Layerinfinite:
                         session_id=session_id,
                         latency_ms=latency_ms,
                         outcome_score=outcome_score,
+                        decision_id=decision_id,
+                        episode_id=episode_id,
                         error=error_msg,
                     )
 
@@ -490,8 +503,6 @@ class Layerinfinite:
                 f"Use @li.action('{task}') to register action functions."
             )
 
-        execution_order = self._build_execution_order(task)
-
         top_confidence = 0.0
         top_reason = "No outcome data yet."
         scores_resp: GetScoresResponse | None = None
@@ -509,7 +520,7 @@ class Layerinfinite:
                 top_name = (
                     scores_resp.top_action.action_name
                     if scores_resp.top_action
-                    else (execution_order[0] if execution_order else "unknown")
+                    else (next(iter(task_actions), "unknown"))
                 )
                 abstain_reason = (
                     scores_resp.policy_abstain_message
@@ -532,6 +543,12 @@ class Layerinfinite:
             if isinstance(exc, LowConfidenceError):
                 raise
             logger.warning("[layerinfinite] Could not fetch confidence scores: %s", exc)
+
+        execution_order, decision_id = self._build_execution_order(
+            task,
+            preloaded_scores=scores_resp,
+        )
+        episode_id = str(uuid.uuid4())
 
         if top_confidence > 0.0 and top_confidence < self._confidence_threshold:
             ranked = self._build_ranked_from_scores(scores_resp) if scores_resp else []
@@ -562,6 +579,12 @@ class Layerinfinite:
 
             session_id = str(uuid.uuid4())
             start = time.monotonic()
+            self._active_run_decision_context = {
+                "task": task,
+                "action_name": action_name,
+                "decision_id": decision_id,
+                "episode_id": episode_id,
+            }
 
             try:
                 result = entry.fn(**kwargs)
@@ -585,6 +608,8 @@ class Layerinfinite:
                     session_id=session_id,
                     latency_ms=latency_ms,
                     outcome_score=outcome_score,
+                    decision_id=decision_id,
+                    episode_id=episode_id,
                 )
                 return result
             except Exception as exc:
@@ -605,6 +630,8 @@ class Layerinfinite:
                     session_id=session_id,
                     latency_ms=latency_ms,
                     error=error_msg,
+                    decision_id=decision_id,
+                    episode_id=episode_id,
                 )
 
                 if not self._auto_fallback:
@@ -619,6 +646,8 @@ class Layerinfinite:
                         execution_order[idx + 1],
                     )
                 continue
+            finally:
+                self._active_run_decision_context = None
 
         if last_error is None:
             raise LayerinfiniteError(f"All actions failed for task '{task}'.")
@@ -1153,6 +1182,8 @@ class Layerinfinite:
         session_id: str,
         latency_ms: int = 0,
         outcome_score: float | None = None,
+        decision_id: str | None = None,
+        episode_id: str | None = None,
         error: str | None = None,
     ) -> None:
         """
@@ -1174,6 +1205,10 @@ class Layerinfinite:
         }
         if outcome_score is not None:
             payload["outcome_score"] = outcome_score
+        if decision_id:
+            payload["decision_id"] = decision_id
+        if episode_id:
+            payload["episode_id"] = episode_id
         if error:
             payload["metadata"] = {"error": error}
 
@@ -1341,7 +1376,11 @@ class Layerinfinite:
             logger.warning("[layerinfinite] _fetch_scores failed: %s", exc)
             return None
 
-    def _build_execution_order(self, task: str) -> List[str]:
+    def _build_execution_order(
+        self,
+        task: str,
+        preloaded_scores: GetScoresResponse | None = None,
+    ) -> tuple[List[str], str | None]:
         """
         Returns action names in execution priority order:
           1. Actions ranked by backend score (highest first)
@@ -1354,16 +1393,16 @@ class Layerinfinite:
             registered_set = set(self._actions.get(task, {}).keys())
 
         try:
-            scores_resp = self._fetch_scores(task)
+            scores_resp = preloaded_scores if preloaded_scores is not None else self._fetch_scores(task)
         except Exception as exc:
             logger.warning(
                 "[layerinfinite] Cannot reach scoring engine, using registration order: %s",
                 exc,
             )
-            return registered
+            return (registered, None)
 
         if not scores_resp or not scores_resp.ranked_actions:
-            return registered
+            return (registered, scores_resp.decision_id if scores_resp else None)
 
         scored_names = [
             action.action_name
@@ -1371,7 +1410,7 @@ class Layerinfinite:
             if action.action_name in registered_set
         ]
         unscored = [action_name for action_name in registered if action_name not in scored_names]
-        return scored_names + unscored
+        return (scored_names + unscored, scores_resp.decision_id)
 
     def _build_ranked_from_scores(
         self,

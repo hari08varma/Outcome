@@ -73,7 +73,7 @@ auditRouter.get('/', async (c) => {
             // Validate before interpolation to prevent PostgREST filter injection.
             // ts must be an ISO 8601 timestamp; id must be a UUID.
             const ISO_TS = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})?$/;
-            const UUID   = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             if (typeof ts !== 'string' || typeof id !== 'string' || !ISO_TS.test(ts) || !UUID.test(id)) {
                 throw new Error('invalid cursor shape');
             }

@@ -35,6 +35,8 @@ export interface GetScoresResponse {
     cold_start: boolean;
     /** How many more outcomes to log before LI activates recommendations for this task. 0 when not cold-starting. */
     outcomes_needed: number;
+    /** Decision row id emitted by /v1/get-scores for counterfactual linkage. */
+    decision_id?: string | null;
     context_id: string;
     agent_id: string;
     served_from_cache?: boolean;
@@ -60,6 +62,7 @@ export interface LogOutcomeRequest {
     /** Must be between 0.0 and 1.0 */
     outcome_score: number;
     business_outcome?: string;
+    decision_id?: string;
     episode_id?: string;
     response_ms?: number;
     feedback_signal?: string;

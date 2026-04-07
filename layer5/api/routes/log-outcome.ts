@@ -732,13 +732,25 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
             .from('fact_decisions')
             .select('*')
             .eq('id', body.decision_id)
-            .eq('customer_id', customerId)
-            .single();
+            .maybeSingle();
 
         if (decErr || !decision) {
             console.warn('[log-outcome] decision_id not found:', body.decision_id);
             return null;
         }
+
+        const { data: owningAgent, error: ownerErr } = await supabase
+            .from('dim_agents')
+            .select('agent_id')
+            .eq('agent_id', decision.agent_id)
+            .eq('customer_id', customerId)
+            .maybeSingle();
+
+        if (ownerErr || !owningAgent) {
+            console.warn('[log-outcome] decision_id is outside tenant scope:', body.decision_id);
+            return null;
+        }
+
         if (decision.agent_id && decision.agent_id !== agentId) {
             throw new Error('DECISION_AGENT_MISMATCH');
         }
@@ -752,7 +764,7 @@ async function resolveDecisionId(body: any, agentId: string, actionId: string, o
                 resolved_at: new Date().toISOString(),
             })
             .eq('id', body.decision_id)
-            .eq('customer_id', customerId);
+            .eq('agent_id', agentId);
 
         return decision;
     } catch (err: any) {

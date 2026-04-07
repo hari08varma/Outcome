@@ -130,6 +130,8 @@ interface InternalLogPayload {
     session_id: string;
     response_ms: number;
     idempotency_key: string;
+    decision_id?: string;
+    episode_id?: string;
     metadata?: Record<string, unknown>;
 }
 
@@ -167,6 +169,12 @@ export class Layerinfinite {
     private readonly maxRetries: number;
     private activeEndpointIndex: number;
     private lastPendingReplayAt: number = 0;
+    private activeRunDecisionContext: {
+        task: string;
+        actionName: string;
+        decisionId: string | null;
+        episodeId: string | null;
+    } | null = null;
 
     /** task → (actionName → ActionEntry) */
     private readonly actions: Map<string, Map<string, ActionEntry>> = new Map();
@@ -293,6 +301,17 @@ export class Layerinfinite {
                 throw err; // ALWAYS re-throw — never swallow
             } finally {
                 const latencyMs = Math.round(performance.now() - start);
+                const runCtx = self.activeRunDecisionContext;
+                const decisionId = runCtx
+                    && runCtx.task === capturedTask
+                    && runCtx.actionName === capturedActionName
+                    ? runCtx.decisionId
+                    : null;
+                const episodeId = runCtx
+                    && runCtx.task === capturedTask
+                    && runCtx.actionName === capturedActionName
+                    ? runCtx.episodeId
+                    : null;
                 // Fire-and-forget — intentionally not awaited
                 self.logOutcomeInternal({
                     task: capturedTask,
@@ -300,6 +319,8 @@ export class Layerinfinite {
                     success,
                     sessionId,
                     latencyMs,
+                    decisionId,
+                    episodeId,
                     error: errorMsg,
                 }).catch(logErr =>
                     console.warn(`[layerinfinite] Failed to log outcome: ${logErr}`)
@@ -383,9 +404,6 @@ export class Layerinfinite {
             );
         }
 
-        // Build execution order from backend scores (fallback: registration order)
-        const executionOrder = await this.buildExecutionOrder(task);
-
         // Confidence check on top action
         let topConfidence = 0.0;
         let topReason = 'No outcome data yet.';
@@ -401,7 +419,7 @@ export class Layerinfinite {
             if (scoresResp?.policy === 'abstain') {
                 const ranked = this.buildRankedFromScores(scoresResp);
                 const topName = scoresResp.top_action?.action_name
-                    ?? executionOrder[0]
+                    ?? taskActions.keys().next().value
                     ?? 'unknown';
                 const abstainReason = scoresResp.policy_abstain_message
                     ?? topReason
@@ -426,6 +444,14 @@ export class Layerinfinite {
             }
             // fetchScores already logs a warning — continue with registration order
         }
+
+        // Build execution order from backend scores (fallback: registration order)
+        // and carry decision_id through to log-outcome for counterfactual linkage.
+        const {
+            order: executionOrder,
+            decisionId,
+        } = await this.buildExecutionOrder(task, scoresResp ?? undefined);
+        const episodeId = crypto.randomUUID();
 
         if (topConfidence > 0 && topConfidence < this.confidenceThreshold) {
             const ranked = this.buildRankedFromScores(scoresResp);
@@ -457,6 +483,12 @@ export class Layerinfinite {
 
             const sessionId = crypto.randomUUID();
             const start = performance.now();
+            this.activeRunDecisionContext = {
+                task,
+                actionName,
+                decisionId,
+                episodeId,
+            };
 
             try {
                 const result = await entry.fn(...args) as TReturn;
@@ -468,7 +500,7 @@ export class Layerinfinite {
                 if (entry.registeredVia === 'manual') {
                     this.logOutcomeInternal({
                         task, actionName, success: true,
-                        sessionId, latencyMs,
+                        sessionId, latencyMs, decisionId, episodeId,
                     }).catch(err =>
                         console.warn(`[layerinfinite] Failed to log outcome: ${err}`)
                     );
@@ -488,7 +520,7 @@ export class Layerinfinite {
                 if (entry.registeredVia === 'manual') {
                     this.logOutcomeInternal({
                         task, actionName, success: false,
-                        sessionId, latencyMs, error: errorMsg,
+                        sessionId, latencyMs, error: errorMsg, decisionId, episodeId,
                     }).catch(logErr =>
                         console.warn(`[layerinfinite] Failed to log outcome: ${logErr}`)
                     );
@@ -505,6 +537,8 @@ export class Layerinfinite {
                         `[layerinfinite] ↻ task=${task} falling back to ${executionOrder[idx + 1]}`
                     );
                 }
+            } finally {
+                this.activeRunDecisionContext = null;
             }
         }
 
@@ -1032,6 +1066,8 @@ export class Layerinfinite {
         success: boolean;
         sessionId: string;
         latencyMs: number;
+        decisionId?: string | null;
+        episodeId?: string | null;
         error?: string;
     }): Promise<void> {
         const payload: InternalLogPayload = {
@@ -1043,6 +1079,12 @@ export class Layerinfinite {
             response_ms: params.latencyMs,
             idempotency_key: crypto.randomUUID(),
         };
+        if (params.decisionId) {
+            payload.decision_id = params.decisionId;
+        }
+        if (params.episodeId) {
+            payload.episode_id = params.episodeId;
+        }
         if (params.error) {
             payload.metadata = { error: params.error };
         }
@@ -1158,14 +1200,24 @@ export class Layerinfinite {
      *   2. Registered actions NOT in backend scores (appended — cold start)
      * Fallback on error: Map insertion order (guaranteed in JS).
      */
-    private async buildExecutionOrder(task: string): Promise<string[]> {
+    private async buildExecutionOrder(
+        task: string,
+        preloadedScores?: GetScoresResponse | null,
+    ): Promise<{ order: string[]; decisionId: string | null }> {
         const taskActions = this.actions.get(task);
         const registeredNames = taskActions ? Array.from(taskActions.keys()) : [];
         const registeredSet = new Set(registeredNames);
 
         try {
-            const scoresResp = await this.fetchScores(task);
-            if (!scoresResp?.ranked_actions?.length) return registeredNames;
+            const scoresResp = preloadedScores !== undefined
+                ? preloadedScores
+                : await this.fetchScores(task);
+            if (!scoresResp?.ranked_actions?.length) {
+                return {
+                    order: registeredNames,
+                    decisionId: scoresResp?.decision_id ?? null,
+                };
+            }
 
             const scoredActions = scoresResp.ranked_actions
                 .filter(a => registeredSet.has(a.action_name));
@@ -1208,12 +1260,18 @@ export class Layerinfinite {
             }
 
             const unscored = registeredNames.filter(name => !scoredNames.includes(name));
-            return [...scoredNames, ...unscored];
+            return {
+                order: [...scoredNames, ...unscored],
+                decisionId: scoresResp.decision_id ?? null,
+            };
         } catch {
             console.warn(
                 `[layerinfinite] Cannot reach scoring engine, using registration order.`
             );
-            return registeredNames;
+            return {
+                order: registeredNames,
+                decisionId: null,
+            };
         }
     }
 

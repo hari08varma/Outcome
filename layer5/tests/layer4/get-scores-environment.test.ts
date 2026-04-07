@@ -6,7 +6,7 @@ vi.mock('../../api/lib/scoring.js', () => ({
 }));
 
 vi.mock('../../api/lib/decision-writer.js', () => ({
-    bufferDecision: vi.fn(() => null),
+    persistDecision: vi.fn(async () => 'dec-test-id'),
 }));
 
 vi.mock('../../api/lib/context-embed.js', () => ({
@@ -53,6 +53,7 @@ vi.mock('../../api/lib/supabase.js', () => ({
 import { getScoresRouter } from '../../api/routes/get-scores.js';
 import { supabase } from '../../api/lib/supabase.js';
 import { getScores } from '../../api/lib/scoring.js';
+import { persistDecision } from '../../api/lib/decision-writer.js';
 import { findClosestContext, generateEmbedding } from '../../api/lib/context-embed.js';
 
 function makeThenableQuery(result: any) {
@@ -157,6 +158,34 @@ describe('get-scores environment scoping', () => {
         expect(json.environment).toBe('staging');
         expect(contextChain.eq).toHaveBeenCalledWith('environment', 'staging');
         expect(findClosestContext).not.toHaveBeenCalled();
+    });
+
+    it('returns decision_id for standard get-scores calls without episode_id', async () => {
+        mockScoringResult('ctx-production');
+
+        const trustChain = makeThenableQuery({
+            data: { trust_score: 0.8, trust_status: 'trusted', consecutive_failures: 0 },
+            error: null,
+        });
+        const customerChain = makeThenableQuery({ data: { config: {} }, error: null });
+        const contextChain = makeThenableQuery({ data: { context_id: 'ctx-production' }, error: null });
+        const mvCountChain = makeThenableQuery({ count: 1, error: null });
+
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
+            if (table === 'agent_trust_scores') return trustChain as any;
+            if (table === 'dim_customers') return customerChain as any;
+            if (table === 'dim_contexts') return contextChain as any;
+            if (table === 'mv_action_scores') return mvCountChain as any;
+            throw new Error(`Unexpected table: ${table}`);
+        });
+
+        const app = createApp();
+        const res = await app.request('/v1/get-scores?issue_type=payment_failed&environment=production');
+        const json = await res.json() as any;
+
+        expect(res.status).toBe(200);
+        expect(json.decision_id).toBe('dec-test-id');
+        expect(vi.mocked(persistDecision)).toHaveBeenCalled();
     });
 
     it('defaults unknown environment to production and passes it to embedding fallback', async () => {

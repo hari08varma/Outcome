@@ -149,10 +149,10 @@ export type TaskMappingTier =
 
 export const TASK_MAPPING_CONFIDENCE: Record<TaskMappingTier, number> = {
   developer_provided: 1.00,
-  exact_match:        0.90,
-  prefix_match:       0.70,
+  exact_match: 0.90,
+  prefix_match: 0.70,
   slugified_fallback: 0.50,
-  unknown:            0.30,
+  unknown: 0.30,
 };
 
 export interface TaskInferResult {

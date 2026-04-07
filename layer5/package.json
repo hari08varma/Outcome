@@ -15,7 +15,8 @@
     "check:migration-governance": "node scripts/check-migration-governance.js",
     "check:cohort-deploy": "node scripts/check-cohort-deploy.js",
     "check:discrepancy-drift": "node scripts/check-discrepancy-drift.js",
-    "check:production": "node scripts/check-production-readiness.js"
+    "check:production": "node scripts/check-production-readiness.js",
+    "check:decision-linkage": "node scripts/check-decision-linkage.js"
   },
   "keywords": [],
   "author": "",
