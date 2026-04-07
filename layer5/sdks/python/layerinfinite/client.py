@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import functools
 import inspect
 import json
@@ -104,6 +105,7 @@ class Layerinfinite:
         max_retries: int = 3,
         log_async: bool = True,
         auto_register: bool = True,
+        min_observations_per_action: int = 0,
     ) -> None:
         if not isinstance(api_key, str) or not api_key.startswith("layerinfinite_"):
             raise ValueError(
@@ -131,6 +133,12 @@ class Layerinfinite:
         self._max_retries = max_retries
         self._log_async = log_async
         self._auto_register = auto_register
+
+        # Fix 1: Exploration floor — track per-(task, action) observation counts.
+        # min_observations_per_action=0 means disabled (backward-compatible).
+        self._min_observations_per_action = max(0, int(min_observations_per_action))
+        self._obs_counts: Dict[str, Dict[str, int]] = {}
+        self._obs_counts_lock = threading.Lock()
 
         self._base_urls = self._resolve_base_urls(self._base_url)
         self._endpoint_lock = threading.Lock()
@@ -527,14 +535,25 @@ class Layerinfinite:
                     or top_reason
                     or "Top actions are statistically indistinguishable. Gather more outcomes or escalate."
                 )
+                outcomes_needed = getattr(scores_resp, "outcomes_needed", 0)
                 suggestion = Suggestion(
                     action_name=top_name,
                     confidence=top_confidence,
                     reason=abstain_reason,
                     ranked=ranked,
+                    outcomes_needed=outcomes_needed,
+                    cold_start=getattr(scores_resp, "cold_start", False),
+                )
+                # Fix 3: Rich abstain message with actionable guidance.
+                needed_hint = (
+                    f" Log ~{outcomes_needed} more outcomes to activate."
+                    if outcomes_needed > 0 else ""
                 )
                 raise LowConfidenceError(
-                    f"Policy abstain for task '{task}'. {abstain_reason}",
+                    f"[LI abstain] task='{task}' policy=abstain "
+                    f"confidence={top_confidence:.0%} threshold={self._confidence_threshold:.0%}. "
+                    f"Best candidate: '{top_name}'.{needed_hint} "
+                    f"Reason: {abstain_reason}",
                     suggestion=suggestion,
                     confidence=top_confidence,
                     threshold=self._confidence_threshold,
@@ -553,17 +572,25 @@ class Layerinfinite:
         if top_confidence > 0.0 and top_confidence < self._confidence_threshold:
             ranked = self._build_ranked_from_scores(scores_resp) if scores_resp else []
             top_name = execution_order[0] if execution_order else "unknown"
+            outcomes_needed = getattr(scores_resp, "outcomes_needed", 0) if scores_resp else 0
             suggestion = Suggestion(
                 action_name=top_name,
                 confidence=top_confidence,
                 reason=top_reason,
                 ranked=ranked,
+                outcomes_needed=outcomes_needed,
+                cold_start=getattr(scores_resp, "cold_start", False) if scores_resp else False,
+            )
+            # Fix 3: Rich message showing how far from threshold.
+            gap = self._confidence_threshold - top_confidence
+            needed_hint = (
+                f" Log ~{outcomes_needed} more outcomes to close the gap."
+                if outcomes_needed > 0 else " Keep logging outcomes."
             )
             raise LowConfidenceError(
-                f"Confidence {top_confidence:.0%} is below threshold "
-                f"{self._confidence_threshold:.0%} for task '{task}'. "
-                f"Best action: '{top_name}'. "
-                "Lower confidence_threshold or wait for more outcome data.",
+                f"[LI low-confidence] task='{task}' "
+                f"confidence={top_confidence:.0%} (need {self._confidence_threshold:.0%}, "
+                f"gap={gap:.0%}). Best candidate: '{top_name}'.{needed_hint}",
                 suggestion=suggestion,
                 confidence=top_confidence,
                 threshold=self._confidence_threshold,
@@ -1059,17 +1086,94 @@ class Layerinfinite:
                 return {task: list(actions.keys())}
             return {t: list(a.keys()) for t, a in self._actions.items()}
 
+    @staticmethod
+    def normalize_business_outcome(value: str) -> str:
+        """
+        Fix 2 — Data resilience: normalize free-text business_outcome to
+        the API's canonical values: resolved | partial | failed | unknown.
+
+        Examples: "ok" -> "resolved", "error" -> "failed", "partial" -> "partial"
+        """
+        _MAP: Dict[str, str] = {
+            "resolved": "resolved", "success": "resolved", "ok": "resolved",
+            "done": "resolved", "completed": "resolved", "passed": "resolved",
+            "partial": "partial", "degraded": "partial", "incomplete": "partial",
+            "failed": "failed", "failure": "failed", "error": "failed",
+            "err": "failed", "rejected": "failed", "declined": "failed",
+        }
+        normalized = str(value or "").strip().lower()
+        return _MAP.get(normalized, "unknown")
+
     def log_outcome(self, request: LogOutcomeRequest) -> LogOutcomeResponse:
         """
         Backward-compatible direct outcome logging method for power users.
+        Fix 2 — Data resilience:
+          - Fuzzy-matches action_name against registered actions to catch typos.
+          - Normalizes business_outcome to canonical values before sending.
+          - Warns on inconsistency (success=True but very low outcome_score).
         """
+        task = request.issue_type
+        action_name = request.action_name
+
+        # Fix 2a: Fuzzy match action_name against registered actions for this task.
+        with self._registry_lock:
+            registered_actions = list(self._actions.get(task, {}).keys())
+        if registered_actions and action_name not in registered_actions:
+            matches = difflib.get_close_matches(action_name, registered_actions, n=1, cutoff=0.8)
+            if matches:
+                logger.warning(
+                    "[layerinfinite] action_name '%s' not found for task '%s'. "
+                    "Fuzzy-matched to '%s'. Substituting.",
+                    action_name,
+                    task,
+                    matches[0],
+                )
+                # Rebuild request with corrected action_name (Pydantic model is immutable).
+                request = request.model_copy(update={"action_name": matches[0]})
+                action_name = matches[0]
+            else:
+                logger.warning(
+                    "[layerinfinite] action_name '%s' not found for task '%s' "
+                    "and no close match found. Sending as-is — API may reject it.",
+                    action_name,
+                    task,
+                )
+
+        # Fix 2b: Normalize business_outcome if provided.
+        if request.business_outcome is not None:
+            canonical = self.normalize_business_outcome(request.business_outcome)
+            if canonical != request.business_outcome:
+                logger.debug(
+                    "[layerinfinite] business_outcome '%s' normalized to '%s'.",
+                    request.business_outcome,
+                    canonical,
+                )
+                request = request.model_copy(update={"business_outcome": canonical})
+
         payload = request.model_dump(exclude_none=True)
         if not payload.get("session_id"):
             payload["session_id"] = str(uuid.uuid4())
         if not payload.get("idempotency_key"):
             payload["idempotency_key"] = str(uuid.uuid4())
+
+        # Fix 1: Increment obs count for exploration floor tracking.
+        if self._min_observations_per_action > 0:
+            with self._obs_counts_lock:
+                task_counts = self._obs_counts.setdefault(task, {})
+                task_counts[action_name] = task_counts.get(action_name, 0) + 1
+
         response = self._request("POST", "/v1/log-outcome", json=payload)
-        return LogOutcomeResponse.model_validate(response.json())
+        result = LogOutcomeResponse.model_validate(response.json())
+
+        # Fix 2c: Contradiction quarantine — warn when ingestion_quality flags inconsistency.
+        if result.ingestion_quality and result.ingestion_quality.is_inconsistent:
+            print(
+                f"[layerinfinite] Inconsistency detected: success=True but "
+                f"outcome_score={request.outcome_score:.2f} for '{task}/{action_name}'. "
+                f"Logged, but flagged. Consider revising your scoring logic."
+            )
+
+        return result
 
     def register_pending_signal(self, request: PendingSignalRequest) -> PendingSignalResponse:
         """
@@ -1212,6 +1316,13 @@ class Layerinfinite:
         if error:
             payload["metadata"] = {"error": error}
 
+        # Fix 1: Increment observation count immediately (before async send)
+        # so exploration floor decisions see up-to-date counts.
+        if self._min_observations_per_action > 0:
+            with self._obs_counts_lock:
+                task_counts = self._obs_counts.setdefault(task, {})
+                task_counts[action_name] = task_counts.get(action_name, 0) + 1
+
         def _send() -> None:
             try:
                 replayed, remaining = self._maybe_replay_pending_outcomes()
@@ -1340,6 +1451,7 @@ class Layerinfinite:
         """
         GET /v1/get-scores?issue_type={task}
         Returns None if cold start (no scores available).
+        Fix 3: Emits a cold-start progress indicator when outcomes_needed > 0.
         """
         try:
             resp = self._request(
@@ -1349,6 +1461,17 @@ class Layerinfinite:
             )
             scores = GetScoresResponse.model_validate(resp.json())
             if not scores.ranked_actions and not scores.top_action:
+                # Cold-start: show progress toward activation.
+                if scores.outcomes_needed > 0:
+                    with self._obs_counts_lock:
+                        logged_so_far = sum(self._obs_counts.get(task, {}).values())
+                    total_needed = scores.outcomes_needed + logged_so_far
+                    pct = (logged_so_far / total_needed * 100) if total_needed > 0 else 0
+                    print(
+                        f"[layerinfinite] Warming up '{task}': "
+                        f"~{scores.outcomes_needed} more outcomes needed to unlock recommendations "
+                        f"({pct:.0f}% there). Keep logging."
+                    )
                 return None
             self._cache_scores(task, scores)
             return scores
@@ -1386,6 +1509,10 @@ class Layerinfinite:
           1. Actions ranked by backend score (highest first)
           2. Registered actions NOT in backend scores (appended at end)
 
+        Fix 1 — Exploration floor: if min_observations_per_action > 0, any action
+        with fewer than that many observations is promoted to the front so LI
+        sees it at least N times before exploiting the top scorer.
+
         On backend failure: falls back to registration order (dict insertion order).
         """
         with self._registry_lock:
@@ -1402,15 +1529,42 @@ class Layerinfinite:
             return (registered, None)
 
         if not scores_resp or not scores_resp.ranked_actions:
-            return (registered, scores_resp.decision_id if scores_resp else None)
+            base_order = registered
+        else:
+            scored_names = [
+                action.action_name
+                for action in scores_resp.ranked_actions
+                if action.action_name in registered_set
+            ]
+            unscored = [a for a in registered if a not in scored_names]
+            base_order = scored_names + unscored
 
-        scored_names = [
-            action.action_name
-            for action in scores_resp.ranked_actions
-            if action.action_name in registered_set
-        ]
-        unscored = [action_name for action_name in registered if action_name not in scored_names]
-        return (scored_names + unscored, scores_resp.decision_id)
+        decision_id = scores_resp.decision_id if scores_resp else None
+
+        # Fix 1: Exploration floor — promote under-observed actions to front.
+        if self._min_observations_per_action > 0 and registered:
+            with self._obs_counts_lock:
+                counts = self._obs_counts.get(task, {})
+            under = [
+                a for a in registered
+                if counts.get(a, 0) < self._min_observations_per_action
+            ]
+            if under:
+                # Pick the least-observed action first.
+                under_sorted = sorted(under, key=lambda a: counts.get(a, 0))
+                explore_action = under_sorted[0]
+                rest = [a for a in base_order if a != explore_action]
+                logger.debug(
+                    "[layerinfinite] Exploration floor: promoting '%s' for task '%s' "
+                    "(seen %d/%d times).",
+                    explore_action,
+                    task,
+                    counts.get(explore_action, 0),
+                    self._min_observations_per_action,
+                )
+                return ([explore_action] + rest, decision_id)
+
+        return (base_order, decision_id)
 
     def _build_ranked_from_scores(
         self,

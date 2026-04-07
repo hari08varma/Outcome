@@ -193,12 +193,18 @@ class Suggestion:
     """
     Returned by li.suggest(task) in assist mode.
     Contains the recommended action and full ranked list.
+
+    Fix 3 — Trust UX:
+      outcomes_needed: how many more outcomes to log before LI activates (0 = active).
+      cold_start: True when LI has no data yet for this task.
     """
 
     action_name: str
     confidence: float
     reason: str
     ranked: List[RankedAction]
+    outcomes_needed: int = 0
+    cold_start: bool = False
 
 
 @dataclass

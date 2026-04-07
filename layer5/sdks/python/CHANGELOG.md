@@ -2,6 +2,24 @@
 
 All notable changes to the Python SDK are documented here.
 
+## [0.4.0] — 2026-04-08
+
+### Added
+
+- **Exploration floor** (`min_observations_per_action` param) — forces LI to try every registered action at least N times before exploiting the top scorer. Eliminates cold-start blind spots where high-performing actions never get observed because the LLM fallback always picks the same action. Default `0` (disabled, fully backward-compatible).
+
+- **Data resilience in `log_outcome()`**:
+  - Fuzzy action name matching via `difflib` — if `action_name` doesn't exactly match a registered action, SDK finds the closest match (cutoff 0.8) and warns instead of letting the API reject it
+  - `normalize_business_outcome(value)` static method — maps free-text values (`"ok"`, `"error"`, `"done"`) to canonical API values (`resolved`, `failed`, `unknown`, `partial`)
+  - Contradiction quarantine — warns when `ingestion_quality.is_inconsistent=True` (success=True but outcome_score is suspiciously low)
+
+- **Trust UX improvements**:
+  - Cold-start progress indicator in `_fetch_scores` — prints `"Warming up '{task}': ~N more outcomes needed (X% there)"` during warm-up
+  - Richer `LowConfidenceError` messages — includes confidence gap, best candidate action, outcomes needed, and actionable next step
+  - `Suggestion` dataclass gains `outcomes_needed: int` and `cold_start: bool` fields — callers can show progress in their own UI programmatically
+
+### No breaking changes. All existing code works without modification.
+
 ## [0.3.2] — 2026-04-03
 
 ### Fixed
