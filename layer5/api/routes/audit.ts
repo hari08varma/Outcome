@@ -18,6 +18,13 @@ export const auditRouter = new Hono();
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 50;
 
+function csvEscape(value: unknown): string {
+    const text = value == null ? '' : String(value);
+    return /[",\r\n]/.test(text)
+        ? `"${text.replace(/"/g, '""')}"`
+        : text;
+}
+
 // ── GET /v1/audit ─────────────────────────────────────────────
 auditRouter.get('/', async (c) => {
     const customerId = c.get('customer_id') as string;
@@ -28,6 +35,7 @@ auditRouter.get('/', async (c) => {
     const success = c.req.query('success');     // 'true' | 'false' | undefined
     const from = c.req.query('from');         // ISO date string
     const to = c.req.query('to');           // ISO date string
+    const format = (c.req.query('format') ?? '').toLowerCase();
     const cursor = c.req.query('cursor');
     const pageStr = c.req.query('page');
     const offsetStr = c.req.query('offset');
@@ -114,33 +122,87 @@ auditRouter.get('/', async (c) => {
         ? Buffer.from(JSON.stringify({ ts: lastRow.timestamp, id: lastRow.outcome_id })).toString('base64')
         : null;
 
+    const outcomes = (data ?? []).map((row: any) => ({
+        outcome_id: row.outcome_id,
+        session_id: row.session_id,
+        timestamp: row.timestamp,
+        success: row.success,
+        response_time_ms: row.response_time_ms,
+        error_code: row.error_code,
+        error_message: row.error_message,
+        is_synthetic: row.is_synthetic,
+        salience_score: row.salience_score,
+        agent: row.dim_agents ? {
+            id: row.dim_agents.agent_id,
+            name: row.dim_agents.agent_name,
+            type: row.dim_agents.agent_type,
+        } : null,
+        action: row.dim_actions ? {
+            id: row.dim_actions.action_id,
+            name: row.dim_actions.action_name,
+            category: row.dim_actions.action_category,
+        } : null,
+        context: row.dim_contexts ? {
+            id: row.dim_contexts.context_id,
+            issue_type: row.dim_contexts.issue_type,
+            environment: row.dim_contexts.environment,
+        } : null,
+    }));
+
+    if (format === 'csv') {
+        const headers = [
+            'outcome_id',
+            'session_id',
+            'timestamp',
+            'success',
+            'response_time_ms',
+            'error_code',
+            'error_message',
+            'is_synthetic',
+            'salience_score',
+            'agent_id',
+            'agent_name',
+            'agent_type',
+            'action_id',
+            'action_name',
+            'action_category',
+            'context_id',
+            'issue_type',
+            'environment',
+        ];
+
+        const rows = outcomes.map((o) => [
+            o.outcome_id,
+            o.session_id,
+            o.timestamp,
+            o.success,
+            o.response_time_ms,
+            o.error_code,
+            o.error_message,
+            o.is_synthetic,
+            o.salience_score,
+            o.agent?.id,
+            o.agent?.name,
+            o.agent?.type,
+            o.action?.id,
+            o.action?.name,
+            o.action?.category,
+            o.context?.id,
+            o.context?.issue_type,
+            o.context?.environment,
+        ].map(csvEscape).join(','));
+
+        const csv = [headers.join(','), ...rows].join('\n');
+        const fileDate = new Date().toISOString().slice(0, 10);
+
+        c.header('Content-Type', 'text/csv; charset=utf-8');
+        c.header('Content-Disposition', `attachment; filename="layerinfinite-audit-${fileDate}.csv"`);
+        c.header('Cache-Control', 'no-store');
+        return c.body(csv, 200);
+    }
+
     return c.json({
-        outcomes: (data ?? []).map((row: any) => ({
-            outcome_id: row.outcome_id,
-            session_id: row.session_id,
-            timestamp: row.timestamp,
-            success: row.success,
-            response_time_ms: row.response_time_ms,
-            error_code: row.error_code,
-            error_message: row.error_message,
-            is_synthetic: row.is_synthetic,
-            salience_score: row.salience_score,
-            agent: row.dim_agents ? {
-                id: row.dim_agents.agent_id,
-                name: row.dim_agents.agent_name,
-                type: row.dim_agents.agent_type,
-            } : null,
-            action: row.dim_actions ? {
-                id: row.dim_actions.action_id,
-                name: row.dim_actions.action_name,
-                category: row.dim_actions.action_category,
-            } : null,
-            context: row.dim_contexts ? {
-                id: row.dim_contexts.context_id,
-                issue_type: row.dim_contexts.issue_type,
-                environment: row.dim_contexts.environment,
-            } : null,
-        })),
+        outcomes,
         pagination: {
             page,
             page_size: pageSize,
