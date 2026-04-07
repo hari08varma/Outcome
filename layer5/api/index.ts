@@ -473,7 +473,6 @@ v1.use('/discrepancies', primaryAuth);
 v1.use('/discrepancies/*', primaryAuth);
 v1.use('/pending-signals', primaryAuth);
 v1.use('/pending-signals/*', primaryAuth);
-v1.use('/webhook/*', primaryAuth);
 
 // Apply route-specific rate limiting only after auth has set customer_id.
 app.use('/v1/log-outcome', primaryAuth, rateLimitMiddleware, validateActionMiddleware);

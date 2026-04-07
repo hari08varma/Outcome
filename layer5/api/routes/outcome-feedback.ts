@@ -102,7 +102,8 @@ outcomeFeedbackRouter.post('/', async (c) => {
             cross_event_status: crossEventStatus,
             cross_event_last_updated: nowIso,
         })
-        .eq('outcome_id', body.outcome_id);
+        .eq('outcome_id', body.outcome_id)
+        .eq('customer_id', customerId);
 
     if (updateErr) {
         return c.json({ error: 'Failed to update outcome', details: updateErr.message }, 500);

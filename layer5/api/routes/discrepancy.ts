@@ -21,8 +21,17 @@ type CrossEventOutcomeRow = {
     outcome_id: string;
     action_id: string | null;
     success: boolean;
+    outcome_score: number | null;
     signal_confidence: number | null;
     cross_event_status: string | null;
+    inconsistency_type: string | null;
+    inconsistency_reason: string | null;
+};
+
+type InconsistentOutcomeRow = {
+    outcome_id: string;
+    action_id: string | null;
+    signal_confidence: number | null;
     inconsistency_type: string | null;
     inconsistency_reason: string | null;
 };
@@ -381,7 +390,7 @@ discrepancyRoute.post('/detect', async (c) => {
 
         const { data: crossEventRows, error: crossEventError } = await supabase
             .from('fact_outcomes')
-            .select('outcome_id, action_id, success, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason')
+            .select('outcome_id, action_id, success, outcome_score, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason')
             .eq('customer_id', customerId)
             .eq('cross_event_status', 'conflict')
             .not('outcome_id', 'is', null);
@@ -414,10 +423,12 @@ discrepancyRoute.post('/detect', async (c) => {
                 action_name: row.action_id ? `action:${row.action_id}` : 'unknown_action',
                 discrepancy_type: 'cross_event_conflict',
                 expected_outcome: row.success,
-                actual_outcome: row.success,
+                actual_outcome: row.outcome_score === null
+                    ? row.success
+                    : row.outcome_score >= 0.5,
                 signal_confidence: row.signal_confidence,
                 detail: row.inconsistency_reason
-                    ?? 'Cross-event delayed signal conflict detected.',
+                    ?? `Cross-event delayed signal conflict detected (expected=${String(row.success)} actual=${String(row.outcome_score === null ? row.success : row.outcome_score >= 0.5)}).`,
             }));
 
         if (crossEventInserts.length > 0) {
@@ -531,7 +542,18 @@ discrepancyRoute.post('/detect', async (c) => {
             }
         }
 
-        const inconsistentRows = ((crossEventRows ?? []) as CrossEventOutcomeRow[])
+        const { data: inconsistentFactRows, error: inconsistentRowsError } = await supabase
+            .from('fact_outcomes')
+            .select('outcome_id, action_id, signal_confidence, inconsistency_type, inconsistency_reason')
+            .eq('customer_id', customerId)
+            .not('inconsistency_type', 'is', null)
+            .not('outcome_id', 'is', null);
+
+        if (inconsistentRowsError) {
+            return c.json({ error: 'Failed to load ingestion inconsistencies', details: inconsistentRowsError.message }, 500);
+        }
+
+        const inconsistentRows = ((inconsistentFactRows ?? []) as InconsistentOutcomeRow[])
             .filter((row) => row.inconsistency_type !== null);
         const inconsistencyOutcomeIds = [...new Set(inconsistentRows.map((row) => row.outcome_id))];
         if (inconsistencyOutcomeIds.length > 0) {

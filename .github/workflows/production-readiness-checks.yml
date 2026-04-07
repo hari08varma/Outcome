@@ -121,5 +121,32 @@ jobs:
             fi
           done
 
+      - name: Determine cohort check mode
+        id: cohort_mode
+        shell: bash
+        run: |
+          has_single=false
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            has_single=true
+          fi
+
+          has_multi=false
+          if [ -n "$COHORT_ENVS_JSON" ] || [ -n "$COHORT_ENVIRONMENTS" ]; then
+            has_multi=true
+          fi
+
+          if [ "$has_single" = true ] || [ "$has_multi" = true ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Cohort deployment verification enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Cohort deployment verification skipped: configure SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY or COHORT_ENVS_JSON/COHORT_ENVIRONMENTS in GitHub repo variables/secrets."
+          fi
+
       - name: Verify cohort deployment artifacts
+        if: steps.cohort_mode.outputs.enabled == 'true'
         run: node layer5/scripts/check-cohort-deploy.js
+
+      - name: Skip cohort deployment artifacts check
+        if: steps.cohort_mode.outputs.enabled != 'true'
+        run: echo "Skipped cohort deployment verification due to missing GitHub configuration."
