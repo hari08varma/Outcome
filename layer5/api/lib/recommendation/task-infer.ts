@@ -52,18 +52,83 @@ const ISSUE_TYPE_TO_TASK: Record<string, string> = {
 };
 
 const VALID_TASK_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
+const MAX_TASK_NAME_LENGTH = 64;
+const GENERIC_TASK_NAME = 'unspecified_issue';
+const GENERIC_PLACEHOLDER_TOKENS = new Set([
+  'unknown',
+  'unknown_task',
+  'unspecified',
+  'unspecified_issue',
+  'n_a',
+  'na',
+  'none',
+  'null',
+  'undefined',
+]);
 
-export function validateTaskName(raw: string | null | undefined): string {
-  if (!raw) return 'unknown_task';
-  // Normalize: lowercase, trim, replace spaces+hyphens with underscores
-  const normalized = raw
+function stableTaskHash(raw: string): string {
+  // Deterministic short hash so unparseable labels still map to a stable task bucket.
+  let hash = 2166136261;
+  const input = raw.trim().toLowerCase();
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).padStart(7, '0').slice(0, 10);
+}
+
+function normalizeTaskToken(raw: string): string {
+  return raw
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase()
     .replace(/[\s\-]+/g, '_')
-    .replace(/[^a-z0-9_]/g, '')
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
-  if (!normalized || !VALID_TASK_PATTERN.test(normalized)) return 'unknown_task';
-  return normalized;
+}
+
+function fallbackTaskName(raw: string): string {
+  return `task_${stableTaskHash(raw)}`;
+}
+
+function buildTaskCandidate(raw: string): string {
+  const normalized = normalizeTaskToken(raw);
+  if (!normalized) return '';
+
+  const prefixed = /^[a-z]/.test(normalized)
+    ? normalized
+    : `task_${normalized}`;
+
+  return prefixed
+    .slice(0, MAX_TASK_NAME_LENGTH)
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+$/g, '');
+}
+
+export function validateTaskName(raw: string | null | undefined): string {
+  if (!raw) return 'unknown_task';
+  if (raw.trim() === '') return 'unknown_task';
+
+  const candidate = buildTaskCandidate(raw);
+  if (!candidate) return fallbackTaskName(raw);
+
+  if (GENERIC_PLACEHOLDER_TOKENS.has(candidate)) {
+    return GENERIC_TASK_NAME;
+  }
+
+  if (!VALID_TASK_PATTERN.test(candidate)) {
+    return fallbackTaskName(raw);
+  }
+
+  return candidate;
+}
+
+export function isGenericTaskName(taskName: string | null | undefined): boolean {
+  if (!taskName) return false;
+  const normalized = validateTaskName(taskName);
+  return normalized === 'unknown_task' || normalized === GENERIC_TASK_NAME;
 }
 
 /**
@@ -73,7 +138,7 @@ export function validateTaskName(raw: string | null | undefined): string {
  * EXACT_MATCH        (0.90): issue_type found verbatim in ISSUE_TYPE_TO_TASK table.
  * PREFIX_MATCH       (0.70): issue_type shares a known prefix — plausible but inferred.
  * SLUGIFIED_FALLBACK (0.50): No known mapping; issue_type used directly after slugify.
- * UNKNOWN            (0.30): issue_type was blank or produced 'unknown_task'.
+ * UNKNOWN            (0.30): issue_type was blank.
  */
 export type TaskMappingTier =
   | 'developer_provided'
@@ -110,7 +175,7 @@ export interface TaskInferResult {
  *   1. Exact match in ISSUE_TYPE_TO_TASK lookup  → confidence 0.90
  *   2. Prefix match (e.g. "payment_" → "payment_failed") → confidence 0.70
  *   3. Slugified issue_type (spaces/hyphens → underscores, lowercase) → confidence 0.50
- *   4. Unresolvable → 'unknown_task', confidence 0.30
+ *   4. Blank issue_type → 'unknown_task', confidence 0.30
  *
  * @param issueType - The issue_type field from the log_outcome request.
  * @returns TaskInferResult with task name, confidence, and tier.
@@ -124,7 +189,14 @@ export function inferTask(issueType: string): TaskInferResult {
     };
   }
 
-  const normalized = issueType.trim().toLowerCase();
+  const normalized = normalizeTaskToken(issueType);
+  if (!normalized) {
+    return {
+      task: fallbackTaskName(issueType),
+      confidence: TASK_MAPPING_CONFIDENCE.slugified_fallback,
+      tier: 'slugified_fallback',
+    };
+  }
 
   // 1. Exact match — highest confidence inferred mapping
   if (ISSUE_TYPE_TO_TASK[normalized]) {
@@ -138,7 +210,7 @@ export function inferTask(issueType: string): TaskInferResult {
   // 2. Prefix match — plausible but not certain
   for (const [key, value] of Object.entries(ISSUE_TYPE_TO_TASK)) {
     const prefix = key.split('_')[0];
-    if (prefix && normalized.startsWith(prefix)) {
+    if (prefix && (normalized === prefix || normalized.startsWith(`${prefix}_`))) {
       return {
         task: value,
         confidence: TASK_MAPPING_CONFIDENCE.prefix_match,

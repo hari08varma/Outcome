@@ -10,7 +10,7 @@ import type { AgentTrustScore, CustomerPolicyConfig } from '../lib/policy-engine
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
-import { inferTask, validateTaskName, TASK_MAPPING_CONFIDENCE } from '../lib/recommendation/task-infer.js';
+import { inferTask, isGenericTaskName, validateTaskName, TASK_MAPPING_CONFIDENCE } from '../lib/recommendation/task-infer.js';
 import type { TaskInferResult } from '../lib/recommendation/task-infer.js';
 import {
     inferSemanticActionCluster,
@@ -185,7 +185,12 @@ const LogOutcomeBody = z.object({
     action_name: z.string().min(1).max(255).optional(),
     action_id_input: z.string().optional(),
     action_params: z.record(z.string(), z.unknown()).optional(),
-    issue_type: z.string().min(1).max(255),
+    issue_type: z
+        .string()
+        .min(1)
+        .max(255)
+        .transform(val => sanitizeString(val, 255).trim())
+        .refine(val => val.length > 0, { message: 'issue_type cannot be blank' }),
     success: z.boolean(),
     response_time_ms: z.number().int().positive().optional(),
     response_ms: z.number().int().positive().optional(), // SDK alias — maps to response_time_ms
@@ -871,12 +876,30 @@ logOutcomeRouter.post('/', async (c) => {
         const rawTask = body.task_name?.trim() || null;
         let taskInferResult: TaskInferResult;
         if (rawTask) {
-            // Developer explicitly provided task_name — authoritative, full confidence.
-            taskInferResult = {
-                task: validateTaskName(rawTask),
-                confidence: TASK_MAPPING_CONFIDENCE.developer_provided,
-                tier: 'developer_provided',
-            };
+            const normalizedProvidedTask = validateTaskName(rawTask);
+
+            if (isGenericTaskName(normalizedProvidedTask)) {
+                // Generic placeholders (e.g. unknown_task) should not override
+                // a potentially more specific issue_type-derived task.
+                taskInferResult = inferTask(body.issue_type);
+
+                // If issue_type is still not informative, keep the generic task
+                // but do not mark it as developer-authoritative.
+                if (taskInferResult.tier === 'unknown') {
+                    taskInferResult = {
+                        task: normalizedProvidedTask,
+                        confidence: TASK_MAPPING_CONFIDENCE.slugified_fallback,
+                        tier: 'slugified_fallback',
+                    };
+                }
+            } else {
+                // Developer explicitly provided a specific task_name.
+                taskInferResult = {
+                    task: normalizedProvidedTask,
+                    confidence: TASK_MAPPING_CONFIDENCE.developer_provided,
+                    tier: 'developer_provided',
+                };
+            }
         } else {
             // Auto-infer from issue_type with confidence tier.
             taskInferResult = inferTask(body.issue_type);
