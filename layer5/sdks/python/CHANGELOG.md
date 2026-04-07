@@ -9,6 +9,7 @@ All notable changes to the Python SDK are documented here.
 - **Exploration floor** (`min_observations_per_action` param) — forces LI to try every registered action at least N times before exploiting the top scorer. Eliminates cold-start blind spots where high-performing actions never get observed because the LLM fallback always picks the same action. Default `0` (disabled, fully backward-compatible).
 
 - **Data resilience in `log_outcome()`**:
+  - Task name normalization via `normalize_task(value)` static method — strips whitespace, lowercases, replaces spaces/hyphens with underscores. Prevents task fragmentation from casing/spacing differences (`"Payment_Failed"` and `"payment failed"` and `"payment_failed"` all map to the same task)
   - Fuzzy action name matching via `difflib` — if `action_name` doesn't exactly match a registered action, SDK finds the closest match (cutoff 0.8) and warns instead of letting the API reject it
   - `normalize_business_outcome(value)` static method — maps free-text values (`"ok"`, `"error"`, `"done"`) to canonical API values (`resolved`, `failed`, `unknown`, `partial`)
   - Contradiction quarantine — warns when `ingestion_quality.is_inconsistent=True` (success=True but outcome_score is suspiciously low)

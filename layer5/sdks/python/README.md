@@ -81,6 +81,8 @@ result = li.run("payment_failed")
 | `li.observe(task)` | all | Quick outcome stats (total runs, success rate, best/worst) |
 | `li.log_outcome(request)` | all | Manual outcome logging for power users |
 | `li.list_actions(task)` | all | List registered actions |
+| `Layerinfinite.normalize_task(value)` | — | `"Payment Failed"` → `"payment_failed"` |
+| `Layerinfinite.normalize_business_outcome(value)` | — | `"ok"` → `"resolved"`, `"error"` → `"failed"` |
 
 ## Constructor Parameters
 

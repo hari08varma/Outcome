@@ -1104,18 +1104,44 @@ class Layerinfinite:
         normalized = str(value or "").strip().lower()
         return _MAP.get(normalized, "unknown")
 
+    @staticmethod
+    def normalize_task(value: str) -> str:
+        """
+        Normalize a task name (issue_type) to a consistent canonical form.
+        Strips whitespace, lowercases, replaces spaces and hyphens with underscores.
+
+        Examples:
+          "Payment_Failed"  -> "payment_failed"
+          "payment failed"  -> "payment_failed"
+          "API-Timeout"     -> "api_timeout"
+          "  user_not_responding  " -> "user_not_responding"
+        """
+        return str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+
     def log_outcome(self, request: LogOutcomeRequest) -> LogOutcomeResponse:
         """
         Backward-compatible direct outcome logging method for power users.
         Fix 2 — Data resilience:
+          - Normalizes issue_type (task) to canonical snake_case form.
           - Fuzzy-matches action_name against registered actions to catch typos.
           - Normalizes business_outcome to canonical values before sending.
           - Warns on inconsistency (success=True but very low outcome_score).
         """
+        # Fix 2a: Normalize issue_type — prevents task fragmentation from
+        # casing/spacing differences ("Payment_Failed" vs "payment_failed").
+        canonical_task = self.normalize_task(request.issue_type)
+        if canonical_task != request.issue_type:
+            logger.warning(
+                "[layerinfinite] issue_type '%s' normalized to '%s'.",
+                request.issue_type,
+                canonical_task,
+            )
+            request = request.model_copy(update={"issue_type": canonical_task})
+
         task = request.issue_type
         action_name = request.action_name
 
-        # Fix 2a: Fuzzy match action_name against registered actions for this task.
+        # Fix 2b: Fuzzy match action_name against registered actions for this task.
         with self._registry_lock:
             registered_actions = list(self._actions.get(task, {}).keys())
         if registered_actions and action_name not in registered_actions:
@@ -1139,7 +1165,7 @@ class Layerinfinite:
                     task,
                 )
 
-        # Fix 2b: Normalize business_outcome if provided.
+        # Fix 2c: Normalize business_outcome if provided.
         if request.business_outcome is not None:
             canonical = self.normalize_business_outcome(request.business_outcome)
             if canonical != request.business_outcome:
@@ -1165,7 +1191,7 @@ class Layerinfinite:
         response = self._request("POST", "/v1/log-outcome", json=payload)
         result = LogOutcomeResponse.model_validate(response.json())
 
-        # Fix 2c: Contradiction quarantine — warn when ingestion_quality flags inconsistency.
+        # Fix 2d: Contradiction quarantine — warn when ingestion_quality flags inconsistency.
         if result.ingestion_quality and result.ingestion_quality.is_inconsistent:
             print(
                 f"[layerinfinite] Inconsistency detected: success=True but "
