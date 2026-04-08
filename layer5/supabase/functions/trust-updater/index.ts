@@ -203,6 +203,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
                     .select('success, timestamp, customer_id, action_id')
                     .eq('agent_id', trust.agent_id)
                     .eq('is_synthetic', false)
+                    // IMPORT GUARD: only count live SDK outcomes.
+                    // Historical import rows must never affect trust scores.
+                    .eq('ingestion_source', 'sdk')
                     .gt('timestamp', trust.updated_at ?? '1970-01-01')
                     .order('timestamp', { ascending: true });
 

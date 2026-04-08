@@ -15,8 +15,61 @@ import { buildRecommendationDataFreshness } from '../lib/recommendation/data-fre
 import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
 import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
 import { computeCohortReliability } from '../lib/recommendation/cohort-reliability.js';
+import { supabase } from '../lib/supabase.js';
 
 export const getRecommendationsRouter = new Hono();
+
+// ── Data sources summary ──────────────────────────────────────
+// Counts SDK vs imported outcomes for the agent so the client
+// can show "Based on 248 uploaded + 42 SDK outcomes, quality 0.71"
+async function fetchDataSources(
+    customerId: string,
+    agentId: string,
+    taskName: string,
+): Promise<{
+    uploaded_outcomes: number;
+    sdk_outcomes: number;
+    total: number;
+    upload_share: number;
+    quality_score: number | null;
+}> {
+    try {
+        const { data } = await supabase
+            .from('fact_outcomes')
+            .select('ingestion_source, data_quality')
+            .eq('customer_id', customerId)
+            .eq('agent_id', agentId)
+            .eq('task_name', taskName)
+            .eq('is_synthetic', false)
+            .eq('is_deleted', false);
+
+        if (!data || data.length === 0) {
+            return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
+        }
+
+        let uploaded = 0;
+        let sdk = 0;
+        let qualitySum = 0;
+        let qualityCount = 0;
+
+        for (const row of data) {
+            if (row.ingestion_source === 'import') uploaded++;
+            else sdk++;
+            if (typeof row.data_quality === 'number') {
+                qualitySum += row.data_quality;
+                qualityCount++;
+            }
+        }
+
+        const total = uploaded + sdk;
+        const uploadShare = total > 0 ? Math.round((uploaded / total) * 10000) / 10000 : 0;
+        const qualityScore = qualityCount > 0 ? Math.round((qualitySum / qualityCount) * 10000) / 10000 : null;
+
+        return { uploaded_outcomes: uploaded, sdk_outcomes: sdk, total, upload_share: uploadShare, quality_score: qualityScore };
+    } catch {
+        return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
+    }
+}
 
 function toScopeTransitionCandidate(
     result: RecommendationResult,
@@ -180,14 +233,21 @@ getRecommendationsRouter.get('/', async (c) => {
         const medianSuccessRate = medianOf(
             result.all_actions.map((action) => Number(action.resolution_rate ?? Number.NaN)),
         );
-        const cohortCycle = await upsertRecommendationCohortCycle({
-            customer_id: customerId,
-            task_name: taskName,
-            observed_at: result.generated_at,
-            total_outcomes: totalOutcomes,
-            median_confidence: result.confidence,
-            median_success_rate: medianSuccessRate,
-        });
+        const [cohortCycle, dataSources] = await Promise.all([
+            upsertRecommendationCohortCycle({
+                customer_id: customerId,
+                task_name: taskName,
+                observed_at: result.generated_at,
+                total_outcomes: totalOutcomes,
+                median_confidence: result.confidence,
+                median_success_rate: medianSuccessRate,
+            }),
+            // Only fetch data_sources when scoped to an agent — most useful context
+            // for developers who have uploaded historical data for that agent.
+            scopedAgentId
+                ? fetchDataSources(customerId, scopedAgentId, taskName)
+                : Promise.resolve(null),
+        ]);
         const cohortReliability = computeCohortReliability(result, cohortCycle);
 
         return c.json(
@@ -231,6 +291,10 @@ getRecommendationsRouter.get('/', async (c) => {
                         `and your registered dim_actions.`
                         : null,
                 },
+                // Present only when agent_id is scoped. Shows the split between
+                // uploaded historical outcomes and live SDK outcomes for this agent+task,
+                // so the developer knows what fraction of confidence comes from each source.
+                data_sources: dataSources,
             },
             200
         );

@@ -21,6 +21,7 @@ import SettingsLayout from './pages/dashboard/settings';
 import ApiKeysSettings from './pages/dashboard/settings/api-keys';
 import AgentsSettings from './pages/dashboard/settings/agents';
 import ActionsSettings from './pages/dashboard/settings/actions';
+import ImportSettings from './pages/dashboard/settings/import';
 import LandingPage from './pages/LandingPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import NavBar from './components/NavBar';
@@ -86,6 +87,7 @@ function App(): React.ReactElement {
               <Route path="agents" element={<AgentsSettings />} />
               <Route path="actions" element={<ActionsSettings />} />
               <Route path="audit" element={<AuditPage />} />
+              <Route path="import" element={<ImportSettings />} />
             </Route>
           </Route>
 

@@ -48,12 +48,21 @@ export interface OrchestratorParams {
     decisionId?: string;
     decisionRecord?: any;
     signalConfidence?: number | null;
+    /**
+     * When true, the trust-update task is skipped entirely.
+     * Set by the import route — imported historical rows must never
+     * affect agent trust scores (trust only reflects live SDK signal).
+     */
+    skipTrust?: boolean;
 }
 
 // ── Orchestrator Main Entrypoint ──
 export async function orchestrateOutcome(params: OrchestratorParams): Promise<void> {
 
     async function taskTrustUpdate() {
+        // IMPORT GUARD: imported historical rows must never update agent trust.
+        // Trust reflects live SDK signal only. skipTrust is set by the import route.
+        if (params.skipTrust === true) return;
         await updateAgentTrust(params.agentId, params.customerId, params.finalSuccess,
             params.actionName, params.signalConfidence ?? null);
     }
@@ -239,10 +248,13 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
     }
 
     // Non-blocking: upsert live trust score so dashboard health card
-    // shows real data immediately (not 0 while waiting for backprop engine)
-    upsertLiveTrustScore(params.agentId).catch((err) =>
-        console.warn('[orchestrator] upsertLiveTrustScore failed:', (err as Error).message)
-    );
+    // shows real data immediately (not 0 while waiting for backprop engine).
+    // IMPORT GUARD: skip for imported rows — trust reflects SDK signal only.
+    if (params.skipTrust !== true) {
+        upsertLiveTrustScore(params.agentId).catch((err) =>
+            console.warn('[orchestrator] upsertLiveTrustScore failed:', (err as Error).message)
+        );
+    }
 }
 
 // ── Live Trust Score Upsert (fire-and-forget, creates row for new agents) ──
@@ -255,6 +267,9 @@ async function upsertLiveTrustScore(
         .eq('agent_id', agentId)
         .eq('is_synthetic', false)
         .eq('is_deleted', false)
+        // IMPORT GUARD: only count live SDK outcomes for trust calculation.
+        // Historical import rows (ingestion_source='import') must not inflate trust.
+        .eq('ingestion_source', 'sdk')
         .order('timestamp', { ascending: false })
         .limit(100);
 

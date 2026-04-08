@@ -91,6 +91,7 @@ import pendingSignalsRoute from './routes/pending-signals.js';
 import webhookRoute from './routes/webhook.js';
 import { getRecommendationsRouter } from './routes/get-recommendations.js';
 import { observeRouter } from './routes/observe.js';
+import { importRouter } from './routes/import.js';
 
 // ── PORT: Railway injects PORT, fallback to API_PORT, then 3000 ──
 const PORT = parseInt(process.env.PORT ?? process.env.API_PORT ?? '3000', 10);
@@ -473,6 +474,8 @@ v1.use('/discrepancies', primaryAuth);
 v1.use('/discrepancies/*', primaryAuth);
 v1.use('/pending-signals', primaryAuth);
 v1.use('/pending-signals/*', primaryAuth);
+v1.use('/import', primaryAuth);
+v1.use('/import/*', primaryAuth);
 
 // Apply route-specific rate limiting only after auth has set customer_id.
 app.use('/v1/log-outcome', primaryAuth, rateLimitMiddleware, validateActionMiddleware);
@@ -491,6 +494,7 @@ v1.route('/simulate', simulateRouter);
 v1.route('/contracts', contractsRoute);
 v1.route('/discrepancies', discrepancyRoute);
 v1.route('/pending-signals', pendingSignalsRoute);
+v1.route('/import', importRouter);
 v1.post('/webhook/:provider', webhookRoute);
 
 app.route('/v1', v1);

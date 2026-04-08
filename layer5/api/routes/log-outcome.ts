@@ -1,3 +1,4 @@
+import { insertOutcomeRecord } from '../lib/ingest-core.js';
 import { Context, Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'node:crypto';
@@ -627,85 +628,81 @@ async function insertCoreOutcome(
     // sequence-tracking field; backprop_episode_id has a FK to fact_episodes which
     // only the backprop engine populates. Passing body.episode_id here causes FK
     // violation 23503 on every request that sends episode_id.
-    const { data: outcome, error: insertErr } = await supabase
-        .from('fact_outcomes')
-        .insert({
-            agent_id: agentId,
-            action_id: actionId,
-            context_id: contextId,
-            customer_id: customerId,
-            session_id: body.session_id,
-            success: finalSuccess,
-            response_time_ms: body.response_time_ms ?? null,
-            error_code: body.error_code ?? null,
-            error_message: body.error_message ?? null,
-            raw_context: body.raw_context ?? {},
-            is_synthetic: false,
-            salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
-            // outcome_score is NOT NULL in DB (migration 044 adds constraint + DEFAULT 0.5).
-            // finalOutcomeScore can be null when developer omits outcome_score and verifier
-            // has no override. Fall back to 0.5 (neutral prior) to satisfy the constraint
-            // without fabricating a signal — the raw truth is preserved in outcome_score_raw.
-            outcome_score: finalOutcomeScore ?? 0.5,
-            business_outcome: body.business_outcome ?? null,
-            feedback_signal: body.feedback_signal ?? 'immediate',
-            verifier_source: body.verifier_signal?.source ?? null,
-            verifier_value: body.verifier_signal?.value?.toString() ?? null,
-            discrepancy_detected: verification.discrepancy_detected,
-            backprop_episode_id: body.backprop_episode_id ?? null,
-            // episode_id: the SDK's sequence-grouping field.
-            // Stored as plain UUID string — no FK constraint.
-            // Distinct from backprop_episode_id which has a FK to fact_episodes.
-            episode_id: body.episode_id ?? null,
-            // ── Phase 1: Signal columns ───────────────────────
-            signal_source: body.signal_source ?? 'explicit',
-            signal_confidence: body.causal_confidence ?? null,
-            causal_depth: body.signal_depth ?? null,
-            signal_pending: crossEventStatus === 'pending_signal',
-            signal_updated_at: null,
-            cross_event_status: crossEventStatus,
-            cross_event_last_updated: new Date().toISOString(),
-            retry_chain_id: retryChain.retryChainId,
-            retry_attempt: retryChain.retryAttempt,
-            cross_event_attempt_count: retryChain.crossEventAttemptCount,
-            canonical_outcome_id: retryChain.canonicalOutcomeId,
-            pending_registration_id: null,
-            // ── Decision Recommendation Engine ───────────────────────
-            // Task resolution rule: developer-provided wins, else infer.
-            task_name: body._resolved_task_name ?? null,
-            semantic_cluster_key: semanticCluster.clusterKey,
-            semantic_cluster_domain: semanticCluster.domain,
-            semantic_cluster_intent: semanticCluster.intent,
-            semantic_cluster_confidence: semanticCluster.confidence,
-            // ── Ingestion Quality Layer ───────────────────────────────
-            // Raw developer signal — never fabricated, null if not provided.
-            outcome_score_raw: outcomeScoreRaw,
-            // 0.0–1.0 completeness score for this event.
-            data_quality: dataQuality,
-            // TRUE when success=true but outcome_score_raw < 0.3 — flagged, not overridden.
-            is_inconsistent: isInconsistent,
-            inconsistency_type: inconsistencyType,
-            inconsistency_reason: inconsistencyReason,
-            // Confidence of issue_type → task_name mapping (1.0 = developer provided).
-            mapping_confidence: mappingConfidence,
-            // 'provided' = developer sent outcome_score; 'inferred' = absent, fell back to binary.
-            score_origin: scoreOrigin,
-            // Exact tier from TaskInferResult: 'developer_provided' | 'exact_match' | etc.
-            mapping_tier: mappingTier,
-            // Encodes which rule/threshold flagged is_inconsistent (null if not flagged).
-            inconsistency_rule_version: inconsistencyRuleVersion,
-        })
-        .select('outcome_id, timestamp')
-        .single();
+    const inserted = await insertOutcomeRecord({
+        agent_id: agentId,
+        action_id: actionId,
+        context_id: contextId,
+        customer_id: customerId,
+        session_id: body.session_id,
+        success: finalSuccess,
+        response_time_ms: body.response_time_ms ?? null,
+        error_code: body.error_code ?? null,
+        error_message: body.error_message ?? null,
+        raw_context: body.raw_context ?? {},
+        is_synthetic: false,
+        // All SDK-originated rows are explicitly marked 'sdk'.
+        // Import rows written by the import route use 'import'.
+        // Trust-update paths filter on this column to exclude imported history.
+        ingestion_source: 'sdk',
+        salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
+        // outcome_score is NOT NULL in DB (migration 044 adds constraint + DEFAULT 0.5).
+        // finalOutcomeScore can be null when developer omits outcome_score and verifier
+        // has no override. Fall back to 0.5 (neutral prior) to satisfy the constraint
+        // without fabricating a signal — the raw truth is preserved in outcome_score_raw.
+        outcome_score: finalOutcomeScore ?? 0.5,
+        business_outcome: body.business_outcome ?? null,
+        feedback_signal: body.feedback_signal ?? 'immediate',
+        verifier_source: body.verifier_signal?.source ?? null,
+        verifier_value: body.verifier_signal?.value?.toString() ?? null,
+        discrepancy_detected: verification.discrepancy_detected,
+        backprop_episode_id: body.backprop_episode_id ?? null,
+        // episode_id: the SDK's sequence-grouping field.
+        // Stored as plain UUID string — no FK constraint.
+        // Distinct from backprop_episode_id which has a FK to fact_episodes.
+        episode_id: body.episode_id ?? null,
+        // ── Phase 1: Signal columns ───────────────────────
+        signal_source: body.signal_source ?? 'explicit',
+        signal_confidence: body.causal_confidence ?? null,
+        causal_depth: body.signal_depth ?? null,
+        signal_pending: crossEventStatus === 'pending_signal',
+        signal_updated_at: null,
+        cross_event_status: crossEventStatus,
+        cross_event_last_updated: new Date().toISOString(),
+        retry_chain_id: retryChain.retryChainId,
+        retry_attempt: retryChain.retryAttempt,
+        cross_event_attempt_count: retryChain.crossEventAttemptCount,
+        canonical_outcome_id: retryChain.canonicalOutcomeId,
+        pending_registration_id: null,
+        // ── Decision Recommendation Engine ───────────────────────
+        // Task resolution rule: developer-provided wins, else infer.
+        task_name: body._resolved_task_name ?? null,
+        semantic_cluster_key: semanticCluster.clusterKey,
+        semantic_cluster_domain: semanticCluster.domain,
+        semantic_cluster_intent: semanticCluster.intent,
+        semantic_cluster_confidence: semanticCluster.confidence,
+        // ── Ingestion Quality Layer ───────────────────────────────
+        // Raw developer signal — never fabricated, null if not provided.
+        outcome_score_raw: outcomeScoreRaw,
+        // 0.0–1.0 completeness score for this event.
+        data_quality: dataQuality,
+        // TRUE when success=true but outcome_score_raw < 0.3 — flagged, not overridden.
+        is_inconsistent: isInconsistent,
+        inconsistency_type: inconsistencyType,
+        inconsistency_reason: inconsistencyReason,
+        // Confidence of issue_type → task_name mapping (1.0 = developer provided).
+        mapping_confidence: mappingConfidence,
+        // 'provided' = developer sent outcome_score; 'inferred' = absent, fell back to binary.
+        score_origin: scoreOrigin,
+        // Exact tier from TaskInferResult: 'developer_provided' | 'exact_match' | etc.
+        mapping_tier: mappingTier,
+        // Encodes which rule/threshold flagged is_inconsistent (null if not flagged).
+        inconsistency_rule_version: inconsistencyRuleVersion,
+    });
 
-    if (insertErr || !outcome) {
-        const message = insertErr?.message ?? 'Unknown insert error';
-        const migrationHint = /column .* does not exist/i.test(message)
-            ? ' Run migration layer5/supabase/migrations/075_fix_log_outcome_500.sql to add missing fact_outcomes columns.'
-            : '';
-        throw new Error(`INSERT_ERROR:${message}${migrationHint}`);
-    }
-    return outcome;
+    return {
+        outcome_id: inserted.outcomeId,
+        timestamp: inserted.timestamp,
+    };
 }
 
 async function saveIdempotencyRecord(idempotencyKey: string | undefined, outcomeId: string, customerId: string) {
