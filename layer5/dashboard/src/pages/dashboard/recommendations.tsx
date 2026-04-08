@@ -311,6 +311,31 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
             {/* ── Main card ── */}
             <div className={`bg-[#111118] border ${borderAccent} rounded-xl p-6 space-y-5`}>
 
+                {/* Override cost alert — shown when LI has a clear recommendation
+                    and the expected improvement is significant (>10%).
+                    This is the cost of ignoring LI's suggestion. */}
+                {data.decision.type === 'replace' &&
+                    data.expected_improvement &&
+                    data.expected_improvement.delta_raw > 0.1 && (
+                    <div className="rounded-lg bg-[#ff4444]/10 border border-[#ff4444]/30 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-[#ff4444] mb-1 flex items-center gap-1">
+                            <AlertTriangle size={12} />
+                            Cost of Ignoring LI
+                        </p>
+                        <p className="text-sm text-[#ffb4b4]">
+                            Running <span className="font-mono text-white">{data.insight.worst_action}</span> instead of{' '}
+                            <span className="font-mono text-[#b8ff00]">{data.insight.best_action}</span> costs{' '}
+                            <span className="font-bold text-[#ff4444]">
+                                ~{(data.expected_improvement.delta_raw * 100).toFixed(0)}% success rate
+                            </span>{' '}
+                            per decision.
+                            {data.insight.sample_size && (
+                                <span className="text-[#a1a1aa]"> Based on {data.insight.sample_size.best + data.insight.sample_size.worst} outcomes.</span>
+                            )}
+                        </p>
+                    </div>
+                )}
+
                 {data.problem && (
                     <div>
                         <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">Problem</p>
@@ -476,6 +501,30 @@ function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElem
                     </div>
                 </div>
             </div>
+
+            {/* Mode upgrade banner — shown when LI has high/very_high confidence
+                and a replace decision. Tells developer they are ready to upgrade mode. */}
+            {data.decision.type === 'replace' &&
+                (confidenceMeta?.label === 'high' || confidenceMeta?.label === 'very_high') && (
+                <div className="rounded-lg bg-[#b8ff00]/5 border border-[#b8ff00]/30 px-4 py-3 flex items-start gap-3">
+                    <TrendingUp size={16} className="text-[#b8ff00] mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-[#b8ff00] mb-1">
+                            Ready to Upgrade Mode
+                        </p>
+                        <p className="text-xs text-[#a1a1aa]">
+                            LI has {confidenceMeta.label === 'very_high' ? 'very high' : 'high'} confidence on{' '}
+                            <span className="font-mono text-white">{data.task}</span>.{' '}
+                            If you are on <span className="text-white font-medium">recommend</span> mode — switch to{' '}
+                            <span className="text-[#b8ff00] font-medium">assist</span>.{' '}
+                            If already on assist — switch to <span className="text-[#b8ff00] font-medium">auto</span>.
+                        </p>
+                        <p className="text-[10px] text-[#52525b] mt-1 font-mono">
+                            Layerinfinite(mode="assist") or Layerinfinite(mode="auto")
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {/* ── Metric cards row ── */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

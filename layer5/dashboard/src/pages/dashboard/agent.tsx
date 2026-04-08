@@ -180,6 +180,41 @@ export default function Agent(): React.ReactElement {
             </div>
           </div>
 
+          {/* Mode recommendation — based on trust_status.
+              Tells the developer exactly what SDK mode to use right now. */}
+          {agent.totalOutcomes > 0 && (() => {
+            const status = agent.status;
+            if (status === 'trusted') return (
+              <div className="mb-6 rounded-xl bg-[#b8ff00]/5 border border-[#b8ff00]/30 px-4 py-3">
+                <p className="text-[11px] font-bold tracking-wide text-[#b8ff00] mb-1">READY FOR AUTO MODE</p>
+                <p className="text-xs text-[#a1a1aa]">Trust is verified. LI can pick and execute actions autonomously.</p>
+                <p className="text-[10px] font-mono text-[#52525b] mt-1">Layerinfinite(mode="auto")</p>
+              </div>
+            );
+            if (status === 'sandbox') return (
+              <div className="mb-6 rounded-xl bg-[#eab308]/5 border border-[#eab308]/30 px-4 py-3">
+                <p className="text-[11px] font-bold tracking-wide text-[#eab308] mb-1">READY FOR ASSIST MODE</p>
+                <p className="text-xs text-[#a1a1aa]">LI has enough data to suggest actions. Switch from recommend → assist.</p>
+                <p className="text-[10px] font-mono text-[#52525b] mt-1">Layerinfinite(mode="assist")</p>
+              </div>
+            );
+            if (status === 'probation') return (
+              <div className="mb-6 rounded-xl bg-[#ffaa00]/5 border border-[#ffaa00]/30 px-4 py-3">
+                <p className="text-[11px] font-bold tracking-wide text-[#ffaa00] mb-1">STAY ON RECOMMEND MODE</p>
+                <p className="text-xs text-[#a1a1aa]">LI is still learning. Keep logging outcomes — trust will improve.</p>
+                <p className="text-[10px] font-mono text-[#52525b] mt-1">Layerinfinite(mode="recommend")</p>
+              </div>
+            );
+            if (status === 'new') return (
+              <div className="mb-6 rounded-xl bg-[#1a1a24] border border-[#1a1a24] px-4 py-3">
+                <p className="text-[11px] font-bold tracking-wide text-[#a1a1aa] mb-1">WARMING UP</p>
+                <p className="text-xs text-[#52525b]">Log more outcomes to unlock LI recommendations. Use recommend mode.</p>
+                <p className="text-[10px] font-mono text-[#52525b] mt-1">Layerinfinite(mode="recommend")</p>
+              </div>
+            );
+            return null;
+          })()}
+
           <div className="space-y-3">
             {agent.status === 'suspended' && (
               <button className="w-full bg-[#00cc66] hover:bg-[#00b55a] text-black font-semibold py-2.5 rounded-lg disabled:opacity-60" onClick={reinstateAgent} disabled={reinstating}>
