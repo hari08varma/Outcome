@@ -164,6 +164,12 @@ class Layerinfinite:
         self._registry_lock = threading.Lock()
         self._active_run_decision_context: Dict[str, Any] | None = None
 
+        # Tracks the most recent suggest() decision_id per task.
+        # When @li.action wrapper fires after a suggest(), it picks this up
+        # so LI knows which suggestion was active — even if a different action was run.
+        self._active_suggest_context: Dict[str, str] = {}  # task -> decision_id
+        self._suggest_context_lock = threading.Lock()
+
         self._http_clients = [
             self._build_http_client(base_url=endpoint, timeout=timeout, api_key=api_key)
             for endpoint in self._base_urls
@@ -407,6 +413,8 @@ class Layerinfinite:
                     run_ctx = self._active_run_decision_context
                     decision_id = None
                     episode_id = None
+
+                    # Priority 1: auto mode — run() sets _active_run_decision_context.
                     if (
                         isinstance(run_ctx, dict)
                         and run_ctx.get("task") == task
@@ -414,6 +422,17 @@ class Layerinfinite:
                     ):
                         decision_id = run_ctx.get("decision_id")
                         episode_id = run_ctx.get("episode_id")
+
+                    # Priority 2: assist/recommend mode — suggest() set context.
+                    # LI knows which suggestion was active when this action ran,
+                    # even if the developer ran a different action than suggested.
+                    # Clear after one use so it doesn't bleed into the next call.
+                    if decision_id is None:
+                        with self._suggest_context_lock:
+                            suggest_decision_id = self._active_suggest_context.pop(task, None)
+                        if suggest_decision_id:
+                            decision_id = suggest_decision_id
+
                     self._log_outcome(
                         task=task,
                         action_name=action_name,
@@ -737,6 +756,9 @@ class Layerinfinite:
                     RankedAction(action_name=a, score=0.0, confidence=0.0)
                     for a in task_actions
                 ],
+                outcomes_needed=getattr(scores_resp, "outcomes_needed", 0) if scores_resp else 0,
+                cold_start=True,
+                decision_id=getattr(scores_resp, "decision_id", None) if scores_resp else None,
             )
         else:
             ranked = self._build_ranked_from_scores(scores_resp)
@@ -747,7 +769,16 @@ class Layerinfinite:
                 reason=top.policy_reason
                 or f"{top.action_name} has the highest outcome score.",
                 ranked=ranked,
+                outcomes_needed=getattr(scores_resp, "outcomes_needed", 0),
+                cold_start=getattr(scores_resp, "cold_start", False),
+                decision_id=scores_resp.decision_id,
             )
+
+        # Fix B: Store suggest context so @li.action wrapper can link the
+        # actual executed action back to this suggestion's decision_id.
+        if suggestion.decision_id:
+            with self._suggest_context_lock:
+                self._active_suggest_context[task] = suggestion.decision_id
 
         print(f'\n[layerinfinite] Suggestion for "{task}":')
         print(f"  Best action:  {suggestion.action_name} (confidence: {suggestion.confidence:.0%})")

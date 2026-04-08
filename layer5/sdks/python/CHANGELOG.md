@@ -2,6 +2,16 @@
 
 All notable changes to the Python SDK are documented here.
 
+## [0.4.1] — 2026-04-08
+
+### Added
+
+- **`decision_id` linkage for assist/recommend modes** — `suggest()` now exposes `decision_id` on the `Suggestion` object and stores it as active context. When any `@li.action`-decorated function is called after `suggest()`, the wrapper automatically links the executed action back to LI's suggestion via `decision_id` — even if the developer ran a different action than LI recommended. LI now knows: what it suggested, what was actually run, and whether it succeeded. Context is cleared after one use per task to prevent stale linkage.
+
+- **`Suggestion.decision_id` field** — `str | None`. Pass this in `log_outcome()` when using manual logging to preserve the suggestion→outcome link.
+
+### No breaking changes.
+
 ## [0.4.0] — 2026-04-08
 
 ### Added

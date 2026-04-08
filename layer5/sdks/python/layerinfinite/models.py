@@ -205,6 +205,7 @@ class Suggestion:
     ranked: List[RankedAction]
     outcomes_needed: int = 0
     cold_start: bool = False
+    decision_id: str | None = None  # link suggestion → actual action executed
 
 
 @dataclass
