@@ -45,7 +45,7 @@ from .models import (
 logger = logging.getLogger("layerinfinite")
 
 _VALID_MODES = ("recommend", "assist", "auto")
-_SDK_VERSION = "0.3.2"
+_SDK_VERSION = "0.4.2"
 _DEFAULT_BASE_URL = "https://api.layerinfinite.app"
 _BASE_URLS_ENV = "LAYERINFINITE_BASE_URLS"
 _SCORES_CACHE_TTL_SECONDS = 15 * 60
@@ -1517,6 +1517,20 @@ class Layerinfinite:
                 params={"issue_type": task, "environment": "production"},
             )
             scores = GetScoresResponse.model_validate(resp.json())
+
+            # Fix: Seed _obs_counts from backend total_attempts on first fetch.
+            # Prevents exploration floor from restarting from zero after a process
+            # restart — the backend already has the real observation counts.
+            if self._min_observations_per_action > 0 and scores.ranked_actions:
+                with self._obs_counts_lock:
+                    task_counts = self._obs_counts.setdefault(task, {})
+                    for action in scores.ranked_actions:
+                        # Only seed if we have no local count yet — never overwrite
+                        # in-process increments which are more up-to-date than the
+                        # backend (which only refreshes every 5 min via cron).
+                        if action.action_name not in task_counts:
+                            task_counts[action.action_name] = action.total_attempts
+
             if not scores.ranked_actions and not scores.top_action:
                 # Cold-start: show progress toward activation.
                 if scores.outcomes_needed > 0:
