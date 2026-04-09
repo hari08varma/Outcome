@@ -13,7 +13,7 @@
  * ══════════════════════════════════════════════════════════════
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE } from '../../../lib/config';
 import { AGENT_API_KEY_STORAGE_KEY, useAgentApiKey } from '../../../hooks/useAgentApiKey';
@@ -99,7 +99,7 @@ const API_KEY_REGEX = /^layerinfinite_[0-9a-f]{32}$/;
 // ── Component ─────────────────────────────────────────────────
 
 export default function ImportSettings(): React.ReactElement {
-  const { apiKey, handleAuthFailure } = useAgentApiKey();
+  const { handleAuthFailure } = useAgentApiKey();
   const { showToast } = useToastContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -110,7 +110,7 @@ export default function ImportSettings(): React.ReactElement {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pollHandle, setPollHandle] = useState<ReturnType<typeof setInterval> | null>(null);
 
-  const [apiKeyInput, setApiKeyInput] = useState<string>(apiKey ?? '');
+  const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [agentNameInput, setAgentNameInput] = useState<string>('');
   const [credentialsVerified, setCredentialsVerified] = useState<boolean>(false);
   const [credentialError, setCredentialError] = useState<string | null>(null);
@@ -120,12 +120,6 @@ export default function ImportSettings(): React.ReactElement {
     customerId: string;
     agentName: string;
   } | null>(null);
-
-  useEffect(() => {
-    if (!apiKeyInput.trim() && apiKey) {
-      setApiKeyInput(apiKey);
-    }
-  }, [apiKey, apiKeyInput]);
 
   const effectiveApiKey = apiKeyInput.trim();
 
@@ -354,7 +348,8 @@ export default function ImportSettings(): React.ReactElement {
             <label className="text-xs tracking-wide text-[#a1a1aa] block mb-1">API Key</label>
             <input
               type="password"
-              autoComplete="off"
+              autoComplete="new-password"
+              name="layerinfinite-import-api-key"
               value={apiKeyInput}
               onChange={(e) => {
                 setApiKeyInput(e.target.value);
