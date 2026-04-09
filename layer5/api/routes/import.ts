@@ -474,6 +474,7 @@ const ISSUE_FIELDS = ['issue_type', 'task_type', 'task', 'issue', 'type', 'conte
 const SUCCESS_FIELDS = ['success', 'result', 'outcome', 'status', 'passed', 'succeeded'];
 const SCORE_FIELDS = ['outcome_score', 'score', 'confidence', 'quality'];
 const TIMESTAMP_FIELDS = ['timestamp', 'created_at', 'occurred_at', 'event_at', 'logged_at', 'date', 'time'];
+const ENVIRONMENT_FIELDS = ['environment', 'env', 'runtime_environment', 'deployment_environment', 'stage'];
 const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -517,6 +518,24 @@ function extractTimestamp(record: Record<string, unknown>): Date | null {
         const d = new Date(String(v));
         return Number.isNaN(d.getTime()) ? null : d;
     });
+}
+
+export function normalizeEnvironment(raw: unknown): 'production' | 'staging' | 'development' {
+    const normalized = String(raw ?? 'production').trim().toLowerCase();
+    const aliases: Record<string, 'production' | 'staging' | 'development'> = {
+        prod: 'production',
+        production: 'production',
+        stage: 'staging',
+        stg: 'staging',
+        qa: 'staging',
+        test: 'staging',
+        uat: 'staging',
+        staging: 'staging',
+        dev: 'development',
+        develop: 'development',
+        development: 'development',
+    };
+    return aliases[normalized] ?? 'production';
 }
 
 export function normalizeBusinessOutcome(raw: string | null | undefined): string | null {
@@ -595,6 +614,7 @@ export function dryRunParse(
             const s = String(v).trim();
             return UUID_RE.test(s) ? s : null;
         });
+        const environment = extractField(rec, ENVIRONMENT_FIELDS, (v) => normalizeEnvironment(v)) ?? 'production';
 
         // Task resolution
         const providedTask = extractField(rec, ['task_name', 'task_type', 'task'], (v) => {
@@ -639,6 +659,7 @@ export function dryRunParse(
                 session_id: sessionId,
                 response_time_ms: responseMs,
                 feedback_signal: 'immediate',
+                environment,
                 task_name: taskResult.task,
                 task_mapping_confidence: taskResult.confidence,
                 task_mapping_tier: taskResult.tier,
