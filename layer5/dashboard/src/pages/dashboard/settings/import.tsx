@@ -13,10 +13,10 @@
  * ══════════════════════════════════════════════════════════════
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE } from '../../../lib/config';
-import { useAgentApiKey } from '../../../hooks/useAgentApiKey';
+import { AGENT_API_KEY_STORAGE_KEY, useAgentApiKey } from '../../../hooks/useAgentApiKey';
 import { createAgentFetch } from '../../../lib/api';
 import { useToastContext } from '../../../components/Toast';
 
@@ -61,6 +61,13 @@ interface JobStatus {
   completed_at: string | null;
 }
 
+interface MeResponse {
+  agent_id?: string;
+  agent_name?: string;
+  customer_id?: string;
+  error?: string;
+}
+
 type UploadStage =
   | 'idle'
   | 'parsing'     // client-side file read
@@ -87,6 +94,8 @@ function formatQuality(q: number): string {
   return `${Math.round(q * 100)}%`;
 }
 
+const API_KEY_REGEX = /^layerinfinite_[0-9a-f]{32}$/;
+
 // ── Component ─────────────────────────────────────────────────
 
 export default function ImportSettings(): React.ReactElement {
@@ -101,13 +110,105 @@ export default function ImportSettings(): React.ReactElement {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pollHandle, setPollHandle] = useState<ReturnType<typeof setInterval> | null>(null);
 
+  const [apiKeyInput, setApiKeyInput] = useState<string>(apiKey ?? '');
+  const [agentNameInput, setAgentNameInput] = useState<string>('');
+  const [credentialsVerified, setCredentialsVerified] = useState<boolean>(false);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+  const [verifyingCredentials, setVerifyingCredentials] = useState<boolean>(false);
+  const [verifiedIdentity, setVerifiedIdentity] = useState<{
+    agentId: string;
+    customerId: string;
+    agentName: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!apiKeyInput.trim() && apiKey) {
+      setApiKeyInput(apiKey);
+    }
+  }, [apiKey, apiKeyInput]);
+
+  const effectiveApiKey = apiKeyInput.trim();
+
   const agentFetch = useCallback(
     (url: string, opts?: RequestInit) => {
-      if (!apiKey) throw new Error('No API key');
-      return createAgentFetch(apiKey, handleAuthFailure)(url, opts);
+      if (!effectiveApiKey) throw new Error('No API key');
+      return createAgentFetch(effectiveApiKey, handleAuthFailure)(url, opts);
     },
-    [apiKey, handleAuthFailure],
+    [effectiveApiKey, handleAuthFailure],
   );
+
+  const handleVerifyCredentials = useCallback(async () => {
+    const assertedAgentName = agentNameInput.trim();
+
+    setCredentialError(null);
+    setVerifiedIdentity(null);
+    setCredentialsVerified(false);
+
+    if (!effectiveApiKey) {
+      setCredentialError('API key is required before uploading.');
+      return;
+    }
+
+    if (!API_KEY_REGEX.test(effectiveApiKey)) {
+      setCredentialError('API key format is invalid. Expected layerinfinite_ + 32 hex chars.');
+      return;
+    }
+
+    if (!assertedAgentName) {
+      setCredentialError('Agent name is required before uploading.');
+      return;
+    }
+
+    setVerifyingCredentials(true);
+
+    try {
+      const verifyFetch = createAgentFetch(effectiveApiKey, handleAuthFailure);
+      const res = await verifyFetch(`${API_BASE}/v1/me`, { method: 'GET' });
+      const me = (await res.json()) as MeResponse;
+
+      if (!res.ok) {
+        setCredentialError(me.error ?? `Failed to verify credentials (${res.status}).`);
+        return;
+      }
+
+      if (!me.agent_name || !me.agent_id || !me.customer_id) {
+        setCredentialError('Credential verification failed: missing identity fields from /v1/me.');
+        return;
+      }
+
+      if (me.agent_name !== assertedAgentName) {
+        setCredentialError(
+          `agent_name mismatch. API key belongs to "${me.agent_name}", but you entered "${assertedAgentName}".`
+        );
+        return;
+      }
+
+      try {
+        localStorage.setItem(AGENT_API_KEY_STORAGE_KEY, effectiveApiKey);
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key: AGENT_API_KEY_STORAGE_KEY,
+            newValue: effectiveApiKey,
+            storageArea: window.localStorage,
+          })
+        );
+      } catch {
+        // Non-fatal in restrictive browser storage modes.
+      }
+
+      setVerifiedIdentity({
+        agentId: me.agent_id,
+        customerId: me.customer_id,
+        agentName: me.agent_name,
+      });
+      setCredentialsVerified(true);
+      showToast('Credentials verified. Upload is now enabled.', 'success');
+    } catch (err: any) {
+      setCredentialError(err.message ?? 'Failed to verify credentials.');
+    } finally {
+      setVerifyingCredentials(false);
+    }
+  }, [agentNameInput, effectiveApiKey, handleAuthFailure, showToast]);
 
   // ── File selection ─────────────────────────────────────────
   const handleFileChange = useCallback(
@@ -122,8 +223,8 @@ export default function ImportSettings(): React.ReactElement {
       setErrorMsg(null);
       setStage('parsing');
 
-      if (!apiKey) {
-        setErrorMsg('No API key found. Create one in Settings → API Keys first.');
+      if (!credentialsVerified) {
+        setErrorMsg('Verify API key and agent name before uploading.');
         setStage('error');
         return;
       }
@@ -133,6 +234,7 @@ export default function ImportSettings(): React.ReactElement {
         const form = new FormData();
         form.append('file', file);
         form.append('dry_run', 'true');
+        form.append('agent_name', agentNameInput.trim());
 
         const res = await agentFetch(`${API_BASE}/v1/import`, {
           method: 'POST',
@@ -161,17 +263,18 @@ export default function ImportSettings(): React.ReactElement {
         setStage('error');
       }
     },
-    [apiKey, agentFetch],
+    [agentFetch, agentNameInput, credentialsVerified],
   );
 
   // ── Confirm import ─────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
-    if (!selectedFile || !apiKey) return;
+    if (!selectedFile || !credentialsVerified) return;
     setStage('uploading');
 
     try {
       const form = new FormData();
       form.append('file', selectedFile);
+      form.append('agent_name', agentNameInput.trim());
 
       const res = await agentFetch(`${API_BASE}/v1/import`, {
         method: 'POST',
@@ -215,7 +318,7 @@ export default function ImportSettings(): React.ReactElement {
       setErrorMsg(err.message ?? 'Failed to start import.');
       setStage('error');
     }
-  }, [selectedFile, apiKey, agentFetch, showToast]);
+  }, [selectedFile, credentialsVerified, agentFetch, agentNameInput, showToast]);
 
   // ── Reset ──────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -235,8 +338,75 @@ export default function ImportSettings(): React.ReactElement {
       <h2 className="text-lg font-semibold text-white mb-1">Import History</h2>
       <p className="text-sm text-[#a1a1aa] mb-6">
         Upload historical agent logs to seed recommendations before SDK integration.
-        Use the same API key as your SDK — outcomes merge automatically.
+        Upload is locked until API key + agent name are verified to prevent routing to the wrong agent.
       </p>
+
+      {/* ── Import credentials (required) ───────────────── */}
+      <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 mb-6">
+        <h3 className="text-sm font-medium text-white mb-3">Import credentials (required)</h3>
+        <p className="text-xs text-[#a1a1aa] mb-4">
+          Outcomes are written to the customer and agent bound to this API key.
+          Agent name is asserted before upload to avoid accidental mis-routing.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs tracking-wide text-[#a1a1aa] block mb-1">API Key</label>
+            <input
+              type="password"
+              autoComplete="off"
+              value={apiKeyInput}
+              onChange={(e) => {
+                setApiKeyInput(e.target.value);
+                setCredentialsVerified(false);
+                setVerifiedIdentity(null);
+                setCredentialError(null);
+              }}
+              placeholder="layerinfinite_..."
+              className="w-full bg-[#0a0a0f] border border-[#1a1a24] rounded-lg px-3 py-2 text-sm text-white"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs tracking-wide text-[#a1a1aa] block mb-1">Agent name</label>
+            <input
+              type="text"
+              autoComplete="off"
+              value={agentNameInput}
+              onChange={(e) => {
+                setAgentNameInput(e.target.value);
+                setCredentialsVerified(false);
+                setVerifiedIdentity(null);
+                setCredentialError(null);
+              }}
+              placeholder="Exactly as registered"
+              className="w-full bg-[#0a0a0f] border border-[#1a1a24] rounded-lg px-3 py-2 text-sm text-white"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleVerifyCredentials}
+            disabled={verifyingCredentials}
+            className="bg-[#b8ff00] hover:bg-[#a5e800] text-black font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-60"
+          >
+            {verifyingCredentials ? 'Verifying…' : 'Verify credentials'}
+          </button>
+
+          {credentialsVerified && verifiedIdentity && (
+            <span className="text-xs text-[#00cc66]">
+              Verified: {verifiedIdentity.agentName} · {verifiedIdentity.agentId.slice(0, 8)}… · {verifiedIdentity.customerId.slice(0, 8)}…
+            </span>
+          )}
+        </div>
+
+        {credentialError && (
+          <div className="mt-3 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl px-4 py-3 text-sm">
+            {credentialError}
+          </div>
+        )}
+      </section>
 
       {/* ── Format guide ─────────────────────────────────── */}
       <section className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 mb-6">
@@ -267,7 +437,10 @@ export default function ImportSettings(): React.ReactElement {
         <section className="mb-6">
           <label
             htmlFor="import-file"
-            className={`flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl cursor-pointer transition-colors
+            className={`flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl transition-colors
+              ${!credentialsVerified
+                ? 'opacity-60 cursor-not-allowed border-[#1a1a24] bg-[#111118]'
+                : ''}
               ${stage === 'error'
                 ? 'border-[#ff4444]/40 bg-[#ff4444]/5 hover:bg-[#ff4444]/10'
                 : 'border-[#1a1a24] bg-[#111118] hover:bg-[#1a1a24]'}`}
@@ -284,8 +457,14 @@ export default function ImportSettings(): React.ReactElement {
               accept=".json,.jsonl,.csv,application/json,text/csv,text/plain"
               className="hidden"
               onChange={handleFileChange}
+              disabled={!credentialsVerified}
             />
           </label>
+          {!credentialsVerified && (
+            <p className="mt-2 text-xs text-[#ffaa00]">
+              Verify API key + agent name above to enable file upload.
+            </p>
+          )}
           {errorMsg && (
             <div className="mt-3 bg-[#ff4444]/10 border border-[#ff4444]/30 text-[#ff8a8a] rounded-xl px-4 py-3 text-sm">
               {errorMsg}
