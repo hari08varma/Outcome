@@ -26,13 +26,20 @@ export function createAgentFetch(
   onAuthFailure: () => void
 ): (url: string, options?: RequestInit) => Promise<Response> {
   return async (url: string, options: RequestInit = {}): Promise<Response> => {
+    const headers = new Headers(options.headers ?? {});
+    headers.set('X-API-Key', apiKey);
+
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    if (isFormData) {
+      // Let the browser set multipart/form-data with boundary.
+      headers.delete('Content-Type');
+    } else if (!headers.has('Content-Type') && options.body !== undefined && options.body !== null) {
+      headers.set('Content-Type', 'application/json');
+    }
+
     const res = await fetch(url, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-        'X-API-Key': apiKey,
-      },
+      headers,
     });
 
     if (res.status === 401 || res.status === 403) {
