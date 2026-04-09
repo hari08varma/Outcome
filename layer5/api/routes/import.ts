@@ -88,7 +88,9 @@ interface DryRunResult {
 // ── File parser ───────────────────────────────────────────────
 
 /**
- * Auto-detects JSON / JSONL / CSV and returns raw record objects.
+ * Attempts to recover records from JSON / JSONL / CSV and messy log text.
+ * Strategy: salvage as much structure as possible instead of hard-failing
+ * on the first malformed line.
  * Never throws — returns { records, error } so the caller can surface
  * a clean HTTP error.
  */
@@ -96,60 +98,373 @@ export function parseFileContent(content: string): { records: Record<string, unk
     const trimmed = content.trim();
     if (!trimmed) return { records: [], error: 'File is empty.' };
 
-    // ── JSON array ─────────────────────────────────────────
-    if (trimmed.startsWith('[')) {
-        try {
-            const parsed = JSON.parse(trimmed);
-            if (!Array.isArray(parsed)) return { records: [], error: 'JSON root must be an array.' };
-            return { records: parsed };
-        } catch (e: any) {
-            return { records: [], error: `Invalid JSON: ${e.message}` };
-        }
-    }
+    // 1) Full JSON document parse (array, object, wrapped records).
+    const jsonDocRecords = parseJsonDocument(trimmed);
+    if (jsonDocRecords.length > 0) return { records: jsonDocRecords };
 
-    // ── JSONL (one JSON object per line) ───────────────────
-    if (trimmed.startsWith('{')) {
-        const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
-        const records: Record<string, unknown>[] = [];
-        for (let i = 0; i < lines.length; i++) {
-            try {
-                const obj = JSON.parse(lines[i]);
-                if (typeof obj === 'object' && obj !== null) records.push(obj as Record<string, unknown>);
-            } catch {
-                return { records: [], error: `Invalid JSON on line ${i + 1}.` };
-            }
-        }
-        return { records };
-    }
+    // 2) JSON per line / lines containing JSON fragments.
+    const jsonLineRecords = parseJsonRecordsFromLines(trimmed);
+    if (jsonLineRecords.length > 0) return { records: jsonLineRecords };
 
-    // ── CSV ────────────────────────────────────────────────
-    const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length < 2) return { records: [], error: 'CSV must have at least a header row and one data row.' };
+    // 3) Embedded JSON object recovery from noisy logs.
+    const embeddedJsonRecords = extractJsonObjectsFromText(trimmed);
+    if (embeddedJsonRecords.length > 0) return { records: embeddedJsonRecords };
 
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, '').toLowerCase());
-    const records: Record<string, unknown>[] = [];
+    // 4) Delimited records (CSV/TSV/semicolon/pipe), with or without headers.
+    const delimitedRecords = parseDelimitedRecords(trimmed);
+    if (delimitedRecords.length > 0) return { records: delimitedRecords };
 
-    for (let i = 1; i < lines.length; i++) {
-        const values = splitCsvLine(lines[i]);
-        if (values.length !== headers.length) continue; // skip malformed rows silently
-        const obj: Record<string, unknown> = {};
-        headers.forEach((h, idx) => { obj[h] = values[idx]; });
-        records.push(obj);
-    }
-    return { records };
+    // 5) key=value or key:value style log lines.
+    const kvRecords = parseKeyValueRecords(trimmed);
+    if (kvRecords.length > 0) return { records: kvRecords };
+
+    return {
+        records: [],
+        error:
+            'Could not detect structured records in the file. Include at least action/issue/success fields in JSON, CSV, or log key=value lines.',
+    };
 }
 
 export function splitCsvLine(line: string): string[] {
+    return splitDelimitedLine(line, ',');
+}
+
+const JSON_CONTAINER_KEYS = [
+    'records',
+    'rows',
+    'data',
+    'events',
+    'logs',
+    'items',
+    'results',
+    'entries',
+] as const;
+
+const DELIMITER_CANDIDATES = [',', ';', '\t', '|'] as const;
+
+function normalizeFieldName(raw: string): string {
+    return raw
+        .trim()
+        .replace(/^["']|["']$/g, '')
+        .toLowerCase()
+        .replace(/[\s\-]+/g, '_');
+}
+
+function normalizeRecordKeys(record: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+        normalized[key] = value;
+        const canonical = normalizeFieldName(key);
+        if (!(canonical in normalized)) {
+            normalized[canonical] = value;
+        }
+    }
+    return normalized;
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toRecords(value: unknown): Record<string, unknown>[] {
+    if (Array.isArray(value)) {
+        return value.filter(isRecordObject).map(normalizeRecordKeys);
+    }
+
+    if (!isRecordObject(value)) {
+        return [];
+    }
+
+    for (const key of JSON_CONTAINER_KEYS) {
+        const maybeList = value[key];
+        if (Array.isArray(maybeList)) {
+            const rows = maybeList.filter(isRecordObject).map(normalizeRecordKeys);
+            if (rows.length > 0) return rows;
+        }
+    }
+
+    let largestNestedRows: Record<string, unknown>[] = [];
+    for (const nested of Object.values(value)) {
+        if (!Array.isArray(nested)) continue;
+        const rows = nested.filter(isRecordObject).map(normalizeRecordKeys);
+        if (rows.length > largestNestedRows.length) {
+            largestNestedRows = rows;
+        }
+    }
+    if (largestNestedRows.length > 0) return largestNestedRows;
+
+    return [normalizeRecordKeys(value)];
+}
+
+function tryParseJson(text: string): unknown | null {
+    const clean = text.replace(/^\uFEFF/, '').trim();
+    if (!clean) return null;
+
+    try {
+        return JSON.parse(clean);
+    } catch {
+        // Best-effort salvage for trailing commas in arrays/objects.
+        const relaxed = clean.replace(/,\s*([}\]])/g, '$1');
+        if (relaxed !== clean) {
+            try {
+                return JSON.parse(relaxed);
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+}
+
+function parseJsonDocument(text: string): Record<string, unknown>[] {
+    const parsed = tryParseJson(text);
+    if (parsed === null) return [];
+    return toRecords(parsed);
+}
+
+function parseJsonRecordsFromLines(text: string): Record<string, unknown>[] {
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    const rows: Record<string, unknown>[] = [];
+    for (const line of lines) {
+        const direct = parseJsonDocument(line);
+        if (direct.length > 0) {
+            rows.push(...direct);
+            continue;
+        }
+
+        const firstBrace = line.indexOf('{');
+        const lastBrace = line.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            const fragment = line.slice(firstBrace, lastBrace + 1);
+            const parsedFragment = parseJsonDocument(fragment);
+            if (parsedFragment.length > 0) {
+                rows.push(...parsedFragment);
+            }
+        }
+    }
+    return rows;
+}
+
+function extractJsonObjectsFromText(text: string): Record<string, unknown>[] {
+    const rows: Record<string, unknown>[] = [];
+    let depth = 0;
+    let start = -1;
+    let inQuotes = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+
+        if (inQuotes) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inQuotes = false;
+            }
+            continue;
+        }
+
+        if (ch === '"') {
+            inQuotes = true;
+            continue;
+        }
+
+        if (ch === '{') {
+            if (depth === 0) start = i;
+            depth += 1;
+            continue;
+        }
+
+        if (ch === '}') {
+            if (depth === 0) continue;
+            depth -= 1;
+            if (depth === 0 && start >= 0) {
+                const fragment = text.slice(start, i + 1);
+                const parsed = parseJsonDocument(fragment);
+                if (parsed.length > 0) rows.push(...parsed);
+                start = -1;
+            }
+        }
+    }
+
+    return rows;
+}
+
+function countDelimiterOutsideQuotes(line: string, delimiter: string): number {
+    let inQuotes = false;
+    let count = 0;
+
+    for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+                i += 1;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            continue;
+        }
+        if (!inQuotes && ch === delimiter) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+function detectDelimiter(lines: string[]): string {
+    let bestDelimiter = ',';
+    let bestScore = -1;
+    const sample = lines.slice(0, 25);
+
+    for (const delimiter of DELIMITER_CANDIDATES) {
+        const score = sample.reduce((sum, line) => sum + countDelimiterOutsideQuotes(line, delimiter), 0);
+        if (score > bestScore) {
+            bestScore = score;
+            bestDelimiter = delimiter;
+        }
+    }
+
+    return bestDelimiter;
+}
+
+function splitDelimitedLine(line: string, delimiter: string): string[] {
     const result: string[] = [];
     let current = '';
     let inQuotes = false;
-    for (const ch of line) {
-        if (ch === '"') { inQuotes = !inQuotes; continue; }
-        if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; continue; }
+    for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+                current += '"';
+                i += 1;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            continue;
+        }
+        if (ch === delimiter && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+            continue;
+        }
         current += ch;
     }
     result.push(current.trim());
-    return result;
+    return result.map((v) => v.replace(/^["']|["']$/g, ''));
+}
+
+function looksLikeHeader(values: string[]): boolean {
+    if (values.length === 0) return false;
+
+    const knownFields = new Set([
+        ...ACTION_FIELDS,
+        ...ISSUE_FIELDS,
+        ...SUCCESS_FIELDS,
+        ...SCORE_FIELDS,
+        ...TIMESTAMP_FIELDS,
+        'business_outcome',
+        'session_id',
+        'response_time_ms',
+    ]);
+
+    let knownMatches = 0;
+    for (const v of values) {
+        if (knownFields.has(normalizeFieldName(v))) {
+            knownMatches += 1;
+        }
+    }
+    return knownMatches > 0;
+}
+
+function parseDelimitedRecords(text: string): Record<string, unknown>[] {
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length === 0) return [];
+
+    const delimiter = detectDelimiter(lines);
+    const firstRow = splitDelimitedLine(lines[0], delimiter);
+    if (firstRow.length < 2) return [];
+
+    const hasHeader = looksLikeHeader(firstRow);
+    const headers = hasHeader
+        ? firstRow.map((h) => normalizeFieldName(h))
+        : firstRow.map((_, idx) => `col_${idx + 1}`);
+
+    const startIndex = hasHeader ? 1 : 0;
+    const rows: Record<string, unknown>[] = [];
+
+    for (let i = startIndex; i < lines.length; i += 1) {
+        const values = splitDelimitedLine(lines[i], delimiter);
+        if (values.length === 0 || values.every((v) => v.length === 0)) continue;
+
+        const width = Math.max(headers.length, values.length);
+        const row: Record<string, unknown> = {};
+        for (let col = 0; col < width; col += 1) {
+            const key = headers[col] ?? `col_${col + 1}`;
+            row[key] = values[col] ?? '';
+        }
+
+        if (!hasHeader && values.length >= 3) {
+            if (row.action_name === undefined) row.action_name = values[0];
+            if (row.issue_type === undefined) row.issue_type = values[1];
+            if (row.success === undefined) row.success = values[2];
+            if (values.length >= 4 && row.outcome_score === undefined) row.outcome_score = values[3];
+            if (values.length >= 5 && row.business_outcome === undefined) row.business_outcome = values[4];
+        }
+
+        rows.push(normalizeRecordKeys(row));
+    }
+
+    return rows;
+}
+
+function stripQuoted(value: string): string {
+    const trimmed = value.trim();
+    if (
+        (trimmed.startsWith('"') && trimmed.endsWith('"'))
+        || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    ) {
+        return trimmed.slice(1, -1);
+    }
+    return trimmed;
+}
+
+function parseKeyValueRecords(text: string): Record<string, unknown>[] {
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    const rows: Record<string, unknown>[] = [];
+    const kvPattern = /([a-zA-Z_][a-zA-Z0-9_.-]*)\s*[:=]\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\s]+)/g;
+
+    for (const line of lines) {
+        const row: Record<string, unknown> = {};
+        let match: RegExpExecArray | null;
+        while ((match = kvPattern.exec(line)) !== null) {
+            const key = normalizeFieldName(match[1]);
+            const value = stripQuoted(match[2]);
+            row[key] = value;
+        }
+        if (Object.keys(row).length > 0) {
+            rows.push(row);
+        }
+    }
+
+    return rows;
 }
 
 // ── Field extraction from raw record ─────────────────────────
