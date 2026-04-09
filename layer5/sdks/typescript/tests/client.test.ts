@@ -261,7 +261,7 @@ describe('LayerinfiniteClient', () => {
         client.registerAction('billing_dispute', 'retry_with_backoff', async () => true);
         client.registerAction('billing_dispute', 'pin_previous_image', async () => true);
 
-        const executionOrder = await (client as any).buildExecutionOrder('billing_dispute');
+        const { order: executionOrder } = await (client as any).buildExecutionOrder('billing_dispute');
 
         expect(executionOrder.slice(0, 3)).toEqual([
             'pin_previous_image',

@@ -569,6 +569,7 @@ class Layerinfinite:
                     if outcomes_needed > 0 else ""
                 )
                 raise LowConfidenceError(
+                    f"Policy abstain for task '{task}'. "
                     f"[LI abstain] task='{task}' policy=abstain "
                     f"confidence={top_confidence:.0%} threshold={self._confidence_threshold:.0%}. "
                     f"Best candidate: '{top_name}'.{needed_hint} "
@@ -582,10 +583,23 @@ class Layerinfinite:
                 raise
             logger.warning("[layerinfinite] Could not fetch confidence scores: %s", exc)
 
-        execution_order, decision_id = self._build_execution_order(
-            task,
-            preloaded_scores=scores_resp,
-        )
+        try:
+            execution_plan = self._build_execution_order(
+                task,
+                preloaded_scores=scores_resp,
+            )
+        except TypeError as exc:
+            # Backward compatibility for overrides/tests that still provide
+            # _build_execution_order(task) without the preloaded_scores kwarg.
+            if 'preloaded_scores' not in str(exc):
+                raise
+            execution_plan = self._build_execution_order(task)
+
+        if isinstance(execution_plan, tuple):
+            execution_order, decision_id = execution_plan
+        else:
+            execution_order = list(execution_plan or [])
+            decision_id = None
         episode_id = str(uuid.uuid4())
 
         if top_confidence > 0.0 and top_confidence < self._confidence_threshold:
