@@ -136,7 +136,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
             .select('response_time_ms')
             .eq('agent_id', params.agentId)
             .eq('action_id', params.actionId)
-            .order('created_at', { ascending: false })
+            .order('timestamp', { ascending: false })
             .limit(20);
 
         if (!recentOutcomes || recentOutcomes.length < 5) return;

@@ -28,6 +28,8 @@ import type { TaskInferResult, TaskMappingTier } from './recommendation/task-inf
 import { inferSemanticActionCluster } from './recommendation/semantic-action-cluster.js';
 import type { SemanticActionClusterResult } from './recommendation/semantic-action-cluster.js';
 import { sanitizeContext, sanitizeString } from './sanitize.js';
+import { inferOutcomeScore, fetchActionBaseline } from './outcome-score-inference.js';
+import type { InferredOutcomeScore } from './outcome-score-inference.js';
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -115,6 +117,8 @@ export interface IngestCoreResult {
         is_inconsistent: boolean;
         mapping_tier: string;
         mapping_confidence: number;
+        inference_confidence: number | null;
+        outcome_class: string | null;
     };
 }
 
@@ -146,9 +150,22 @@ function computeDataQuality(params: {
     isInconsistent: boolean;
     mappingConfidence: number;
     businessOutcome: string | null | undefined;
+    inferenceConfidence?: number | null;
 }): number {
     let score = 1.0;
-    if (params.outcomeScoreRaw === null || params.outcomeScoreRaw === undefined) score -= 0.25;
+
+    if (params.outcomeScoreRaw === null || params.outcomeScoreRaw === undefined) {
+        // Score was inferred — penalize by inverse of inference confidence.
+        // High confidence inference (0.75) → penalty ~0.06
+        // Low confidence inference (0.30)  → penalty ~0.18
+        // No inference at all              → penalty 0.25 (original behavior)
+        const conf = params.inferenceConfidence ?? 0;
+        const penalty = conf > 0
+            ? Math.max(0.05, 0.25 * (1 - conf))
+            : 0.25;
+        score -= penalty;
+    }
+
     if (params.isInconsistent) score -= 0.20;
     if (params.mappingConfidence < 0.70) score -= 0.20;
     if (!params.businessOutcome) score -= 0.10;
@@ -465,6 +482,8 @@ export async function ingestOutcome(
                     is_inconsistent: false,
                     mapping_tier: 'idempotent_replay',
                     mapping_confidence: 1.0,
+                    inference_confidence: null,
+                    outcome_class: null,
                 },
             };
         }
@@ -507,12 +526,7 @@ export async function ingestOutcome(
 
     const mappingConfidence = opts.precomputed?.mappingConfidence ?? taskInferResult.confidence;
     const mappingTier = opts.precomputed?.mappingTier ?? taskInferResult.tier;
-    const dataQuality = opts.precomputed?.dataQuality ?? computeDataQuality({
-        outcomeScoreRaw,
-        isInconsistent: inconsistency.isInconsistent,
-        mappingConfidence,
-        businessOutcome: row.business_outcome ?? null,
-    });
+    // dataQuality computed after inference — see step 10 below
 
     // 5. FK resolution
     const resolvedAction = opts.resolvedActionId
@@ -559,13 +573,51 @@ export async function ingestOutcome(
     const safeErrorMessage = row.error_message ? sanitizeString(row.error_message, 1000) : null;
     const safeErrorCode = row.error_code ? sanitizeString(row.error_code, 100) : null;
 
-    // 10. timestamp — use source_event_at if provided (preserves historical ordering),
+    // 10. Outcome Score Inference — 3-layer engine
+    // When developer omits outcome_score, infer from hard + soft + relative signals.
+    // Skipped for import rows (skipTrustUpdate=true) — no live baseline context.
+    let resolvedScore = finalOutcomeScore;
+    let resolvedScoreOrigin = scoreOrigin;
+    let resolvedScoreConfidence: number | null = null;
+    let resolvedOutcomeClass: string | null = null;
+
+    if (resolvedScore === null && !opts.skipTrustUpdate) {
+        const baseline = await fetchActionBaseline(row.agent_id, actionId);
+        const inferred = inferOutcomeScore({
+            success: finalSuccess,
+            retryAttempt: row.retry_attempt ?? null,
+            responseMs: row.response_time_ms ?? null,
+            errorCode: safeErrorCode,
+            errorMessage: safeErrorMessage,
+            businessOutcome: normalizedBusinessOutcome,
+            feedbackSignal: row.feedback_signal ?? null,
+            crossEventStatus: row.cross_event_status ?? null,
+            verifierSource: row.verifier_source ?? null,
+            verifierValue: row.verifier_value ?? null,
+            actionBaseline: baseline,
+        });
+        resolvedScore = inferred.score;
+        resolvedScoreOrigin = 'inferred';
+        resolvedScoreConfidence = inferred.confidence;
+        resolvedOutcomeClass = inferred.class;
+    }
+
+    // 10a. Data quality — computed AFTER inference so penalty reflects confidence.
+    const dataQuality = opts.precomputed?.dataQuality ?? computeDataQuality({
+        outcomeScoreRaw,
+        isInconsistent: inconsistency.isInconsistent,
+        mappingConfidence,
+        businessOutcome: row.business_outcome ?? null,
+        inferenceConfidence: resolvedScoreConfidence,
+    });
+
+    // 11. timestamp — use source_event_at if provided (preserves historical ordering),
     // else let the DB default to now().
     const timestampOverride = opts.sourceEventAt
         ? opts.sourceEventAt.toISOString()
         : undefined;
 
-    // 11. Insert
+    // 12. Insert
     const insertPayload: Record<string, unknown> = {
         agent_id: row.agent_id,
         action_id: actionId,
@@ -581,7 +633,7 @@ export async function ingestOutcome(
         ingestion_source: opts.ingestionSource,
         import_job_id: opts.importJobId ?? null,
         salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
-        outcome_score: finalOutcomeScore ?? 0.5,
+        outcome_score: resolvedScore ?? 0.5,
         business_outcome: normalizedBusinessOutcome,
         feedback_signal: row.feedback_signal ?? 'immediate',
         verifier_source: row.verifier_source ?? null,
@@ -612,7 +664,9 @@ export async function ingestOutcome(
         inconsistency_type: inconsistency.type,
         inconsistency_reason: inconsistency.reason,
         mapping_confidence: mappingConfidence,
-        score_origin: scoreOrigin,
+        score_origin: resolvedScoreOrigin,
+        inference_confidence: resolvedScoreConfidence,
+        outcome_class: resolvedOutcomeClass,
         mapping_tier: mappingTier,
         inconsistency_rule_version: inconsistency.ruleVersion,
         // source_event_at: only set for import rows
@@ -661,10 +715,12 @@ export async function ingestOutcome(
         timestamp: insertedOutcome.timestamp,
         ingestionQuality: {
             data_quality: dataQuality,
-            score_origin: scoreOrigin,
+            score_origin: resolvedScoreOrigin,
             is_inconsistent: inconsistency.isInconsistent,
             mapping_tier: mappingTier,
             mapping_confidence: mappingConfidence,
+            inference_confidence: resolvedScoreConfidence,
+            outcome_class: resolvedOutcomeClass,
         },
     };
 }

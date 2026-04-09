@@ -17,6 +17,7 @@ import {
     inferSemanticActionCluster,
     type SemanticActionClusterResult,
 } from '../lib/recommendation/semantic-action-cluster.js';
+import { inferOutcomeScore, fetchActionBaseline } from '../lib/outcome-score-inference.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -49,13 +50,22 @@ interface DataQualityInput {
     isInconsistent: boolean;
     mappingConfidence: number;
     businessOutcome: string | null | undefined;
+    inferenceConfidence?: number | null;
 }
 
 function computeDataQuality(input: DataQualityInput): number {
     let score = 1.0;
 
     if (input.outcomeScoreRaw === null || input.outcomeScoreRaw === undefined) {
-        score -= 0.25;
+        // Score was inferred — penalize by inverse of inference confidence.
+        // High confidence inference (0.75) → penalty ~0.06
+        // Low confidence inference (0.30)  → penalty ~0.18
+        // No inference at all              → penalty 0.25 (original behavior)
+        const conf = input.inferenceConfidence ?? 0;
+        const penalty = conf > 0
+            ? Math.max(0.05, 0.25 * (1 - conf))
+            : 0.25;
+        score -= penalty;
     }
     if (input.isInconsistent) {
         score -= 0.20;
@@ -622,6 +632,8 @@ async function insertCoreOutcome(
     semanticCluster: SemanticActionClusterResult,
     crossEventStatus: 'none' | 'pending_signal' | 'confirmed' | 'conflict' | 'resolved',
     retryChain: RetryChainState,
+    inferenceConfidence: number | null,
+    outcomeClass: string | null,
 ) {
     // RULE: backprop_episode_id is INTERNAL — set by the backprop engine only.
     // NEVER map body.episode_id to this column. body.episode_id is the SDK's
@@ -646,9 +658,10 @@ async function insertCoreOutcome(
         ingestion_source: 'sdk',
         salience_score: computeSalience(actionId, contextId, customerId, finalSuccess),
         // outcome_score is NOT NULL in DB (migration 044 adds constraint + DEFAULT 0.5).
-        // finalOutcomeScore can be null when developer omits outcome_score and verifier
-        // has no override. Fall back to 0.5 (neutral prior) to satisfy the constraint
-        // without fabricating a signal — the raw truth is preserved in outcome_score_raw.
+        // After inference engine (migration 102), finalOutcomeScore includes inferred
+        // values when developer omits score_fn. The ?? 0.5 fallback is a last resort
+        // if inference also failed (should never happen — defense in depth).
+        // Raw developer signal preserved in outcome_score_raw.
         outcome_score: finalOutcomeScore ?? 0.5,
         business_outcome: body.business_outcome ?? null,
         feedback_signal: body.feedback_signal ?? 'immediate',
@@ -697,6 +710,9 @@ async function insertCoreOutcome(
         mapping_tier: mappingTier,
         // Encodes which rule/threshold flagged is_inconsistent (null if not flagged).
         inconsistency_rule_version: inconsistencyRuleVersion,
+        // ── Inference Engine (migration 102) ─────────────────
+        inference_confidence: inferenceConfidence,
+        outcome_class: outcomeClass,
     });
 
     return {
@@ -977,12 +993,6 @@ logOutcomeRouter.post('/', async (c) => {
 
         // Data quality score: 0.0–1.0 completeness of this event.
         const mappingConfidence: number = (body as any)._mapping_confidence ?? 1.0;
-        const dataQuality = computeDataQuality({
-            outcomeScoreRaw,
-            isInconsistent: inconsistency.isInconsistent,
-            mappingConfidence,
-            businessOutcome: body.business_outcome ?? null,
-        });
 
         // 4. Resolve References
         const actionId = await resolveActionId(c, body, customerId);
@@ -1001,22 +1011,63 @@ logOutcomeRouter.post('/', async (c) => {
                 ? 'pending_signal'
                 : 'none';
 
+        // 4a. Outcome Score Inference — 3-layer engine
+        // When developer omits outcome_score, infer from hard + soft + relative signals.
+        // When developer provides outcome_score (score_fn), skip inference entirely.
+        let resolvedOutcomeScore = finalOutcomeScore;
+        let resolvedScoreOrigin = scoreOrigin;
+        let inferenceConfidence: number | null = null;
+        let outcomeClass: string | null = null;
+
+        if (resolvedOutcomeScore === null) {
+            const baseline = await fetchActionBaseline(agentId, actionId);
+            const inferred = inferOutcomeScore({
+                success: finalSuccess,
+                retryAttempt: retryChain.retryAttempt,
+                responseMs: body.response_time_ms ?? null,
+                errorCode: body.error_code ?? null,
+                errorMessage: body.error_message ?? null,
+                businessOutcome: body.business_outcome ?? null,
+                feedbackSignal: body.feedback_signal ?? null,
+                crossEventStatus: crossEventStatus,
+                verifierSource: body.verifier_signal?.source ?? null,
+                verifierValue: body.verifier_signal?.value ?? null,
+                actionBaseline: baseline,
+            });
+            resolvedOutcomeScore = inferred.score;
+            resolvedScoreOrigin = 'inferred';
+            inferenceConfidence = inferred.confidence;
+            outcomeClass = inferred.class;
+        }
+
+        // Data quality score: 0.0–1.0 completeness of this event.
+        // Computed AFTER inference so the penalty reflects inference confidence.
+        const dataQuality = computeDataQuality({
+            outcomeScoreRaw,
+            isInconsistent: inconsistency.isInconsistent,
+            mappingConfidence,
+            businessOutcome: body.business_outcome ?? null,
+            inferenceConfidence,
+        });
+
         // 5. Insert Core Fact
         const outcome = await insertCoreOutcome(
             agentId, customerId, actionId, contextId,
-            body, finalSuccess, finalOutcomeScore, verification,
+            body, finalSuccess, resolvedOutcomeScore, verification,
             outcomeScoreRaw,
             dataQuality,
             inconsistency.isInconsistent,
             inconsistency.type,
             inconsistency.reason,
             mappingConfidence,
-            scoreOrigin,
+            resolvedScoreOrigin,
             mappingTier,
             inconsistency.ruleVersion,
             semanticCluster,
             crossEventStatus,
             retryChain,
+            inferenceConfidence,
+            outcomeClass,
         );
 
         // 6. Post-Insert Synchronous Updates
@@ -1027,7 +1078,7 @@ logOutcomeRouter.post('/', async (c) => {
         // 7. Fire-and-forget Asynchronous Pipelines via Orchestrator
         orchestrateOutcome({
             agentId, customerId, outcomeId: outcome.outcome_id, actionId, actionName: body.action_name ?? 'unknown',
-            contextId, issueType: body.issue_type, finalSuccess, finalOutcomeScore,
+            contextId, issueType: body.issue_type, finalSuccess, finalOutcomeScore: resolvedOutcomeScore,
             responseMs: body.response_time_ms ?? null, episodeId: body.episode_id,
             errorCode: body.error_code ?? null,
             businessOutcome: body.business_outcome, decisionId: body.decision_id, decisionRecord,
@@ -1082,13 +1133,15 @@ logOutcomeRouter.post('/', async (c) => {
             // ── Ingestion quality feedback — lets SDK callers see exactly what was stored.
             ingestion_quality: {
                 data_quality: dataQuality,
-                score_origin: scoreOrigin,
+                score_origin: resolvedScoreOrigin,
                 is_inconsistent: inconsistency.isInconsistent,
                 inconsistency_type: inconsistency.type,
                 inconsistency_reason: inconsistency.reason,
                 inconsistency_rule_version: inconsistency.ruleVersion,
                 mapping_tier: mappingTier,
                 mapping_confidence: mappingConfidence,
+                inference_confidence: inferenceConfidence,
+                outcome_class: outcomeClass,
                 semantic_cluster: {
                     key: semanticCluster.clusterKey,
                     domain: semanticCluster.domain,
