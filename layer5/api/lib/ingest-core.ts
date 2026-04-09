@@ -245,13 +245,58 @@ export async function resolveActionIdForIngest(
     actionName: string,
     customerId: string,
 ): Promise<{ actionId: string; resolvedActionName: string }> {
-    const { validateAction, normalizeActionName } = await import('../middleware/validate-action.js');
+    const { normalizeActionName } = await import('../middleware/validate-action.js');
     const normalized = normalizeActionName(actionName);
-    const result = await validateAction(normalized, customerId, undefined);
-    if (!result.valid || !result.action_id) {
-        throw new Error(`UNKNOWN_ACTION:${result.error_code ?? 'UNKNOWN_ACTION'}:${result.error}`);
+
+    // Import payloads frequently contain historical/novel action names.
+    // Resolve existing action first, then auto-register on first use.
+    const { data: existing, error: lookupError } = await supabase
+        .from('dim_actions')
+        .select('action_id, action_name, is_active')
+        .eq('action_name', normalized)
+        .eq('customer_id', customerId)
+        .maybeSingle();
+
+    if (lookupError) {
+        throw new Error(`ACTION_LOOKUP_ERROR:${lookupError.message}`);
     }
-    return { actionId: result.action_id, resolvedActionName: normalized };
+
+    if (existing) {
+        if (!existing.is_active) {
+            throw new Error(`ACTION_DISABLED:Action "${normalized}" is currently disabled`);
+        }
+        return { actionId: existing.action_id, resolvedActionName: existing.action_name };
+    }
+
+    const { data: registered, error: registerError } = await supabase
+        .from('dim_actions')
+        .upsert(
+            {
+                action_name: normalized,
+                customer_id: customerId,
+                is_active: true,
+                action_category: 'auto-discovered',
+                action_description: 'Auto-registered on first use by historical import',
+                required_params: {},
+                validation_mode: 'advisory',
+            },
+            {
+                onConflict: 'action_name,customer_id',
+                ignoreDuplicates: false,
+            }
+        )
+        .select('action_id, action_name, is_active')
+        .maybeSingle();
+
+    if (registerError || !registered) {
+        throw new Error(`ACTION_REGISTER_ERROR:${registerError?.message ?? 'No action row returned'}`);
+    }
+
+    if (!registered.is_active) {
+        throw new Error(`ACTION_DISABLED:Action "${normalized}" is currently disabled`);
+    }
+
+    return { actionId: registered.action_id, resolvedActionName: registered.action_name };
 }
 
 /**
