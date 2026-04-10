@@ -17,7 +17,8 @@
  *     when outcome_score is explicitly provided (score_origin='provided').
  *   - Inference confidence is capped at 0.85 — never as reliable as
  *     developer-provided scores.
- *   - Import rows skip inference (no live baseline context).
+ *   - Import rows skip inference by default; opt-in is available via
+ *     ingest-core option enableInferenceWhenSkipTrust.
  *   - outcome-weighting.ts is NOT changed — inference feeds it
  *     automatically via the improved outcome_score values.
  * ══════════════════════════════════════════════════════════════
@@ -263,8 +264,8 @@ function computeInferenceConfidence(
     // History boost: more historical samples = more reliable baseline
     const historyBoost = sampleCount >= 20 ? 0.10
         : sampleCount >= 10 ? 0.06
-        : sampleCount >= 5  ? 0.03
-        : 0;
+            : sampleCount >= 5 ? 0.03
+                : 0;
 
     // Contradiction penalty
     const contradictionPenalty = hasContradiction ? 0.20 : 0;

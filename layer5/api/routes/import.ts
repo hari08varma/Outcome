@@ -43,6 +43,9 @@ const MAX_ROWS = 10_000;
 const CHUNK_SIZE = 500;               // rows per processing chunk
 const QUALITY_GATE_BLOCK = 0.40;      // block ingestion entirely below this
 const QUALITY_GATE_WARN = 0.60;       // warn but allow above this
+const ENABLE_IMPORT_INFERENCE = ['1', 'true', 'yes', 'on'].includes(
+    (process.env.LI_IMPORT_ENABLE_INFERENCE ?? '').trim().toLowerCase(),
+);
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -742,6 +745,9 @@ async function processImportJob(
                 await ingestOutcome(parsed.row, customerId, {
                     skipTrustUpdate: true,
                     ingestionSource: 'import',
+                    // Import defaults to no inference for predictable historical replays.
+                    // Opt in only when explicitly enabled for this deployment.
+                    enableInferenceWhenSkipTrust: ENABLE_IMPORT_INFERENCE,
                     sourceEventAt,
                     importJobId: jobId,
                 });

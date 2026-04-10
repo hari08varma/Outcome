@@ -13,7 +13,8 @@
 --    the alias is flagged for human review (needs_review=true).
 --
 -- Safety:
---   - Fully idempotent: all DDL uses IF NOT EXISTS / DO blocks.
+--   - Fully idempotent: all DDL uses IF NOT EXISTS / DO blocks,
+--     and cron schedule registration is guarded + replaced atomically.
 --   - Backward compatible: all columns are nullable or defaulted.
 --   - No destructive operations.
 -- ══════════════════════════════════════════════════════════════
@@ -68,16 +69,24 @@ BEGIN
         WHERE a.merge_reason = 'version_strip'
           AND a.needs_review = false
     LOOP
-        -- Get canonical action's current success rate
+        -- Get canonical action's current success rate.
+        -- Use a deterministic weighted aggregate across all task rows,
+        -- rather than LIMIT 1 from an arbitrary row.
         SELECT
             COALESCE(
-                (SELECT weighted_success_rate
-                 FROM mv_task_action_performance
-                 WHERE action_name = alias_rec.canonical_name
-                   AND customer_id = alias_rec.customer_id
-                 LIMIT 1),
+                SUM(
+                    (COALESCE(tap.ml_score, tap.success_rate)::numeric)
+                    * (GREATEST(tap.total_count, 1)::numeric)
+                )
+                /
+                NULLIF(SUM(GREATEST(tap.total_count, 1)::numeric), 0),
                 0.5
-            ) INTO canonical_rate;
+            )
+        INTO canonical_rate
+        FROM mv_task_action_performance tap
+        WHERE tap.action_name = alias_rec.canonical_name
+          AND tap.customer_id::text = alias_rec.customer_id
+          AND tap.agent_id <> '00000000-0000-0000-0000-000000000000'::uuid;
 
         -- Count outcomes for the raw (aliased) name BEFORE the alias was created
         SELECT
@@ -87,7 +96,9 @@ BEGIN
         FROM fact_outcomes fo
         JOIN dim_actions da ON da.action_id = fo.action_id
         WHERE da.action_name = alias_rec.raw_name
-          AND da.customer_id = alias_rec.customer_id
+                    AND da.customer_id::text = alias_rec.customer_id
+                    AND fo.is_deleted = false
+                    AND fo.is_synthetic = false
           AND fo.timestamp < alias_rec.alias_created;
 
         -- Need at least 20 outcomes to be meaningful
@@ -114,11 +125,26 @@ $$;
 -- ── Step 4: Schedule nightly cron (after MV refresh at 03:00) ─
 -- MV refreshes run at 03:00 UTC (migration 043/047).
 -- Re-clustering runs at 04:00 UTC to use fresh MV data.
-SELECT cron.schedule(
-    'recluster-action-aliases',
-    '0 4 * * *',
-    $$SELECT recluster_action_aliases()$$
-);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+        -- Replace any prior schedule to keep this migration re-runnable.
+        PERFORM cron.unschedule('recluster-action-aliases')
+        WHERE EXISTS (
+            SELECT 1
+            FROM cron.job
+            WHERE jobname = 'recluster-action-aliases'
+        );
+
+        PERFORM cron.schedule(
+            'recluster-action-aliases',
+            '0 4 * * *',
+            'SELECT recluster_action_aliases()'
+        );
+    ELSE
+        RAISE NOTICE 'pg_cron extension not installed; skipping recluster-action-aliases schedule.';
+    END IF;
+END $$;
 
 -- ── Verification ──────────────────────────────────────────────
 SELECT

@@ -40,6 +40,11 @@ export interface IngestCoreOptions {
     skipTrustUpdate: boolean;
     /** Column value written to fact_outcomes.ingestion_source */
     ingestionSource: IngestionSource;
+    /**
+     * Allows score inference even when skipTrustUpdate=true (import path).
+     * Default false keeps historical import behavior stable.
+     */
+    enableInferenceWhenSkipTrust?: boolean;
     /** Original event timestamp from imported log file. NULL for SDK rows. */
     sourceEventAt?: Date | null;
     /** FK to import_jobs row. NULL for SDK rows. */
@@ -575,13 +580,18 @@ export async function ingestOutcome(
 
     // 10. Outcome Score Inference — 3-layer engine
     // When developer omits outcome_score, infer from hard + soft + relative signals.
-    // Skipped for import rows (skipTrustUpdate=true) — no live baseline context.
+    // By default this runs for live SDK rows only.
+    // Import rows can opt in via enableInferenceWhenSkipTrust=true.
     let resolvedScore = finalOutcomeScore;
     let resolvedScoreOrigin = scoreOrigin;
     let resolvedScoreConfidence: number | null = null;
     let resolvedOutcomeClass: string | null = null;
 
-    if (resolvedScore === null && !opts.skipTrustUpdate) {
+    const shouldInferScore =
+        resolvedScore === null
+        && (!opts.skipTrustUpdate || opts.enableInferenceWhenSkipTrust === true);
+
+    if (shouldInferScore) {
         const baseline = await fetchActionBaseline(row.agent_id, actionId);
         const inferred = inferOutcomeScore({
             success: finalSuccess,
