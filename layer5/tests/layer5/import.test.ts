@@ -308,6 +308,33 @@ describe('Quality gate logic', () => {
         expect(q).toBe(0.25);
         expect(q < 0.40).toBe(true);
     });
+
+    it('dry-run inconsistency taxonomy catches high-score failures and business conflicts', () => {
+        const parsed = dryRunParse(
+            [
+                {
+                    action_name: 'retry',
+                    issue_type: 'payment_failed',
+                    success: false,
+                    outcome_score: 0.95,
+                    business_outcome: 'failed',
+                },
+                {
+                    action_name: 'retry',
+                    issue_type: 'payment_failed',
+                    success: true,
+                    outcome_score: 0.90,
+                    business_outcome: 'failed',
+                },
+            ],
+            'agent-1',
+            'cust-1',
+        );
+
+        expect(parsed.validation_errors).toHaveLength(0);
+        expect(parsed.valid_rows).toHaveLength(2);
+        expect(parsed.quality_summary.inconsistency_rate).toBe(1);
+    });
 });
 
 // ── Test 6: Idempotency ───────────────────────────────────────
@@ -332,6 +359,31 @@ describe('Idempotency key generation', () => {
             return crypto.createHash('sha256').update(base).digest('hex').slice(0, 64);
         }
         expect(makeKey('agent-1')).not.toBe(makeKey('agent-2'));
+    });
+
+    it('dryRunParse canonicalizes action/issue names before hashing', () => {
+        const parsed = dryRunParse(
+            [
+                {
+                    action_name: 'Retry With Cache',
+                    issue_type: 'Payment-Failed',
+                    success: true,
+                    timestamp: '2026-01-01T00:00:00.000Z',
+                },
+                {
+                    action_name: 'retry_with_cache',
+                    issue_type: 'payment_failed',
+                    success: true,
+                    timestamp: '2026-01-01T00:00:00.000Z',
+                },
+            ],
+            'agent-1',
+            'cust-1',
+        );
+
+        expect(parsed.validation_errors).toHaveLength(0);
+        expect(parsed.valid_rows).toHaveLength(2);
+        expect(parsed.valid_rows[0]?.idempotency_key).toBe(parsed.valid_rows[1]?.idempotency_key);
     });
 });
 
@@ -563,6 +615,17 @@ describe('trust-updater batch mode: ingestion_source filter', () => {
         // scoring-engine only refreshes MVs — must never call trust RPCs
         expect(source).not.toContain('update_trust_and_audit');
         expect(source).not.toContain('agent_trust_scores');
+    });
+
+    it('import processor persists payload and claims jobs via claim_import_job RPC', async () => {
+        const fs = await import('node:fs/promises');
+        const source = await fs.readFile(
+            new URL('../../api/routes/import.ts', import.meta.url),
+            'utf-8'
+        );
+
+        expect(source).toContain("rpc('claim_import_job'");
+        expect(source).toContain('payload: serializeParsedRows(dryRun.valid_rows)');
     });
 });
 

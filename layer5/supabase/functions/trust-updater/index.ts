@@ -217,7 +217,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
                 // Apply each outcome sequentially to compute final state
                 let currentTrust = { ...trust };
+                const auditRows: Array<Record<string, unknown>> = [];
                 for (const outcome of recentOutcomes) {
+                    const stepOldScore = currentTrust.trust_score;
+                    const stepOldStatus = currentTrust.trust_status;
                     const { newScore, newFailures, newCorrect, newStatus } = computeNewTrust(
                         currentTrust as TrustRow,
                         outcome.success
@@ -230,6 +233,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
                         total_decisions: currentTrust.total_decisions + 1,
                         trust_status: newStatus,
                     };
+
+                    auditRows.push({
+                        agent_id: trust.agent_id,
+                        customer_id: outcome.customer_id,
+                        event_type: outcome.success ? 'success' : 'failure',
+                        old_score: stepOldScore,
+                        old_status: stepOldStatus,
+                        new_score: currentTrust.trust_score,
+                        new_status: currentTrust.trust_status,
+                        performed_by: 'trust-updater-batch',
+                        reason: outcome.success
+                            ? `Outcome success via SDK: ${outcome.action_id ?? 'unknown'}`
+                            : `Outcome failure recorded: ${outcome.action_id ?? 'unknown'}`,
+                        performed_at: outcome.timestamp,
+                    });
                 }
 
                 const newStatus = currentTrust.trust_status;
@@ -257,28 +275,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
                     results.status_changes++;
                     if (newStatus === 'suspended') results.suspensions++;
                 }
-
-                // FIX: write one audit row per outcome (not one per batch run).
-                // This gives the Trust History timeline real per-action granularity.
-                const customerId = recentOutcomes[recentOutcomes.length - 1].customer_id;
-                const auditRows = recentOutcomes.map((outcome) => ({
-                    agent_id: trust.agent_id,
-                    customer_id: customerId,
-                    event_type: outcome.success ? 'success' : 'failure',
-                    // FIX: old_score/old_status populated — was null before
-                    old_score: oldScore,
-                    old_status: oldStatus,
-                    new_score: currentTrust.trust_score,
-                    new_status: newStatus,
-                    performed_by: 'trust-updater-batch',
-                    // action_id is available on each outcome row; action_name
-                    // is not denormalised here — use the reason format that
-                    // agent.tsx can parse, falling back to action_id for tracing
-                    reason: outcome.success
-                        ? `Outcome success via SDK: ${outcome.action_id ?? 'unknown'}`
-                        : `Outcome failure recorded: ${outcome.action_id ?? 'unknown'}`,
-                    performed_at: outcome.timestamp,
-                }));
 
                 // Batch insert — one call per agent instead of one per outcome
                 if (auditRows.length > 0) {

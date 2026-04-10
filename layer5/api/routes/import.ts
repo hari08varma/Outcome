@@ -29,10 +29,13 @@ import { Hono } from 'hono';
 import crypto from 'node:crypto';
 import { supabase } from '../lib/supabase.js';
 import {
+    computeOutcomeDataQuality,
+    evaluateInconsistencyRules,
     ingestOutcome,
     resolveTaskName,
     type NormalizedOutcomeRow,
 } from '../lib/ingest-core.js';
+import { normalizeActionName } from '../middleware/validate-action.js';
 import { sanitizeString } from '../lib/sanitize.js';
 
 export const importRouter = new Hono();
@@ -45,6 +48,32 @@ const QUALITY_GATE_BLOCK = 0.40;      // block ingestion entirely below this
 const QUALITY_GATE_WARN = 0.60;       // warn but allow above this
 const ENABLE_IMPORT_INFERENCE = ['1', 'true', 'yes', 'on'].includes(
     (process.env.LI_IMPORT_ENABLE_INFERENCE ?? '').trim().toLowerCase(),
+);
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.floor(parsed);
+}
+
+const IMPORT_NEAR_DUP_WINDOW_MS = parsePositiveInt(
+    process.env.LI_IMPORT_NEAR_DUP_WINDOW_MS,
+    2000,
+);
+const IMPORT_JOB_STALE_MINUTES = parsePositiveInt(
+    process.env.LI_IMPORT_JOB_STALE_MINUTES,
+    10,
+);
+const IMPORT_RECOVERY_BATCH_SIZE = parsePositiveInt(
+    process.env.LI_IMPORT_RECOVERY_BATCH_SIZE,
+    3,
+);
+const IMPORT_RECOVERY_INTERVAL_MS = parsePositiveInt(
+    process.env.LI_IMPORT_RECOVERY_INTERVAL_MS,
+    60_000,
+);
+const IMPORT_RECOVERY_ENABLED = process.env.NODE_ENV !== 'test' && !['0', 'false', 'no', 'off'].includes(
+    (process.env.LI_IMPORT_RECOVERY_ENABLED ?? '').trim().toLowerCase(),
 );
 
 // ── Types ─────────────────────────────────────────────────────
@@ -60,6 +89,15 @@ interface ParsedRow {
     quality: number;
     /** task_name resolved during dry-run */
     resolved_task: string;
+    /** source event time from file, used for historical ordering/dedup */
+    source_event_at: string | null;
+}
+
+interface ClaimedImportJob {
+    job_id: string;
+    customer_id: string;
+    payload: unknown;
+    queued_rows: number;
 }
 
 interface RowError {
@@ -550,6 +588,16 @@ export function normalizeBusinessOutcome(raw: string | null | undefined): string
     return 'unknown';
 }
 
+function canonicalizeIssueType(raw: string): string {
+    return raw
+        .trim()
+        .toLowerCase()
+        .replace(/[\s\-]+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
 // ── Dry-run parse pass ────────────────────────────────────────
 
 /**
@@ -632,21 +680,29 @@ export function dryRunParse(
             continue;
         }
 
-        // Idempotency key — deterministic from content so retries are safe
-        const idemBase = `${customerId}|${agentId}|${actionNameRaw}|${issueTypeRaw}|${String(success)}|${timestamp?.toISOString() ?? i}`;
+        // Idempotency key — deterministic from canonical content so retries are safe
+        // across case/style differences in imported logs.
+        const canonicalAction = normalizeActionName(actionNameRaw!);
+        const canonicalIssueType = canonicalizeIssueType(issueTypeRaw!);
+        const idemBase = `${customerId}|${agentId}|${canonicalAction}|${canonicalIssueType}|${String(success)}|${timestamp?.toISOString() ?? i}`;
         const idempotencyKey = crypto.createHash('sha256').update(idemBase).digest('hex').slice(0, 64);
 
-        // Quality scoring (mirrors computeDataQuality in ingest-core)
-        const isInconsistent = success === true && outcomeScore !== null && outcomeScore < 0.3;
-        let quality = 1.0;
-        if (outcomeScore === null) quality -= 0.25;
-        if (isInconsistent) quality -= 0.20;
-        if (taskResult.confidence < 0.70) quality -= 0.20;
-        if (!businessOutcome) quality -= 0.10;
-        quality = Math.max(0.0, quality);
+        // Quality scoring uses the exact same rule set as runtime ingestion.
+        const inconsistency = evaluateInconsistencyRules({
+            finalSuccess: success!,
+            outcomeScoreRaw: outcomeScore,
+            businessOutcome,
+        });
+        const quality = computeOutcomeDataQuality({
+            outcomeScoreRaw: outcomeScore,
+            isInconsistent: inconsistency.isInconsistent,
+            mappingConfidence: taskResult.confidence,
+            businessOutcome,
+            inferenceConfidence: null,
+        });
 
         totalQuality += quality;
-        if (isInconsistent) inconsistentCount++;
+        if (inconsistency.isInconsistent) inconsistentCount++;
         if (outcomeScore !== null) providedScoreCount++;
         taskCountMap[taskResult.task] = (taskCountMap[taskResult.task] ?? 0) + 1;
 
@@ -671,11 +727,8 @@ export function dryRunParse(
             idempotency_key: idempotencyKey,
             quality,
             resolved_task: taskResult.task,
-            // sourceEventAt attached separately when creating IngestCoreOptions
+            source_event_at: timestamp ? timestamp.toISOString() : null,
         });
-
-        // Attach timestamp to row for later use
-        (validRows[validRows.length - 1] as any).__sourceEventAt = timestamp;
     }
 
     // Build task clusters
@@ -715,6 +768,143 @@ export function dryRunParse(
 
 // ── Background job processor ──────────────────────────────────
 
+function serializeParsedRows(rows: ParsedRow[]): ParsedRow[] {
+    return rows.map((row) => ({
+        row_index: row.row_index,
+        row: row.row,
+        idempotency_key: row.idempotency_key,
+        quality: row.quality,
+        resolved_task: row.resolved_task,
+        source_event_at: row.source_event_at,
+    }));
+}
+
+function deserializeParsedRows(payload: unknown): ParsedRow[] {
+    if (!Array.isArray(payload)) return [];
+
+    const rows: ParsedRow[] = [];
+    for (const raw of payload) {
+        if (!raw || typeof raw !== 'object') continue;
+        const item = raw as Record<string, unknown>;
+
+        const rowIndex = Number(item.row_index);
+        const row = item.row;
+        const idempotencyKey = typeof item.idempotency_key === 'string' ? item.idempotency_key : null;
+        const quality = Number(item.quality ?? Number.NaN);
+        const resolvedTask = typeof item.resolved_task === 'string' ? item.resolved_task : null;
+        const sourceEventAt = typeof item.source_event_at === 'string' ? item.source_event_at : null;
+
+        if (!Number.isFinite(rowIndex) || !row || typeof row !== 'object' || !idempotencyKey || !resolvedTask) {
+            continue;
+        }
+
+        rows.push({
+            row_index: rowIndex,
+            row: row as NormalizedOutcomeRow,
+            idempotency_key: idempotencyKey,
+            quality: Number.isFinite(quality) ? quality : 0,
+            resolved_task: resolvedTask,
+            source_event_at: sourceEventAt,
+        });
+    }
+
+    return rows;
+}
+
+async function claimImportJob(jobId: string): Promise<{ customerId: string; validRows: ParsedRow[] } | null> {
+    const { data, error } = await supabase.rpc('claim_import_job', {
+        p_job_id: jobId,
+        p_stale_after_minutes: IMPORT_JOB_STALE_MINUTES,
+    });
+
+    if (error) {
+        console.error('[import] claim_import_job failed:', { jobId, error: error.message });
+        return null;
+    }
+
+    const claimedRaw = Array.isArray(data) ? data[0] : data;
+    if (!claimedRaw) return null;
+
+    const claimed = claimedRaw as ClaimedImportJob;
+    const customerId = typeof claimed.customer_id === 'string' ? claimed.customer_id : '';
+    if (!customerId) return null;
+
+    const validRows = deserializeParsedRows(claimed.payload);
+    if (validRows.length === 0 && Number(claimed.queued_rows ?? 0) > 0) {
+        await supabase
+            .from('import_jobs')
+            .update({
+                status: 'failed',
+                errors: [{ error: 'Import payload missing or invalid. Re-upload the file to retry.' }],
+                completed_at: new Date().toISOString(),
+            })
+            .eq('job_id', jobId);
+        return null;
+    }
+
+    return { customerId, validRows };
+}
+
+async function listRecoverableJobIds(): Promise<string[]> {
+    const staleBefore = new Date(
+        Date.now() - IMPORT_JOB_STALE_MINUTES * 60 * 1000,
+    ).toISOString();
+
+    const [queuedResult, staleRunningResult] = await Promise.all([
+        supabase
+            .from('import_jobs')
+            .select('job_id')
+            .eq('status', 'queued')
+            .order('created_at', { ascending: true })
+            .limit(IMPORT_RECOVERY_BATCH_SIZE),
+        supabase
+            .from('import_jobs')
+            .select('job_id')
+            .eq('status', 'running')
+            .lt('updated_at', staleBefore)
+            .order('updated_at', { ascending: true })
+            .limit(IMPORT_RECOVERY_BATCH_SIZE),
+    ]);
+
+    if (queuedResult.error) {
+        console.warn('[import] recovery queued-job lookup failed:', queuedResult.error.message);
+    }
+    if (staleRunningResult.error) {
+        console.warn('[import] recovery stale-job lookup failed:', staleRunningResult.error.message);
+    }
+
+    const ids = new Set<string>();
+    for (const row of [...(queuedResult.data ?? []), ...(staleRunningResult.data ?? [])] as Array<Record<string, unknown>>) {
+        if (typeof row.job_id === 'string') ids.add(row.job_id);
+    }
+    return [...ids];
+}
+
+async function recoverPendingImportJobs(): Promise<void> {
+    if (!IMPORT_RECOVERY_ENABLED) return;
+
+    const recoverableJobIds = await listRecoverableJobIds();
+    for (const jobId of recoverableJobIds) {
+        await processImportJob(jobId);
+    }
+}
+
+let recoveryLoopStarted = false;
+function startImportRecoveryLoop(): void {
+    if (recoveryLoopStarted || !IMPORT_RECOVERY_ENABLED) return;
+
+    recoveryLoopStarted = true;
+    void recoverPendingImportJobs().catch((err) => {
+        console.warn('[import] initial recovery pass failed:', (err as Error).message);
+    });
+
+    setInterval(() => {
+        void recoverPendingImportJobs().catch((err) => {
+            console.warn('[import] recovery pass failed:', (err as Error).message);
+        });
+    }, IMPORT_RECOVERY_INTERVAL_MS).unref();
+}
+
 /**
  * Processes an import job asynchronously.
  * Called fire-and-forget from POST /v1/import.
@@ -722,14 +912,11 @@ export function dryRunParse(
  */
 async function processImportJob(
     jobId: string,
-    validRows: ParsedRow[],
-    customerId: string,
 ): Promise<void> {
-    // Mark job as running
-    await supabase
-        .from('import_jobs')
-        .update({ status: 'running' })
-        .eq('job_id', jobId);
+    const claimed = await claimImportJob(jobId);
+    if (!claimed) return;
+
+    const { validRows, customerId } = claimed;
 
     let rowsProcessed = 0;
     let rowsFailed = 0;
@@ -741,14 +928,22 @@ async function processImportJob(
 
         for (const parsed of chunk) {
             try {
-                const sourceEventAt: Date | null = (parsed as any).__sourceEventAt ?? null;
+                const sourceEventAt = parsed.source_event_at
+                    ? new Date(parsed.source_event_at)
+                    : null;
+                const normalizedSourceEventAt =
+                    sourceEventAt && Number.isFinite(sourceEventAt.getTime())
+                        ? sourceEventAt
+                        : null;
+
                 await ingestOutcome(parsed.row, customerId, {
                     skipTrustUpdate: true,
                     ingestionSource: 'import',
                     // Import defaults to no inference for predictable historical replays.
                     // Opt in only when explicitly enabled for this deployment.
                     enableInferenceWhenSkipTrust: ENABLE_IMPORT_INFERENCE,
-                    sourceEventAt,
+                    sourceEventAt: normalizedSourceEventAt,
+                    dedupWindowMs: IMPORT_NEAR_DUP_WINDOW_MS,
                     importJobId: jobId,
                 });
                 rowsProcessed++;
@@ -767,12 +962,17 @@ async function processImportJob(
             .eq('job_id', jobId);
     }
 
-    // End-of-batch: refresh both MVs and clear score cache
+    // End-of-batch: refresh task performance. The RPC also refreshes
+    // mv_action_scores, so only call refresh_action_scores as fallback.
     try {
-        await Promise.all([
-            supabase.rpc('refresh_task_action_performance'),
-            supabase.rpc('refresh_action_scores'),
-        ]);
+        const { error: refreshTaskError } = await supabase.rpc('refresh_task_action_performance');
+        if (refreshTaskError) {
+            console.warn('[import] refresh_task_action_performance failed:', refreshTaskError.message);
+            const { error: refreshActionError } = await supabase.rpc('refresh_action_scores');
+            if (refreshActionError) {
+                throw new Error(refreshActionError.message);
+            }
+        }
         console.info('[import] MV refresh complete', { jobId });
     } catch (err: any) {
         console.warn('[import] MV refresh failed (non-fatal):', err.message);
@@ -805,12 +1005,15 @@ async function processImportJob(
             rows_processed: rowsProcessed,
             rows_failed: rowsFailed,
             errors: errors.slice(0, 500), // cap stored errors to avoid JSONB blowup
+            payload: null,
             completed_at: new Date().toISOString(),
         })
         .eq('job_id', jobId);
 
     console.info('[import] job complete', { jobId, rowsProcessed, rowsFailed, status: finalStatus });
 }
+
+startImportRecoveryLoop();
 
 // ── POST /v1/import ───────────────────────────────────────────
 
@@ -933,6 +1136,7 @@ importRouter.post('/', async (c) => {
             agent_id: agentId,
             status: 'queued',
             queued_rows: dryRun.valid_rows.length,
+            payload: serializeParsedRows(dryRun.valid_rows),
             quality_summary: dryRun.quality_summary,
             task_clusters: dryRun.task_clusters,
         })
@@ -951,7 +1155,7 @@ importRouter.post('/', async (c) => {
     // The response returns immediately with job_id.
     // The client polls GET /v1/import/:job_id for status.
     setImmediate(() => {
-        processImportJob(jobId, dryRun.valid_rows, customerId).catch(err => {
+        processImportJob(jobId).catch(err => {
             console.error('[import] processImportJob unhandled error:', {
                 jobId,
                 error: (err as Error).message,

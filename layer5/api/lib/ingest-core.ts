@@ -47,6 +47,12 @@ export interface IngestCoreOptions {
     enableInferenceWhenSkipTrust?: boolean;
     /** Original event timestamp from imported log file. NULL for SDK rows. */
     sourceEventAt?: Date | null;
+    /**
+     * Optional near-duplicate suppression window (milliseconds).
+     * When set for import rows, an existing row in this window is reused
+     * instead of inserting a duplicate event.
+     */
+    dedupWindowMs?: number;
     /** FK to import_jobs row. NULL for SDK rows. */
     importJobId?: string | null;
     /** Optional resolved refs from caller to avoid duplicate lookups. */
@@ -129,7 +135,7 @@ export interface IngestCoreResult {
 
 // ── Internal types ────────────────────────────────────────────
 
-interface InconsistencyEvaluation {
+export interface InconsistencyEvaluation {
     isInconsistent: boolean;
     type: string | null;
     reason: string | null;
@@ -150,7 +156,7 @@ function clamp01(v: number): number {
     return Math.max(0, Math.min(1, v));
 }
 
-function computeDataQuality(params: {
+export function computeOutcomeDataQuality(params: {
     outcomeScoreRaw: number | null | undefined;
     isInconsistent: boolean;
     mappingConfidence: number;
@@ -177,7 +183,7 @@ function computeDataQuality(params: {
     return Number(Math.max(0.0, score).toFixed(4));
 }
 
-function evaluateInconsistency(params: {
+export function evaluateInconsistencyRules(params: {
     finalSuccess: boolean;
     outcomeScoreRaw: number | null;
     businessOutcome: string | null | undefined;
@@ -269,6 +275,42 @@ export async function resolveActionIdForIngest(
 ): Promise<{ actionId: string; resolvedActionName: string }> {
     const { normalizeActionName } = await import('../middleware/validate-action.js');
     const normalized = normalizeActionName(actionName);
+
+    const rawLower = actionName
+        .trim()
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+    if (rawLower && rawLower !== normalized) {
+        const mergeReason = rawLower.match(/_v\d|_(final|new|old|temp|test|prod|dev|handler|fn|func|impl)$/)
+            ? 'version_strip'
+            : 'camel_normalize';
+        void (async () => {
+            try {
+                const { error } = await supabase
+                    .from('dim_action_aliases')
+                    .upsert({
+                        raw_name: rawLower,
+                        canonical_name: normalized,
+                        customer_id: customerId,
+                        merge_reason: mergeReason,
+                        merge_confidence: 1.0,
+                        similarity: null,
+                    }, {
+                        onConflict: 'raw_name,customer_id',
+                        ignoreDuplicates: true,
+                    });
+
+                if (error && error.code !== '23505') {
+                    console.warn('[ingest-core] alias upsert failed:', error.message);
+                }
+            } catch (err: unknown) {
+                console.warn('[ingest-core] alias upsert threw:', (err as Error).message);
+            }
+        })();
+    }
 
     // Import payloads frequently contain historical/novel action names.
     // Resolve existing action first, then auto-register on first use.
@@ -388,6 +430,120 @@ async function saveIdempotencyRecord(
     if (error && error.code !== '23505') {
         console.warn('[ingest-core] Failed to save idempotency key:', error.message);
     }
+}
+
+function parseNearDedupWindowMs(value: number | undefined): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    return Math.max(0, Math.floor(value));
+}
+
+function normalizedTextToken(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+}
+
+function isNearDuplicateCandidate(
+    candidate: {
+        outcome_score_raw: number | null;
+        response_time_ms: number | null;
+        error_code: string | null;
+        business_outcome: string | null;
+    },
+    target: {
+        outcomeScoreRaw: number | null;
+        responseTimeMs: number | null;
+        errorCode: string | null;
+        businessOutcome: string | null;
+    },
+): boolean {
+    const candidateError = normalizedTextToken(candidate.error_code);
+    const targetError = normalizedTextToken(target.errorCode);
+    if (candidateError !== targetError) return false;
+
+    const candidateOutcome = normalizedTextToken(candidate.business_outcome);
+    const targetOutcome = normalizedTextToken(target.businessOutcome);
+    if (candidateOutcome !== targetOutcome) return false;
+
+    if (typeof candidate.response_time_ms === 'number' && typeof target.responseTimeMs === 'number') {
+        if (Math.abs(candidate.response_time_ms - target.responseTimeMs) > 250) {
+            return false;
+        }
+    }
+
+    if (typeof candidate.outcome_score_raw === 'number' && typeof target.outcomeScoreRaw === 'number') {
+        if (Math.abs(candidate.outcome_score_raw - target.outcomeScoreRaw) > 0.05) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+async function findNearDuplicateOutcome(params: {
+    customerId: string;
+    agentId: string;
+    actionId: string;
+    contextId: string;
+    taskName: string;
+    success: boolean;
+    sourceEventAt: Date;
+    dedupWindowMs: number;
+    outcomeScoreRaw: number | null;
+    responseTimeMs: number | null;
+    errorCode: string | null;
+    businessOutcome: string | null;
+}): Promise<string | null> {
+    const start = new Date(params.sourceEventAt.getTime() - params.dedupWindowMs).toISOString();
+    const end = new Date(params.sourceEventAt.getTime() + params.dedupWindowMs).toISOString();
+
+    const { data, error } = await supabase
+        .from('fact_outcomes')
+        .select('outcome_id, outcome_score_raw, response_time_ms, error_code, business_outcome')
+        .eq('customer_id', params.customerId)
+        .eq('agent_id', params.agentId)
+        .eq('action_id', params.actionId)
+        .eq('context_id', params.contextId)
+        .eq('task_name', params.taskName)
+        .eq('success', params.success)
+        .eq('is_deleted', false)
+        .eq('is_synthetic', false)
+        .eq('ingestion_source', 'import')
+        .gte('timestamp', start)
+        .lte('timestamp', end)
+        .order('timestamp', { ascending: false })
+        .limit(5);
+
+    if (error) {
+        console.warn('[ingest-core] near-duplicate lookup failed:', error.message);
+        return null;
+    }
+
+    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+        const candidateOutcomeId = typeof row.outcome_id === 'string' ? row.outcome_id : null;
+        if (!candidateOutcomeId) continue;
+
+        const matches = isNearDuplicateCandidate(
+            {
+                outcome_score_raw: typeof row.outcome_score_raw === 'number' ? row.outcome_score_raw : null,
+                response_time_ms: typeof row.response_time_ms === 'number' ? row.response_time_ms : null,
+                error_code: typeof row.error_code === 'string' ? row.error_code : null,
+                business_outcome: typeof row.business_outcome === 'string' ? row.business_outcome : null,
+            },
+            {
+                outcomeScoreRaw: params.outcomeScoreRaw,
+                responseTimeMs: params.responseTimeMs,
+                errorCode: params.errorCode,
+                businessOutcome: params.businessOutcome,
+            },
+        );
+
+        if (matches) {
+            return candidateOutcomeId;
+        }
+    }
+
+    return null;
 }
 
 // ── Task resolution ───────────────────────────────────────────
@@ -516,7 +672,7 @@ export async function ingestOutcome(
         ?? (outcomeScoreRaw !== null ? 'provided' : 'inferred');
 
     // 4. Inconsistency + quality
-    const computedInconsistency = evaluateInconsistency({
+    const computedInconsistency = evaluateInconsistencyRules({
         finalSuccess,
         outcomeScoreRaw,
         businessOutcome: row.business_outcome ?? null,
@@ -620,13 +776,54 @@ export async function ingestOutcome(
     }
 
     // 10b. Data quality — computed AFTER inference so penalty reflects confidence.
-    const dataQuality = opts.precomputed?.dataQuality ?? computeDataQuality({
+    const dataQuality = opts.precomputed?.dataQuality ?? computeOutcomeDataQuality({
         outcomeScoreRaw,
         isInconsistent: inconsistency.isInconsistent,
         mappingConfidence,
         businessOutcome: row.business_outcome ?? null,
         inferenceConfidence: resolvedScoreConfidence,
     });
+
+    // Import replay safety: suppress near-duplicate writes around the same
+    // source event timestamp when payloads are semantically equivalent.
+    const nearDuplicateWindowMs = parseNearDedupWindowMs(opts.dedupWindowMs);
+    if (
+        opts.ingestionSource === 'import'
+        && nearDuplicateWindowMs > 0
+        && opts.sourceEventAt
+    ) {
+        const nearDuplicateOutcomeId = await findNearDuplicateOutcome({
+            customerId,
+            agentId: row.agent_id,
+            actionId,
+            contextId,
+            taskName: taskInferResult.task,
+            success: finalSuccess,
+            sourceEventAt: opts.sourceEventAt,
+            dedupWindowMs: nearDuplicateWindowMs,
+            outcomeScoreRaw,
+            responseTimeMs: row.response_time_ms ?? null,
+            errorCode: safeErrorCode,
+            businessOutcome: normalizedBusinessOutcome,
+        });
+
+        if (nearDuplicateOutcomeId) {
+            await saveIdempotencyRecord(row.idempotency_key, nearDuplicateOutcomeId, customerId);
+            return {
+                outcomeId: nearDuplicateOutcomeId,
+                timestamp: opts.sourceEventAt.toISOString(),
+                ingestionQuality: {
+                    data_quality: dataQuality,
+                    score_origin: resolvedScoreOrigin,
+                    is_inconsistent: inconsistency.isInconsistent,
+                    mapping_tier: 'near_duplicate_replay',
+                    mapping_confidence: mappingConfidence,
+                    inference_confidence: resolvedScoreConfidence,
+                    outcome_class: resolvedOutcomeClass,
+                },
+            };
+        }
+    }
 
     // 11. timestamp — use source_event_at if provided (preserves historical ordering),
     // else let the DB default to now().

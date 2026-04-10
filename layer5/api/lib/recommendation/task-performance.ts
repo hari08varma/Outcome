@@ -5,6 +5,55 @@ export const ZERO_UUID_AGENT_ID = '00000000-0000-0000-0000-000000000000';
 const TASK_PERFORMANCE_MV = 'mv_task_action_performance_180d';
 const LEGACY_TASK_PERFORMANCE_MV = 'mv_task_action_performance';
 
+function clampWeight(value: number, fallback: number): number {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(0, Math.min(1, value));
+}
+
+const IMPORT_SIGNAL_WEIGHT = clampWeight(
+    Number(process.env.LI_IMPORT_RECO_SIGNAL_WEIGHT ?? 0.35),
+    0.35,
+);
+const INCONSISTENT_SIGNAL_WEIGHT = clampWeight(
+    Number(process.env.LI_INCONSISTENT_RECO_SIGNAL_WEIGHT ?? 0.25),
+    0.25,
+);
+const UNCERTAIN_CLASS_SIGNAL_WEIGHT = clampWeight(
+    Number(process.env.LI_UNCERTAIN_RECO_SIGNAL_WEIGHT ?? 0.5),
+    0.5,
+);
+const DEGRADED_CLASS_SIGNAL_WEIGHT = clampWeight(
+    Number(process.env.LI_DEGRADED_RECO_SIGNAL_WEIGHT ?? 0.75),
+    0.75,
+);
+
+function sourceSignalWeight(ingestionSource: unknown): number {
+    return ingestionSource === 'import' ? IMPORT_SIGNAL_WEIGHT : 1.0;
+}
+
+function reliabilitySignalWeight(params: {
+    isInconsistent: unknown;
+    outcomeClass: unknown;
+}): number {
+    let weight = 1.0;
+
+    if (params.isInconsistent === true) {
+        weight *= INCONSISTENT_SIGNAL_WEIGHT;
+    }
+
+    const outcomeClass = typeof params.outcomeClass === 'string'
+        ? params.outcomeClass
+        : null;
+
+    if (outcomeClass === 'uncertain') {
+        weight *= UNCERTAIN_CLASS_SIGNAL_WEIGHT;
+    } else if (outcomeClass === 'degraded') {
+        weight *= DEGRADED_CLASS_SIGNAL_WEIGHT;
+    }
+
+    return Math.max(0, Math.min(1, weight));
+}
+
 type QueryError = {
     message: string;
     code?: string | null;
@@ -220,7 +269,7 @@ async function getTaskResolutionStatsByAction(
         .from('fact_outcomes')
         // Include data_quality so the scoring engine can down-weight low-quality events.
         // Pre-migration rows will have data_quality=NULL — treated as 1.0 (no penalty).
-        .select('action_id, outcome_score, outcome_score_raw, success, timestamp, data_quality, semantic_cluster_key, semantic_cluster_confidence')
+        .select('action_id, outcome_score, outcome_score_raw, success, timestamp, data_quality, ingestion_source, is_inconsistent, outcome_class, semantic_cluster_key, semantic_cluster_confidence')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -285,8 +334,13 @@ async function getTaskResolutionStatsByAction(
         const qualityMultiplier = rawQuality !== null
             ? Math.max(0, Math.min(1, rawQuality))
             : 1.0;
+        const sourceMultiplier = sourceSignalWeight(row.ingestion_source);
+        const reliabilityMultiplier = reliabilitySignalWeight({
+            isInconsistent: row.is_inconsistent,
+            outcomeClass: row.outcome_class,
+        });
 
-        const effectiveWeight = recencyWeight * qualityMultiplier;
+        const effectiveWeight = recencyWeight * qualityMultiplier * sourceMultiplier * reliabilityMultiplier;
         if (effectiveWeight > 0) {
             current.weight_total += effectiveWeight;
             current.weighted_score_sum += score * effectiveWeight;
@@ -337,7 +391,7 @@ async function queryTaskPerformanceFromFacts(
 ): Promise<TaskPerformanceRow[]> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, success, outcome_score, outcome_score_raw, data_quality, timestamp, semantic_cluster_key, semantic_cluster_confidence, dim_actions!inner(action_name)')
+        .select('action_id, success, outcome_score, outcome_score_raw, data_quality, ingestion_source, is_inconsistent, outcome_class, timestamp, semantic_cluster_key, semantic_cluster_confidence, dim_actions!inner(action_name)')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -427,8 +481,13 @@ async function queryTaskPerformanceFromFacts(
         const qualityMultiplier = rawQuality !== null
             ? Math.max(0, Math.min(1, rawQuality))
             : 1.0;
+        const sourceMultiplier = sourceSignalWeight(row.ingestion_source);
+        const reliabilityMultiplier = reliabilitySignalWeight({
+            isInconsistent: row.is_inconsistent,
+            outcomeClass: row.outcome_class,
+        });
 
-        const effectiveWeight = recencyWeight * qualityMultiplier;
+        const effectiveWeight = recencyWeight * qualityMultiplier * sourceMultiplier * reliabilityMultiplier;
         if (effectiveWeight > 0) {
             existing.resolution_weight_total += effectiveWeight;
             existing.resolution_weighted_score_total += score * effectiveWeight;
