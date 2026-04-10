@@ -179,7 +179,7 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
         expect(insertCall[0].outcome_score).toBe(0.7);
     });
 
-    it('without outcome_score stores neutral 0.5 for success=true', async () => {
+    it('without outcome_score infers 1.0 for success=true', async () => {
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -209,13 +209,13 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
 
         expect(res.status).toBe(201);
 
-        // Raw score is null and persisted outcome_score uses neutral prior (0.5).
+        // Raw score is null and inferred outcome_score uses 1.0.
         const insertCall = insertChain.insert.mock.calls[0];
         expect(insertCall).toBeDefined();
-        expect(insertCall[0].outcome_score).toBe(0.5);
+        expect(insertCall[0].outcome_score).toBe(1.0);
     });
 
-    it('without outcome_score stores neutral 0.5 for success=false', async () => {
+    it('without outcome_score infers 0.0 for success=false', async () => {
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -247,7 +247,7 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
 
         const insertCall = insertChain.insert.mock.calls[0];
         expect(insertCall).toBeDefined();
-        expect(insertCall[0].outcome_score).toBe(0.5);
+        expect(insertCall[0].outcome_score).toBe(0.0);
     });
 
     it('outcome_score=1.5 returns 400 validation error', async () => {

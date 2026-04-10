@@ -524,7 +524,7 @@ export async function ingestOutcome(
         ruleVersion: opts.precomputed?.inconsistencyRuleVersion ?? computedInconsistency.ruleVersion,
     };
 
-    const mappingConfidence = opts.precomputed?.mappingConfidence ?? taskInferResult.confidence;
+    let mappingConfidence = opts.precomputed?.mappingConfidence ?? taskInferResult.confidence;
     const mappingTier = opts.precomputed?.mappingTier ?? taskInferResult.tier;
     // dataQuality computed after inference — see step 10 below
 
@@ -602,7 +602,14 @@ export async function ingestOutcome(
         resolvedOutcomeClass = inferred.class;
     }
 
-    // 10a. Data quality — computed AFTER inference so penalty reflects confidence.
+    // 10a. Signal contradiction feedback — degraded/uncertain outcomes
+    // degrade mapping confidence. The outcome score itself is already adjusted
+    // by inference; this penalizes the TASK MAPPING quality when signals disagree.
+    if (resolvedOutcomeClass === 'degraded' || resolvedOutcomeClass === 'uncertain') {
+        mappingConfidence = Math.max(0, mappingConfidence - 0.05);
+    }
+
+    // 10b. Data quality — computed AFTER inference so penalty reflects confidence.
     const dataQuality = opts.precomputed?.dataQuality ?? computeDataQuality({
         outcomeScoreRaw,
         isInconsistent: inconsistency.isInconsistent,

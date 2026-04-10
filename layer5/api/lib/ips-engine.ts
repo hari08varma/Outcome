@@ -18,7 +18,7 @@ const TEMPERATURE = 1.0;        // softmax temperature
 // Setting the clamp floor here is redundant with the filter,
 // but makes the intent explicit at the computation level.
 const IPS_WEIGHT_MIN = 0.001;   // min IPS weight
-const IPS_WEIGHT_CAP = 0.3;     // max IPS weight (intentional conservative cap)
+export const IPS_WEIGHT_CAP = 0.3;     // max IPS weight (intentional conservative cap)
 const MIN_PROPENSITY = 0.001;   // floor to prevent division by zero
 
 export interface RankedActionEntry {

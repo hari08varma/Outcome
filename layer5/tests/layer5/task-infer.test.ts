@@ -36,16 +36,17 @@ describe('Task inference', () => {
         expect(result.tier).toBe('slugified_fallback');
     });
 
-    it('keeps unknown tier only for truly blank issue_type', () => {
+    it('keeps unknown tier only for truly blank issue_type (scoped bucket)', () => {
         const result = inferTask('   ');
 
-        expect(result.task).toBe('unknown_task');
+        expect(result.task).toBe('unknown_task_empty');
         expect(result.tier).toBe('unknown');
         expect(result.confidence).toBe(TASK_MAPPING_CONFIDENCE.unknown);
     });
 
-    it('identifies generic task names', () => {
+    it('identifies generic task names (including scoped unknowns)', () => {
         expect(isGenericTaskName('unknown_task')).toBe(true);
+        expect(isGenericTaskName('unknown_task_empty')).toBe(true);
         expect(isGenericTaskName('unspecified_issue')).toBe(true);
         expect(isGenericTaskName('payment_failed')).toBe(false);
     });

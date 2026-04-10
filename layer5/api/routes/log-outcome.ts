@@ -992,7 +992,7 @@ logOutcomeRouter.post('/', async (c) => {
         });
 
         // Data quality score: 0.0–1.0 completeness of this event.
-        const mappingConfidence: number = (body as any)._mapping_confidence ?? 1.0;
+        let mappingConfidence: number = (body as any)._mapping_confidence ?? 1.0;
 
         // 4. Resolve References
         const actionId = await resolveActionId(c, body, customerId);
@@ -1038,6 +1038,13 @@ logOutcomeRouter.post('/', async (c) => {
             resolvedScoreOrigin = 'inferred';
             inferenceConfidence = inferred.confidence;
             outcomeClass = inferred.class;
+        }
+
+
+        // 4b. Signal contradiction feedback — degraded/uncertain outcomes
+        // degrade mapping confidence (task mapping is less meaningful when signals disagree).
+        if (outcomeClass === 'degraded' || outcomeClass === 'uncertain') {
+            mappingConfidence = Math.max(0, mappingConfidence - 0.05);
         }
 
         // Data quality score: 0.0–1.0 completeness of this event.

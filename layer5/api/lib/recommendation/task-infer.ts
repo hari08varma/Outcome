@@ -108,8 +108,8 @@ function buildTaskCandidate(raw: string): string {
 }
 
 export function validateTaskName(raw: string | null | undefined): string {
-  if (!raw) return 'unknown_task';
-  if (raw.trim() === '') return 'unknown_task';
+  if (!raw) return 'unknown_task_empty';
+  if (raw.trim() === '') return 'unknown_task_empty';
 
   const candidate = buildTaskCandidate(raw);
   if (!candidate) return fallbackTaskName(raw);
@@ -128,7 +128,7 @@ export function validateTaskName(raw: string | null | undefined): string {
 export function isGenericTaskName(taskName: string | null | undefined): boolean {
   if (!taskName) return false;
   const normalized = validateTaskName(taskName);
-  return normalized === 'unknown_task' || normalized === GENERIC_TASK_NAME;
+  return normalized.startsWith('unknown_task') || normalized === GENERIC_TASK_NAME;
 }
 
 /**
@@ -183,7 +183,7 @@ export interface TaskInferResult {
 export function inferTask(issueType: string): TaskInferResult {
   if (!issueType || issueType.trim() === '') {
     return {
-      task: 'unknown_task',
+      task: 'unknown_task_empty',
       confidence: TASK_MAPPING_CONFIDENCE.unknown,
       tier: 'unknown',
     };
@@ -221,17 +221,22 @@ export function inferTask(issueType: string): TaskInferResult {
 
   // 3. Slugified fallback — structural normalization only, no semantic claim
   const slugified = validateTaskName(normalized);
-  if (slugified !== 'unknown_task') {
+  // Return the slugified result if it's a meaningful name (not a scoped unknown).
+  // GENERIC_TASK_NAME ('unspecified_issue') is meaningful — it's the canonical
+  // placeholder for known generic inputs like 'unknown_task', 'na', 'null', etc.
+  if (!slugified.startsWith('unknown_task')) {
     return {
       task: slugified,
-      confidence: TASK_MAPPING_CONFIDENCE.slugified_fallback,
+      confidence: slugified === GENERIC_TASK_NAME
+        ? TASK_MAPPING_CONFIDENCE.slugified_fallback
+        : TASK_MAPPING_CONFIDENCE.slugified_fallback,
       tier: 'slugified_fallback',
     };
   }
 
-  // 4. Unresolvable
+  // 4. Unresolvable — scoped bucket via stable hash (NOT one global bucket)
   return {
-    task: 'unknown_task',
+    task: `unknown_${stableTaskHash(issueType)}`,
     confidence: TASK_MAPPING_CONFIDENCE.unknown,
     tier: 'unknown',
   };

@@ -116,65 +116,86 @@ describe('discrepancy route', () => {
     });
 
     test('POST /detect — detects expired_no_signal and inserts row', async () => {
-        let pendingCallCount = 0;
         const inserted: any[] = [];
 
-        (supabase.from as any).mockImplementation((table: string) => {
-            if (table === 'dim_pending_signal_registrations') {
-                const chain: any = {
-                    select: vi.fn().mockReturnThis(),
-                    eq: vi.fn().mockReturnThis(),
-                    lt: vi.fn().mockImplementation(() => Promise.resolve({
-                        data: [{
-                            registration_id: 'r1',
-                            outcome_id: 'o1',
-                            event_type: 'charge.refund.updated',
-                            platform: 'stripe',
-                            expiry_at: '2026-01-01T00:00:00.000Z',
-                            resolved: false,
-                        }],
-                        error: null,
-                    })),
-                };
-                chain.eq.mockImplementation(() => {
-                    return chain;
-                });
-                chain.select.mockImplementation(() => {
-                    pendingCallCount += 1;
-                    if (pendingCallCount === 1) {
-                        return chain;
-                    }
-                    return {
-                        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    };
-                });
-                return chain;
-            }
-
-            if (table === 'dim_discrepancy_log') {
-                const chain: any = {
-                    select: vi.fn().mockReturnThis(),
-                    eq: vi.fn().mockReturnThis(),
-                    limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    insert: vi.fn().mockImplementation((payload: any) => {
-                        inserted.push(payload);
-                        return Promise.resolve({ error: null });
-                    }),
-                };
-                return chain;
-            }
-
-            return {
-                select: vi.fn().mockReturnThis(),
-                eq: vi.fn().mockReturnThis(),
-                in: vi.fn().mockReturnThis(),
-                not: vi.fn().mockResolvedValue({ data: [], error: null }),
+        /**
+         * Proper thenable chain — every builder method returns `self`,
+         * AND the chain implements .then()/.catch()/.finally() so it can
+         * be `await`-ed directly (handles .not().not() and .select().eq() terminals).
+         */
+        const makeThenable = (resolveValue: { data: any; error: any }) => {
+            const p = Promise.resolve(resolveValue);
+            const chain: any = {
+                select: vi.fn(),
+                eq:     vi.fn(),
+                not:    vi.fn(),
+                in:     vi.fn(),
+                lt:     vi.fn(),
+                is:     vi.fn(),
+                order:  vi.fn(),
+                limit:  vi.fn(),
+                maybeSingle: vi.fn().mockResolvedValue(resolveValue),
+                single:      vi.fn().mockResolvedValue(resolveValue),
+                insert: vi.fn().mockResolvedValue({ error: null }),
+                then:    p.then.bind(p),
+                catch:   p.catch.bind(p),
+                finally: p.finally.bind(p),
             };
+            chain.select.mockReturnValue(chain);
+            chain.eq.mockReturnValue(chain);
+            chain.not.mockReturnValue(chain);
+            chain.in.mockReturnValue(chain);
+            chain.lt.mockReturnValue(chain);
+            chain.is.mockReturnValue(chain);
+            chain.order.mockReturnValue(chain);
+            chain.limit.mockReturnValue(chain);
+            return chain;
+        };
+
+        // 1st query to dim_pending_signal_registrations: expired rows (.lt terminates)
+        const expiredRow = {
+            registration_id: 'r1', outcome_id: 'o1',
+            event_type: 'charge.refund.updated', platform: 'stripe',
+            expiry_at: '2026-01-01T00:00:00.000Z', resolved: false,
+        };
+        const pendingExpiredChain = makeThenable({ data: [expiredRow], error: null });
+        pendingExpiredChain.lt = vi.fn().mockResolvedValue({ data: [expiredRow], error: null });
+
+        // 2nd query: all registrations (.select.eq terminates via thenable)
+        const pendingAllChain = makeThenable({ data: [], error: null });
+
+        let pendingSelectCount = 0;
+        const pendingChain: any = {
+            select: vi.fn().mockImplementation(() => {
+                pendingSelectCount++;
+                return pendingSelectCount === 1 ? pendingExpiredChain : pendingAllChain;
+            }),
+        };
+
+        // dim_discrepancy_log: dedup IN query returns empty → new insert tracked
+        const discChain = makeThenable({ data: [], error: null });
+        discChain.insert = vi.fn().mockImplementation((payload: any) => {
+            const rows = Array.isArray(payload) ? payload : [payload];
+            inserted.push(...rows);
+            return Promise.resolve({ error: null });
+        });
+
+        // fact_outcomes: all queries return empty (no cross-event, pending, inconsistency)
+        const factsChain = makeThenable({ data: [], error: null });
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'dim_pending_signal_registrations') return pendingChain;
+            if (table === 'dim_discrepancy_log')             return discChain;
+            if (table === 'dim_signal_contracts')            return makeThenable({ data: [], error: null });
+            if (table === 'dim_actions')                     return makeThenable({ data: [], error: null });
+            if (table === 'fact_outcomes')                   return factsChain;
+            return makeThenable({ data: [], error: null });
         });
 
         const app = makeApp();
         const res = await app.request('/v1/discrepancies/detect', { method: 'POST' });
         const body = await res.json() as any;
+        if (res.status === 500) console.log('[DEBUG detect test 1]', body);
 
         expect(res.status).toBe(200);
         expect(body.detected).toBe(1);
@@ -184,61 +205,79 @@ describe('discrepancy route', () => {
     });
 
     test('POST /detect — skips duplicate (already logged unresolved row)', async () => {
-        let pendingCallCount = 0;
         const inserted: any[] = [];
 
-        (supabase.from as any).mockImplementation((table: string) => {
-            if (table === 'dim_pending_signal_registrations') {
-                const chain: any = {
-                    select: vi.fn().mockReturnThis(),
-                    eq: vi.fn().mockReturnThis(),
-                    lt: vi.fn().mockResolvedValue({
-                        data: [{
-                            registration_id: 'r1',
-                            outcome_id: 'o1',
-                            event_type: 'deployment.status_changed',
-                            platform: 'github',
-                            expiry_at: '2026-01-01T00:00:00.000Z',
-                            resolved: false,
-                        }],
-                        error: null,
-                    }),
-                };
-                chain.select.mockImplementation(() => {
-                    pendingCallCount += 1;
-                    if (pendingCallCount === 1) {
-                        return chain;
-                    }
-                    return {
-                        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    };
-                });
-                return chain;
-            }
-
-            if (table === 'dim_discrepancy_log') {
-                return {
-                    select: vi.fn().mockReturnThis(),
-                    eq: vi.fn().mockReturnThis(),
-                    limit: vi.fn().mockResolvedValue({ data: [{ discrepancy_id: 'd-existing' }], error: null }),
-                    insert: vi.fn().mockImplementation((payload: any) => {
-                        inserted.push(payload);
-                        return Promise.resolve({ error: null });
-                    }),
-                };
-            }
-
-            return {
-                select: vi.fn().mockReturnThis(),
-                eq: vi.fn().mockReturnThis(),
-                in: vi.fn().mockReturnThis(),
-                not: vi.fn().mockResolvedValue({ data: [], error: null }),
+        const makeThenable = (resolveValue: { data: any; error: any }) => {
+            const p = Promise.resolve(resolveValue);
+            const chain: any = {
+                select: vi.fn(),
+                eq:     vi.fn(),
+                not:    vi.fn(),
+                in:     vi.fn(),
+                lt:     vi.fn(),
+                is:     vi.fn(),
+                order:  vi.fn(),
+                limit:  vi.fn(),
+                maybeSingle: vi.fn().mockResolvedValue(resolveValue),
+                single:      vi.fn().mockResolvedValue(resolveValue),
+                insert: vi.fn().mockResolvedValue({ error: null }),
+                then:    p.then.bind(p),
+                catch:   p.catch.bind(p),
+                finally: p.finally.bind(p),
             };
+            chain.select.mockReturnValue(chain);
+            chain.eq.mockReturnValue(chain);
+            chain.not.mockReturnValue(chain);
+            chain.in.mockReturnValue(chain);
+            chain.lt.mockReturnValue(chain);
+            chain.is.mockReturnValue(chain);
+            chain.order.mockReturnValue(chain);
+            chain.limit.mockReturnValue(chain);
+            return chain;
+        };
+
+        // expired pending chain — one row found
+        const expiredRow = {
+            registration_id: 'r1', outcome_id: 'o1',
+            event_type: 'deployment.status_changed', platform: 'github',
+            expiry_at: '2026-01-01T00:00:00.000Z', resolved: false,
+        };
+        const pendingExpiredChain = makeThenable({ data: [expiredRow], error: null });
+        pendingExpiredChain.lt = vi.fn().mockResolvedValue({ data: [expiredRow], error: null });
+        const pendingAllChain   = makeThenable({ data: [], error: null });
+
+        let pendingSelectCount = 0;
+        const pendingChain: any = {
+            select: vi.fn().mockImplementation(() => {
+                pendingSelectCount++;
+                return pendingSelectCount === 1 ? pendingExpiredChain : pendingAllChain;
+            }),
+        };
+
+        // dim_discrepancy_log — dedup check finds existing row (skip insert)
+        const discChain = makeThenable({ data: [{ outcome_id: 'o1' }], error: null });
+        discChain.limit = vi.fn().mockResolvedValue({ data: [{ discrepancy_id: 'd-existing' }], error: null });
+        discChain.insert = vi.fn().mockImplementation((payload: any) => {
+            const rows = Array.isArray(payload) ? payload : [payload];
+            inserted.push(...rows);
+            return Promise.resolve({ error: null });
+        });
+
+        const factsChain = makeThenable({ data: [], error: null });
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'dim_pending_signal_registrations') return pendingChain;
+            if (table === 'dim_discrepancy_log')             return discChain;
+            if (table === 'dim_signal_contracts')            return makeThenable({ data: [], error: null });
+            if (table === 'dim_actions')                     return makeThenable({ data: [], error: null });
+            if (table === 'fact_outcomes')                   return factsChain;
+            return makeThenable({ data: [], error: null });
         });
 
         const app = makeApp();
         const res = await app.request('/v1/discrepancies/detect', { method: 'POST' });
         const body = await res.json() as any;
+        if (res.status === 500) console.log('[DEBUG detect test 2]', body);
 
         expect(res.status).toBe(200);
         expect(body.detected).toBe(0);

@@ -1,4 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Prevent supabase.ts from throwing on missing env vars — these tests are unit-only
+vi.mock('../../lib/supabase.js', () => ({
+    supabase: { from: vi.fn(), rpc: vi.fn() }
+}));
+
 import { validateAction } from '../../middleware/validate-action.js';
 import { supabase } from '../../lib/supabase.js';
 

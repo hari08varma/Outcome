@@ -36,9 +36,10 @@ describe('Payload Sanitization Security', () => {
             const output: any = sanitizeContext(maliciousPayload);
 
             expect(output.a).toBe(1);
-            expect(output.__proto__).toBeUndefined();
-            expect(output.constructor).toBeUndefined();
-            expect(output.prototype).toBeUndefined();
+            // __proto__ is always on the prototype chain; check own-key removal
+            expect(Object.hasOwn(output, '__proto__')).toBe(false);
+            expect(Object.hasOwn(output, 'constructor')).toBe(false);
+            expect(Object.hasOwn(output, 'prototype')).toBe(false);
             expect(Object.keys(output)).not.toContain('__proto__');
         });
 

@@ -82,27 +82,32 @@ function getActionCacheKey(customerId: string, actionName: string): string {
 }
 
 /**
- * Normalize action_name to lowercase snake_case so that variant spellings
- * (camelCase, PascalCase, SCREAMING_SNAKE, kebab-case, spaces) all map to
- * the same canonical key in dim_actions.
+ * Strip trailing version/noise suffixes from a snake_case action name.
+ * Applied iteratively until stable. Minimum 3 chars preserved.
  *
- * Examples:
- *   retryWithBackoff       → retry_with_backoff
- *   RETRY_WITH_BACKOFF     → retry_with_backoff
- *   RetryWithBackoff       → retry_with_backoff
- *   retry-with-backoff     → retry_with_backoff
- *   "retry with backoff"   → retry_with_backoff
- *
- * Rules (applied in order):
- *   1. Trim whitespace
- *   2. Insert underscore before every uppercase letter that follows a
- *      lowercase letter or digit (camelCase/PascalCase split)
- *   3. Replace hyphens and spaces with underscores
- *   4. Collapse consecutive underscores
- *   5. Lowercase the whole string
+ * Patterns (trailing only, never mid-string):
+ *   _v2, _v1_3          → version numbers
+ *   _final, _new, _old  → intent noise
+ *   _test, _prod, _dev  → environment noise
+ *   _handler, _fn, _impl → code noise
  */
+function stripVersionSuffixes(name: string): string {
+    let result = name;
+    let prev = '';
+    while (prev !== result && result.length > 3) {
+        prev = result;
+        result = result
+            .replace(/_v\d+(_\d+)?$/, '')
+            .replace(/_(final|new|old|temp|bak|copy)$/, '')
+            .replace(/_(test|prod|dev|staging)$/, '')
+            .replace(/_(handler|fn|func|impl|helper)$/, '')
+            .replace(/_+$/g, '');
+    }
+    return result || name;
+}
+
 export function normalizeActionName(raw: string): string {
-    return raw
+    const base = raw
         .trim()
         // camelCase / PascalCase → snake_case  (e.g. retryWith → retry_With → retry_with)
         .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -114,6 +119,46 @@ export function normalizeActionName(raw: string): string {
         .toLowerCase()
         // Strip leading/trailing underscores
         .replace(/^_+|_+$/g, '');
+    // Strip trailing version/noise suffixes AFTER camelCase split + lowercase.
+    // Order matters: retryPaymentV2 → retry_payment_v2 → retry_payment
+    return stripVersionSuffixes(base);
+}
+
+/**
+ * Fire-and-forget: record an action name alias in dim_action_aliases.
+ * Used when normalization maps a developer-sent raw name to a different canonical form.
+ * Never blocks the hot path — errors are only logged.
+ */
+async function recordActionAlias(
+    rawName: string,
+    canonicalName: string,
+    customerId: string,
+    mergeReason: string,
+): Promise<void> {
+    if (rawName === canonicalName) return;
+    try {
+        const { error } = await supabase
+            .from('dim_action_aliases')
+            .upsert({
+                raw_name: rawName,
+                canonical_name: canonicalName,
+                customer_id: customerId,
+                merge_reason: mergeReason,
+                merge_confidence: 1.000,
+                similarity: null,
+            }, {
+                onConflict: 'raw_name,customer_id',
+                ignoreDuplicates: true,
+            });
+        // 23505 = unique_violation (row already exists) — correct, ignore silently
+        if (error && error.code !== '23505') {
+            console.warn('[validate-action] Alias record failed (non-fatal):', {
+                raw_name: rawName, canonical_name: canonicalName, error: error.message,
+            });
+        }
+    } catch (err: any) {
+        console.warn('[validate-action] Alias record exception (non-fatal):', err.message);
+    }
 }
 
 // Evict expired entries every 5 minutes
@@ -189,6 +234,19 @@ export async function validateActionMiddleware(c: Context, next: Next): Promise<
         body.action_name = actionName;
     }
     const customerId = ((c as any).get('customerId') ?? c.get('customer_id')) as string | undefined;
+
+    // Record alias when normalization changed the name (fire-and-forget)
+    // Must be after customerId is resolved.
+    if (actionName && typeof actionName === 'string' && customerId) {
+        const rawLower = String(rawActionName).trim().toLowerCase()
+            .replace(/[-\s]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+        if (rawLower !== actionName) {
+            const reason = rawLower.match(/_v\d|_(final|new|old|temp|test|prod|dev|handler|fn|func|impl)$/)
+                ? 'version_strip'
+                : 'camel_normalize';
+            void recordActionAlias(rawLower, actionName, customerId, reason);
+        }
+    }
 
     // If action_name is absent but action_id is present,
     // skip middleware validation — resolveActionId() handles it.

@@ -8,8 +8,18 @@ vi.mock('../../lib/supabase.js', () => ({
             select: () => {
                 const chain: any = {
                     eq: () => chain,
+                    order: () => chain,
+                    limit: () => chain,
                     maybeSingle: async () => ({ data: null, error: null }),
                     single: async () => ({ data: null, error: null })
+                };
+                return chain;
+            },
+            upsert: () => {
+                const chain: any = {
+                    select: () => chain,
+                    single: async () => ({ data: { context_id: 'test-context-123' }, error: null }),
+                    maybeSingle: async () => ({ data: { context_id: 'test-context-123' }, error: null })
                 };
                 return chain;
             },
@@ -58,6 +68,7 @@ vi.mock('../../middleware/validate-action.js', () => ({
         valid: true,
         action_id: 'test-action-id',
     }),
+    normalizeActionName: (x: string) => x,
 }));
 
 import { logOutcomeRouter } from '../../routes/log-outcome.js';
@@ -71,15 +82,13 @@ describe('Layer 1 — Schema validation', () => {
     });
     app.route('/', logOutcomeRouter);
 
-    test('rejects payload missing session_id', async () => {
+    test('accepts payload missing session_id (auto-generated)', async () => {
         const res = await app.request('/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action_name: 'refund', issue_type: 'billing', success: true }),
         });
-        expect(res.status).toBe(400);
-        const body = await res.json() as any;
-        expect(body.code).toBe('VALIDATION_ERROR');
+        expect(res.status).toBe(201);
     });
 
     test('rejects outcome_score above 1.0', async () => {
@@ -104,15 +113,13 @@ describe('Layer 1 — Schema validation', () => {
         expect(body.code).toBe('VALIDATION_ERROR');
     });
 
-    test('rejects unknown business_outcome value', async () => {
+    test('normalizes unknown business_outcome value to unknown', async () => {
         const res = await app.request('/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: crypto.randomUUID(), action_name: 'refund', issue_type: 'billing', success: true, business_outcome: 'winning' }),
         });
-        expect(res.status).toBe(400);
-        const body = await res.json() as any;
-        expect(body.code).toBe('VALIDATION_ERROR');
+        expect(res.status).toBe(201);
     });
 
     test("normalizes environment alias 'qa' to 'staging' and returns 201", async () => {

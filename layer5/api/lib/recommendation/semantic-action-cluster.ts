@@ -104,11 +104,19 @@ function normalizeToken(token: string): string {
 }
 
 function tokenize(value: string): string[] {
-    const raw = value
+    // CamelCase/PascalCase decomposition — MUST happen before toLowerCase().
+    // processTicketRefundV2 → process Ticket Refund V2
+    // XMLParser             → XML Parser
+    const camelSplit = value
         .trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+
+    const raw = camelSplit
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, ' ')
         .split(/\s+/)
+        .filter(t => !/^(v\d+|\d+)$/.test(t))
         .map((token) => normalizeToken(token))
         .filter((token) => token.length > 0 && !STOPWORDS.has(token));
 

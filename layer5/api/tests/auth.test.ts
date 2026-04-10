@@ -1,6 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 
+// Must come before any dynamic import that transitively loads supabase.ts
+vi.mock('../lib/supabase.js', () => {
+    // Build a fluent chain that always resolves empty (no agent found = auth rejects)
+    const makeChain = () => {
+        const chain: any = {};
+        chain.select    = vi.fn().mockReturnValue(chain);
+        chain.eq        = vi.fn().mockReturnValue(chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        chain.single    = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+    };
+    return {
+        supabase: {
+            from: vi.fn().mockImplementation(() => makeChain()),
+            rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }
+    };
+});
+
 // Mock the console methods so we don't dirty the test output with warnings
 const originalWarn = console.warn;
 beforeEach(() => {
@@ -55,11 +74,18 @@ describe('Dev Auth Middleware Bypass Isolation', () => {
 
         await devAuthMiddleware(cMock, nextMock);
 
-        // Assert: agent_id is NOT set on context (vi.mock wasn't called with it)
+        // Assert: the dev bypass agent_id was NOT set (INTERNAL_SECRET is not a dev bypass key)
         expect(cMock.set).not.toHaveBeenCalledWith('agent_id', 'd0000000-0000-0000-0000-000000000001');
 
-        // The middleware would just fall through to the next handler (the real auth)
-        expect(nextMock).toHaveBeenCalled();
+        // The middleware falls through to authMiddleware → DB lookup returns null → 401 is returned.
+        // next() is deliberately NOT called — this is the secure behavior.
+        // If this were ever broken and next() was called, that would be a security regression.
+        expect(nextMock).not.toHaveBeenCalled();
+        // The 401 response was returned via c.json(...)
+        expect(cMock.json).toHaveBeenCalledWith(
+            expect.objectContaining({ code: 'INVALID_API_KEY' }),
+            401
+        );
     });
 
     it('devAuthMiddleware accepts LAYERINFINITE_DEV_API_KEY in dev', async () => {

@@ -1,0 +1,32 @@
+{
+  "mode": "auto",
+  "messy_profile": "none",
+  "agent_id": "realworld",
+  "episode_id": "f484da8c-ef61-4912-a3e3-f26e636b8e19",
+  "num_runs": 1,
+  "openai_calls": 0,
+  "openai_cost_usd": 0.0,
+  "results": [
+    {
+      "run": 1,
+      "failure_type": "deploy_rollback_triggered",
+      "canonical_failure_type": "deploy_rollback_triggered",
+      "issue_corruption": "clean",
+      "tier": "hard",
+      "correct_action": "pin_previous_image",
+      "chosen_action": "warm_cache_layer",
+      "li_recommendation": "rollback_migration",
+      "li_state": "scored",
+      "li_confidence": 0.9597,
+      "success": false,
+      "outcome_score": 0.05,
+      "is_correct": false,
+      "li_rec_correct": false,
+      "followed_li": false,
+      "suboptimality_gap": 0.52,
+      "agent_confidence": 0.0,
+      "openai_error": "HTTP Error 401: Unauthorized",
+      "logged": true
+    }
+  ]
+}
