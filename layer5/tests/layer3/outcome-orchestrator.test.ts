@@ -291,7 +291,7 @@ describe('Outcome orchestrator invariants', () => {
         vi.clearAllMocks();
     });
 
-    it('preserves protected status during live trust upsert and still updates numeric score', async () => {
+    it('does not perform secondary trust upsert when trust row already exists', async () => {
         const state = makeBaseState();
         wireSupabaseMocks(state);
 
@@ -309,29 +309,20 @@ describe('Outcome orchestrator invariants', () => {
 
         state.factOutcomesByAgent['agent-1'] = Array.from({ length: 20 }, () => ({ success: true }));
 
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
-
         await orchestrateOutcome(baseParams({ finalSuccess: false, finalOutcomeScore: 0 }));
         await flushBackgroundWork();
 
-        expect(state.trustUpserts.length).toBeGreaterThan(0);
-        const upsert = state.trustUpserts[state.trustUpserts.length - 1];
-        expect(upsert.trust_status).toBe('sandbox');
-        expect(upsert.trust_score).toBeGreaterThan(0.6);
-
-        const warningMessages = warnSpy.mock.calls.map((call) => String(call[0] ?? ''));
-        expect(warningMessages.some((msg) => msg.includes('skipping status overwrite'))).toBe(true);
-
-        warnSpy.mockRestore();
+        expect(state.trustUpserts).toHaveLength(0);
+        expect(state.rpcCalls.some((c) => c.fn === 'update_trust_and_audit')).toBe(true);
     });
 
-    it('maps weighted score 0.63 to trusted in live trust upsert', async () => {
+    it('uses update_trust_and_audit RPC as the only trust score authority', async () => {
         const state = makeBaseState();
         wireSupabaseMocks(state);
 
         state.trustRowsByAgent['agent-1'] = {
             trust_id: 't-1',
-            trust_score: 0.5,
+            trust_score: 0.62,
             total_decisions: 100,
             correct_decisions: 50,
             consecutive_failures: 0,
@@ -341,22 +332,18 @@ describe('Outcome orchestrator invariants', () => {
         state.contextsByCustomerIssue['cust-1|billing'] = 'ctx-1';
         state.contextOutcomeCounts['cust-1|ctx-1'] = 12;
 
-        const recent = [true, true, true, true, true, true, false, false, false, false];
-        const rest = [
-            ...Array.from({ length: 59 }, () => true),
-            ...Array.from({ length: 31 }, () => false),
-        ];
-
-        state.factOutcomesByAgent['agent-1'] = [...recent, ...rest].map((success) => ({ success }));
+        state.factOutcomesByAgent['agent-1'] = Array.from({ length: 100 }, () => ({ success: true }));
 
         await orchestrateOutcome(baseParams());
         await flushBackgroundWork();
 
-        expect(state.trustUpserts.length).toBeGreaterThan(0);
-        const upsert = state.trustUpserts[state.trustUpserts.length - 1];
+        expect(state.trustUpserts).toHaveLength(0);
 
-        expect(upsert.trust_score).toBe(0.63);
-        expect(upsert.trust_status).toBe('trusted');
+        const expectedScore = 0.62 * 1.03;
+        const trustRow = state.trustRowsByAgent['agent-1'];
+
+        expect(trustRow?.trust_score).toBeCloseTo(expectedScore, 6);
+        expect(trustRow?.trust_status).toBe('trusted');
     });
 
     it('deduplicates silent failure degradation alerts by action within 24h', async () => {

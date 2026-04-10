@@ -1,6 +1,6 @@
 /**
  * Layerinfinite — Unit Tests: Scoring Engine
- * Tests the 5-factor composite formula and cache behaviour.
+ * Tests the 6-factor composite formula and cache behaviour.
  * Run: npm test (from api/)
  */
 
@@ -12,7 +12,8 @@ const W_SUCCESS = 0.40;
 const W_CONF = 0.20;
 const W_TREND = 0.20;
 const W_SALIENCE = 0.10;
-const W_RECENCY = 0.10;
+const W_RECENCY = 0.05;
+const W_LATENCY = 0.05;
 
 // ── Pure formula (mirrors lib/scoring.ts) ────────────────────
 function computeCompositeScore(row: {
@@ -21,7 +22,8 @@ function computeCompositeScore(row: {
     confidence: number;
     trend_delta: number | null;
     last_outcome_at: string | null;
-}, contextMatch: number | null = null): number {
+    avg_response_ms: number | null;
+}, contextMatch: number | null = null, p75ResponseMs = 1000): number {
     const f_success = row.weighted_success_rate ?? row.raw_success_rate ?? 0;
     const f_conf = row.confidence ?? 0;
     const rawTrend = row.trend_delta ?? 0;
@@ -32,23 +34,39 @@ function computeCompositeScore(row: {
         const ageHours = (Date.now() - new Date(row.last_outcome_at).getTime()) / 3_600_000;
         f_recency = Math.max(0, Math.min(1, 1 - ageHours / 168));
     }
+    const f_latency = (() => {
+        if (row.avg_response_ms === null || row.avg_response_ms <= 0 || p75ResponseMs <= 0) {
+            return 0.5;
+        }
+        const ratio = row.avg_response_ms / p75ResponseMs;
+        const clamped = Math.max(0, Math.min(2, ratio));
+        return Math.max(0, Math.min(1, 1 - clamped / 2));
+    })();
     const f_context = contextMatch ?? 1.0;
-    return (W_SUCCESS * f_success + W_CONF * f_conf + W_TREND * f_trend + W_SALIENCE * f_salience + W_RECENCY * f_recency) * f_context;
+    return (
+        W_SUCCESS * f_success
+        + W_CONF * f_conf
+        + W_TREND * f_trend
+        + W_SALIENCE * f_salience
+        + W_RECENCY * f_recency
+        + W_LATENCY * f_latency
+    ) * f_context;
 }
 
 // ── Tests ─────────────────────────────────────────────────────
 
-describe('Scoring Engine — 5-Factor Formula', () => {
+describe('Scoring Engine — 6-Factor Formula', () => {
     const baseRow = {
         weighted_success_rate: 0.8,
         raw_success_rate: 0.75,
         confidence: 0.80,
         trend_delta: null,
         last_outcome_at: new Date().toISOString(),
+        avg_response_ms: 1000,
     };
 
     it('weights sum to 1.0', () => {
-        const total = W_SUCCESS + W_CONF + W_TREND + W_SALIENCE + W_RECENCY;
+        const total = W_SUCCESS + W_CONF + W_TREND + W_SALIENCE + W_RECENCY + W_LATENCY;
         expect(total).toBeCloseTo(1.0, 10);
     });
 
@@ -65,6 +83,7 @@ describe('Scoring Engine — 5-Factor Formula', () => {
             raw_success_rate: 1.0,
             confidence: 0.95,
             trend_delta: 0.3,
+            avg_response_ms: 300,
         });
         expect(score).toBeGreaterThan(0.80);
     });
@@ -76,6 +95,7 @@ describe('Scoring Engine — 5-Factor Formula', () => {
             raw_success_rate: 0.0,
             confidence: 0.05,
             trend_delta: -0.4,
+            avg_response_ms: 3000,
         });
         expect(score).toBeLessThan(0.30);
     });
@@ -113,6 +133,12 @@ describe('Scoring Engine — 5-Factor Formula', () => {
         const score = computeCompositeScore(baseRow);
         const expectedBase = W_SUCCESS * baseRow.weighted_success_rate + W_CONF * baseRow.confidence;
         expect(score).toBeGreaterThan(expectedBase);  // salience + recency add to it
+    });
+
+    it('faster actions get a higher latency factor than slower actions', () => {
+        const fast = computeCompositeScore({ ...baseRow, avg_response_ms: 250 }, null, 1000);
+        const slow = computeCompositeScore({ ...baseRow, avg_response_ms: 2500 }, null, 1000);
+        expect(fast).toBeGreaterThan(slow);
     });
 });
 
@@ -207,6 +233,7 @@ describe('Scoring Engine — Context Match Factor', () => {
         confidence: 0.80,
         trend_delta: null as number | null,
         last_outcome_at: new Date().toISOString(),
+        avg_response_ms: 1000,
     };
 
     it('context_match=0.7 produces lower score than context_match=1.0', () => {

@@ -247,129 +247,54 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         })).catch(() => { });
     }
 
-    // Non-blocking: upsert live trust score so dashboard health card
-    // shows real data immediately (not 0 while waiting for backprop engine).
+    // Non-blocking: refresh trust cache row for dashboard reads.
+    // Trust score/status authority is updateAgentTrust() via update_trust_and_audit RPC.
     // IMPORT GUARD: skip for imported rows — trust reflects SDK signal only.
     if (params.skipTrust !== true) {
-        upsertLiveTrustScore(params.agentId).catch((err) =>
-            console.warn('[orchestrator] upsertLiveTrustScore failed:', (err as Error).message)
+        refreshLiveTrustCache(params.agentId).catch((err) =>
+            console.warn('[orchestrator] refreshLiveTrustCache failed:', (err as Error).message)
         );
     }
 }
 
-// ── Live Trust Score Upsert (fire-and-forget, creates row for new agents) ──
-async function upsertLiveTrustScore(
+// ── Live Trust Cache Refresh (fire-and-forget) ──
+// Read-only for existing rows: never recomputes trust score/status.
+// Bootstrap-only write: inserts a neutral row if the trigger-minted row is missing.
+async function refreshLiveTrustCache(
     agentId: string,
 ): Promise<void> {
-    const { data: outcomes, error } = await supabase
-        .from('fact_outcomes')
-        .select('success')
-        .eq('agent_id', agentId)
-        .eq('is_synthetic', false)
-        .eq('is_deleted', false)
-        // IMPORT GUARD: only count live SDK outcomes for trust calculation.
-        // Historical import rows (ingestion_source='import') must not inflate trust.
-        .eq('ingestion_source', 'sdk')
-        .order('timestamp', { ascending: false })
-        .limit(100);
-
-    if (error) {
-        console.warn('[trust] upsertLiveTrustScore: failed to fetch outcomes:', error.message);
-    }
-
-    if (error || !outcomes || outcomes.length === 0) {
-        // Read current total_decisions from DB — do not infer from fact_outcomes query.
-        // fact_outcomes excludes synthetic/deleted rows; total_decisions counts all.
-        // These two counts legitimately diverge. Trust the DB source of truth.
-        const { data: currentRow } = await supabase
-            .from('agent_trust_scores')
-            .select('total_decisions, trust_status')
-            .eq('agent_id', agentId)
-            .maybeSingle();
-
-        // Only reset to 'new' if the DB also confirms zero decisions.
-        // If total_decisions > 0, the agent has real signal — do not overwrite.
-        if (!currentRow || currentRow.total_decisions === 0) {
-            await supabase
-                .from('agent_trust_scores')
-                .update({ trust_status: 'new', trust_score: null })
-                .eq('agent_id', agentId)
-                .eq('total_decisions', 0);  // ← still safe: confirmed 0 above
-        }
-        // If total_decisions > 0, there is real signal but no non-synthetic/non-deleted
-        // outcomes in the last 100. This is a rare edge case (all outcomes deleted/synthetic).
-        // Do nothing — trust the existing score rather than resetting to 'new'.
-        return;
-    }
-
-    const total = outcomes.length;
-    const successes = outcomes.filter((o) => o.success).length;
-    const rawScore = successes / total;
-
-    const recent = outcomes.slice(0, 10);
-    const recentSuccesses = recent.filter((o) => o.success).length;
-    const recentWeight = recent.length > 0 ? recentSuccesses / recent.length : rawScore;
-    const weightedScore = Math.round(((rawScore * 0.6) + (recentWeight * 0.4)) * 10000) / 10000;
-
-    const consecutiveFailures = (() => {
-        let count = 0;
-        for (const o of outcomes) {
-            if (!o.success) count++;
-            else break;
-        }
-        return count;
-    })();
-
-    // INVARIANT: Must exactly mirror updateAgentTrust() status thresholds.
-    // Canonical order: check suspended first, then sandbox, then probation, then trusted.
-    const trustStatus =
-        (consecutiveFailures >= 10 || weightedScore < 0.1) ? 'suspended' :
-            (consecutiveFailures >= 5 || weightedScore < 0.3) ? 'sandbox' :
-                weightedScore >= 0.6 ? 'trusted' : 'probation';
-
-    const { data: currentTrust } = await supabase
+    const { data: trustRow, error } = await supabase
         .from('agent_trust_scores')
-        .select('trust_status')
+        .select('agent_id, trust_score, trust_status, total_decisions, consecutive_failures')
         .eq('agent_id', agentId)
         .maybeSingle();
-    const currentStatus = currentTrust?.trust_status ?? null;
 
-    if (shouldPreserveProtectedStatus(currentStatus, trustStatus)) {
-        console.warn(
-            '[trust] upsertLiveTrustScore: skipping status overwrite. ' +
-            `Current protected status=${currentStatus} would be overwritten ` +
-            `with status=${trustStatus} for agent=${agentId}. ` +
-            'The canonical status set by updateAgentTrust is preserved.'
-        );
-
-        // Still upsert the numeric score and failure count — just preserve the status.
-        await supabase
-            .from('agent_trust_scores')
-            .upsert({
-                agent_id: agentId,
-                trust_score: weightedScore,
-                trust_status: currentStatus,
-                consecutive_failures: consecutiveFailures,
-                total_decisions: total,
-                updated_at: new Date().toISOString(),
-            }, { onConflict: 'agent_id' });
+    if (error) {
+        console.warn('[trust] refreshLiveTrustCache: failed to read agent_trust_scores:', error.message);
         return;
     }
 
-    await supabase
+    if (trustRow) {
+        return;
+    }
+
+    const { error: bootstrapError } = await supabase
         .from('agent_trust_scores')
         .upsert({
             agent_id: agentId,
-            trust_score: weightedScore,
-            trust_status: trustStatus,
-            consecutive_failures: consecutiveFailures,
-            total_decisions: total,
+            trust_score: null,
+            trust_status: 'new',
+            consecutive_failures: 0,
+            total_decisions: 0,
             updated_at: new Date().toISOString(),
         }, { onConflict: 'agent_id' });
 
-    // NOTE: No audit INSERT here. The update_trust_and_audit() RPC (called by
-    // updateAgentTrust() for each outcome) already writes the canonical audit row.
-    // Adding a second insert here would produce duplicate Trust History entries.
+    if (bootstrapError) {
+        console.warn(
+            '[trust] refreshLiveTrustCache: failed to bootstrap missing trust row:',
+            bootstrapError.message,
+        );
+    }
 }
 
 // ── Trust Snapshot (fire-and-forget) ──────────────────────────

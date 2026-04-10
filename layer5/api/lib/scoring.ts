@@ -1,7 +1,7 @@
 /**
  * Layerinfinite — lib/scoring.ts
  * ══════════════════════════════════════════════════════════════
- * 5-Factor Composite Scoring Engine
+ * 6-Factor Composite Scoring Engine
  * ══════════════════════════════════════════════════════════════
  *
  * FORMULA:
@@ -10,7 +10,8 @@
  *     w_conf     * confidence             +
  *     w_trend    * trend_factor           +
  *     w_salience * salience_factor        +
- *     w_recency  * recency_factor
+ *     w_recency  * recency_factor         +
+ *     w_latency  * latency_factor
  *   )
  *
  * Weights sum to 1.0. All inputs are normalised to [0, 1].
@@ -31,7 +32,8 @@ const W_SUCCESS = 0.40;  // primary driver
 const W_CONF = 0.20;  // uncertainty penalty
 const W_TREND = 0.20;  // directional momentum
 const W_SALIENCE = 0.10;  // action importance
-const W_RECENCY = 0.10;  // freshness bonus
+const W_RECENCY = 0.05;  // freshness bonus
+const W_LATENCY = 0.05;  // response-time quality signal
 
 // Bayesian (Laplace) smoothing priors for composite score calculation.
 // Used in computeCompositeScore(): (successes + α) / (total + α + β).
@@ -168,6 +170,45 @@ interface IPSBatchRow {
     created_at: string | null;
 }
 
+function percentile(sortedValues: number[], q: number): number | null {
+    if (sortedValues.length === 0) return null;
+    if (sortedValues.length === 1) return sortedValues[0] ?? null;
+
+    const clampedQ = Math.max(0, Math.min(1, q));
+    const idx = (sortedValues.length - 1) * clampedQ;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sortedValues[lo] ?? null;
+
+    const loVal = sortedValues[lo] ?? 0;
+    const hiVal = sortedValues[hi] ?? loVal;
+    const frac = idx - lo;
+    return loVal + (hiVal - loVal) * frac;
+}
+
+function computeContextLatencyBaselineP75(rows: ActionScore[]): number | null {
+    const latencies = rows
+        .map((row) => row.avg_response_ms)
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0)
+        .sort((a, b) => a - b);
+
+    return percentile(latencies, 0.75);
+}
+
+function computeLatencyFactor(avgResponseMs: number | null | undefined, p75ResponseMs: number | null): number {
+    if (typeof avgResponseMs !== 'number' || !Number.isFinite(avgResponseMs) || avgResponseMs <= 0) {
+        return 0.5;
+    }
+    if (typeof p75ResponseMs !== 'number' || !Number.isFinite(p75ResponseMs) || p75ResponseMs <= 0) {
+        return 0.5;
+    }
+
+    // ratio=1.0 => neutral 0.5; faster actions score above neutral, slower actions below.
+    const ratio = avgResponseMs / p75ResponseMs;
+    const clamped = Math.max(0, Math.min(2, ratio));
+    return Math.max(0, Math.min(1, 1 - clamped / 2));
+}
+
 async function batchFetchIPSSignals(
     actionIds: string[],
     customerId: string
@@ -267,7 +308,8 @@ async function batchFetchIPSSignals(
 export function computeCompositeScore(
     row: ActionScore,
     contextMatch: number | null = null,
-    ipsSignal: number | null = null
+    ipsSignal: number | null = null,
+    p75ResponseMs: number | null = null,
 ): number {
     // Factor 1: Weighted success rate (primary)
     // Applied Bayesian smoothing (Laplace / Beta distribution prior):
@@ -302,6 +344,9 @@ export function computeCompositeScore(
         f_recency = Math.max(0, Math.min(1, 1 - (ageHours / 168)));  // decay over 7 days
     }
 
+    // Factor 6: Latency — compare action's avg response time to context baseline p75.
+    const f_latency = computeLatencyFactor(row.avg_response_ms, p75ResponseMs);
+
     // Context match factor: null → 1.0 (exact match assumed)
     const f_context = contextMatch ?? 1.0;
 
@@ -310,7 +355,8 @@ export function computeCompositeScore(
         W_CONF * f_conf +
         W_TREND * f_trend +
         W_SALIENCE * f_salience +
-        W_RECENCY * f_recency
+        W_RECENCY * f_recency +
+        W_LATENCY * f_latency
     );
 
     const sampleCount = row.total_attempts ?? 0;
@@ -472,6 +518,8 @@ export async function getScores(
 
         scoredActions = fallback;
     } else {
+        const contextLatencyP75 = computeContextLatencyBaselineP75(rawScores);
+
         const lowSampleRows = rawScores.filter(r => (r.total_attempts ?? 0) < 20);
         const ipsMap = lowSampleRows.length > 0
             ? await withTimeout(
@@ -484,7 +532,8 @@ export async function getScores(
             const score = computeCompositeScore(
                 row,
                 contextMatch,
-                ipsMap.get(row.action_id) ?? null
+                ipsMap.get(row.action_id) ?? null,
+                contextLatencyP75,
             );
             return {
                 action_id: row.action_id,
@@ -524,7 +573,7 @@ export async function getScores(
 }
 
 // Export constants for tests
-export { MIN_CONFIDENCE, ESCALATION_SCORE, W_SUCCESS, W_CONF, W_TREND, W_SALIENCE, W_RECENCY };
+export { MIN_CONFIDENCE, ESCALATION_SCORE, W_SUCCESS, W_CONF, W_TREND, W_SALIENCE, W_RECENCY, W_LATENCY };
 
 /**
  * Compute the effective score for an outcome.

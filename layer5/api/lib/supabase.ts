@@ -68,6 +68,7 @@ export interface ActionScore {
     trend_delta: number | null;
     business_hours_rate: number | null;
     after_hours_rate: number | null;
+    avg_response_ms?: number | null;
     last_outcome_at: string;
     view_refreshed_at: string;
 }

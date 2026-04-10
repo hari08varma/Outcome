@@ -11,7 +11,7 @@
  *   5. Quality gate: blocked below threshold, warn above
  *   6. Idempotency: duplicate idempotency key returns existing outcome_id
  *   7. Trust guard: orchestrateOutcome skipTrust=true never calls updateAgentTrust
- *   8. Trust guard: upsertLiveTrustScore filters ingestion_source='sdk'
+ *   8. Trust guard: orchestrator trust refresh does not recompute trust scores
  *   9. Mixed rows: valid + invalid → partial success, error summary
  *  10. Batch trust guard in trust-updater: ingestion_source filter present
  * ══════════════════════════════════════════════════════════════
@@ -454,12 +454,13 @@ describe('orchestrateOutcome: skipTrust=true', () => {
     });
 });
 
-// ── Test 8: Trust guard — upsertLiveTrustScore filter ────────
-describe('upsertLiveTrustScore: ingestion_source=sdk filter', () => {
-    it('fact_outcomes query includes ingestion_source=sdk eq filter', async () => {
+// ── Test 8: Trust guard — single trust authority ─────────────
+describe('refreshLiveTrustCache: single trust authority', () => {
+    it('does not run a secondary trust recomputation from fact_outcomes', async () => {
         const eqCalls: Array<[string, unknown]> = [];
+        const trustUpserts: Array<Record<string, unknown>> = [];
 
-        vi.mocked(supabase.from).mockImplementation((_table: string) => {
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
             const q: any = {
                 select: vi.fn(() => q),
                 eq: vi.fn((col: string, val: unknown) => {
@@ -467,11 +468,29 @@ describe('upsertLiveTrustScore: ingestion_source=sdk filter', () => {
                     return q;
                 }),
                 gte: vi.fn(() => q),
+                ilike: vi.fn(() => q),
                 order: vi.fn(() => q),
                 limit: vi.fn(() => q),
-                maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+                maybeSingle: vi.fn(async () => {
+                    if (table === 'agent_trust_scores') {
+                        return {
+                            data: {
+                                agent_id: 'agent-sdk',
+                                trust_score: 0.72,
+                                trust_status: 'trusted',
+                                total_decisions: 19,
+                                consecutive_failures: 0,
+                            },
+                            error: null,
+                        };
+                    }
+                    return { data: null, error: null };
+                }),
                 single: vi.fn(async () => ({ data: null, error: null })),
-                upsert: vi.fn(async () => ({ data: null, error: null })),
+                upsert: vi.fn(async (payload: Record<string, unknown>) => {
+                    if (table === 'agent_trust_scores') trustUpserts.push(payload);
+                    return { data: null, error: null };
+                }),
                 update: vi.fn(() => q),
                 insert: vi.fn(async () => ({ data: null, error: null })),
             };
@@ -480,8 +499,6 @@ describe('upsertLiveTrustScore: ingestion_source=sdk filter', () => {
 
         vi.mocked(supabase.rpc).mockResolvedValue({ data: null, error: null } as any);
 
-        // Trigger upsertLiveTrustScore indirectly via orchestrateOutcome
-        // with skipTrust=false so upsertLiveTrustScore runs
         await orchestrateOutcome({
             agentId: 'agent-sdk',
             customerId: 'cust-1',
@@ -495,11 +512,12 @@ describe('upsertLiveTrustScore: ingestion_source=sdk filter', () => {
             skipTrust: false,
         });
 
-        // Allow microtask queue to flush (upsertLiveTrustScore is fire-and-forget)
+        // Allow microtask queue to flush (refreshLiveTrustCache is fire-and-forget)
         await new Promise((resolve) => setTimeout(resolve, 10));
 
         const ingestionFilter = eqCalls.find(([col, val]) => col === 'ingestion_source' && val === 'sdk');
-        expect(ingestionFilter).toBeDefined();
+        expect(ingestionFilter).toBeUndefined();
+        expect(trustUpserts).toHaveLength(0);
     });
 });
 
