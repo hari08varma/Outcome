@@ -262,6 +262,14 @@ function parseBoundedScore(value: unknown): number | null {
     return Math.max(0, Math.min(1, parsed));
 }
 
+function scoreFromExecutionStatus(value: unknown): number | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'COMPLETED') return 1;
+    if (normalized === 'FAILED') return 0;
+    return null;
+}
+
 async function getTaskResolutionStatsByAction(
     params: FetchTaskPerformanceParams,
 ): Promise<Map<string, TaskResolutionStats>> {
@@ -269,7 +277,7 @@ async function getTaskResolutionStatsByAction(
         .from('fact_outcomes')
         // Include data_quality so the scoring engine can down-weight low-quality events.
         // Pre-migration rows will have data_quality=NULL — treated as 1.0 (no penalty).
-        .select('action_id, outcome_score, outcome_score_raw, success, timestamp, data_quality, ingestion_source, is_inconsistent, outcome_class, semantic_cluster_key, semantic_cluster_confidence')
+        .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, data_quality, ingestion_source, is_inconsistent, outcome_class, semantic_cluster_key, semantic_cluster_confidence')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -306,10 +314,12 @@ async function getTaskResolutionStatsByAction(
         if (!actionId) continue;
 
         // Prefer outcome_score_raw (exact developer signal) over the potentially
-        // inferred outcome_score. Falls back to binary success if both are null.
+        // inferred outcome_score. Falls back to execution_status polarity, then
+        // legacy success if status is unavailable.
         const rawScore = parseBoundedScore(row.outcome_score_raw);
         const explicitScore = rawScore ?? parseBoundedScore(row.outcome_score);
-        const fallbackScore = row.success === true ? 1 : 0;
+        const statusScore = scoreFromExecutionStatus(row.execution_status);
+        const fallbackScore = statusScore ?? (row.success === true ? 1 : 0);
         const score = explicitScore ?? fallbackScore;
 
         const current = grouped.get(actionId) ?? {
@@ -391,7 +401,7 @@ async function queryTaskPerformanceFromFacts(
 ): Promise<TaskPerformanceRow[]> {
     let query = supabase
         .from('fact_outcomes')
-        .select('action_id, success, outcome_score, outcome_score_raw, data_quality, ingestion_source, is_inconsistent, outcome_class, timestamp, semantic_cluster_key, semantic_cluster_confidence, dim_actions!inner(action_name)')
+        .select('action_id, success, execution_status, outcome_score, outcome_score_raw, data_quality, ingestion_source, is_inconsistent, outcome_class, timestamp, semantic_cluster_key, semantic_cluster_confidence, dim_actions!inner(action_name)')
         .eq('customer_id', params.customerId)
         .eq('is_deleted', false)
         .eq('is_synthetic', false)
@@ -466,10 +476,12 @@ async function queryTaskPerformanceFromFacts(
         }
 
         // Prefer outcome_score_raw (exact developer signal) over the potentially
-        // inferred outcome_score. Falls back to binary success if both are null.
+        // inferred outcome_score. Falls back to execution_status polarity, then
+        // legacy success if status is unavailable.
         const rawScore = parseBoundedScore(row.outcome_score_raw);
         const explicitScore = rawScore ?? parseBoundedScore(row.outcome_score);
-        const fallbackScore = row.success === true ? 1 : 0;
+        const statusScore = scoreFromExecutionStatus(row.execution_status);
+        const fallbackScore = statusScore ?? (row.success === true ? 1 : 0);
         const score = explicitScore ?? fallbackScore;
         existing.resolution_score_total += score;
 

@@ -101,9 +101,67 @@ interface RuntimeCounterfactualSignalRow {
     created_at: string | null;
 }
 
+type ConfidenceSource = 'bootstrap' | 'empirical_warmup' | 'empirical_stable' | 'hybrid_shadow';
+
 function clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
+}
+
+function deriveScoreConfidenceSource(params: {
+    coldStart: boolean;
+    shadowApplied: boolean;
+    topConfidence: number | null;
+}): { source: ConfidenceSource; reason: string } {
+    if (params.coldStart) {
+        return {
+            source: 'bootstrap',
+            reason: 'cold_start_or_unregistered_fallback',
+        };
+    }
+    if (params.shadowApplied) {
+        return {
+            source: 'hybrid_shadow',
+            reason: 'runtime_shadow_blend_applied',
+        };
+    }
+    const topConfidence = params.topConfidence ?? 0;
+    return topConfidence < 0.8
+        ? {
+            source: 'empirical_warmup',
+            reason: 'top_confidence_below_stable_threshold',
+        }
+        : {
+            source: 'empirical_stable',
+            reason: 'top_confidence_stable',
+        };
+}
+
+function mapPolicyReasonToTraceReason(reason: string | null | undefined): string {
+    const normalized = String(reason ?? 'unknown_policy_reason').trim().toLowerCase();
+    const mapped: Record<string, string> = {
+        cold_start: 'cold_start_explore',
+        agent_suspended: 'trust_gate_blocked',
+        agent_new_no_history: 'new_agent_explore',
+        conservative_high_score: 'policy_conservative_exploit',
+        epsilon_greedy_exploit: 'policy_epsilon_greedy_exploit',
+        epsilon_greedy_explore: 'policy_epsilon_greedy_explore',
+        confidence_weighted_exploit: 'policy_confidence_weighted_exploit',
+        confidence_weighted_explore: 'policy_confidence_weighted_explore',
+        no_reliable_action: 'policy_escalate_no_reliable_action',
+        default_exploration: 'policy_default_exploration',
+        ambiguous_low_separation: 'policy_ambiguous_abstain',
+        runtime_simulation_exploit_gate: 'simulation_exploit_gate',
+        cold_start_unregistered_global_fallback: 'cold_start_unregistered_fallback',
+    };
+
+    if (mapped[normalized]) {
+        return mapped[normalized];
+    }
+
+    return normalized.length > 0
+        ? `policy_${normalized}`
+        : 'unknown_policy_reason';
 }
 
 function computeRuntimeShadowBlendWeight(
@@ -658,6 +716,27 @@ getScoresRouter.get('/', async (c) => {
             ? (Date.now() - new Date(lastRefresh).getTime()) / 60_000
             : null;
         const isStale = ageMinutes !== null && ageMinutes > STALE_THRESHOLD_MINUTES;
+        const confidenceSourceMeta = deriveScoreConfidenceSource({
+            coldStart: result.cold_start || forcedColdStartExplore,
+            shadowApplied: runtimeGuardrail.shadow_applied,
+            topConfidence: topActionForResponse?.confidence ?? null,
+        });
+        const decisionTrace = {
+            reason_code: mapPolicyReasonToTraceReason(policyReasonForResponse),
+            stage: 'policy_decision',
+            gate: forcedColdStartExplore
+                ? 'cold_start_unregistered_global_fallback'
+                : runtimeGuardrail.exploit_gate_applied
+                    ? 'simulation_exploit_gate'
+                    : runtimeGuardrail.confidence_ceiling_applied
+                        ? 'simulation_confidence_ceiling'
+                        : result.cold_start
+                            ? 'cold_start'
+                            : null,
+            detail: forcedColdStartExplore
+                ? 'Context is cold-start and fallback actions are unregistered for this customer.'
+                : null,
+        };
 
         return c.json({
             ranked_actions: ranked,
@@ -703,6 +782,9 @@ getScoresRouter.get('/', async (c) => {
             policy_exploration_target: policyExplorationTarget,
             policy_abstain_message: policyAbstainMessage,
             runtime_guardrail: runtimeGuardrail.enabled ? runtimeGuardrail : null,
+            confidence_source: confidenceSourceMeta.source,
+            confidence_source_reason: confidenceSourceMeta.reason,
+            traceability: decisionTrace,
             agent_trust: {
                 score: agentTrust.trust_score,
                 status: agentTrust.trust_status,

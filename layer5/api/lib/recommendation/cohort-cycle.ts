@@ -13,6 +13,12 @@ export type CohortCycleCloseReason =
     | 'confidence_drop'
     | 'success_rate_drop';
 
+export type RecommendationConfidenceSource =
+    | 'bootstrap'
+    | 'empirical_warmup'
+    | 'empirical_stable'
+    | 'hybrid_shadow';
+
 interface CohortCycleState {
     cycle_id: string;
     customer_id: string;
@@ -21,6 +27,8 @@ interface CohortCycleState {
     opened_total_outcomes: number;
     opened_median_confidence: number | null;
     opened_median_success_rate: number | null;
+    opened_confidence_source: RecommendationConfidenceSource | null;
+    opened_confidence_source_reason: string | null;
 }
 
 export interface CohortCycleObservation {
@@ -30,6 +38,8 @@ export interface CohortCycleObservation {
     total_outcomes: number;
     median_confidence: number | null;
     median_success_rate: number | null;
+    confidence_source?: RecommendationConfidenceSource | null;
+    confidence_source_reason?: string | null;
 }
 
 export interface CohortCycleBoundaryDecision {
@@ -48,6 +58,8 @@ export interface RecommendationCohortCycleSnapshot {
     close_reason: CohortCycleCloseReason | null;
     elapsed_days: number;
     outcomes_in_cycle: number;
+    opened_confidence_source: RecommendationConfidenceSource | null;
+    opened_confidence_source_reason: string | null;
 }
 
 export interface RecommendationCohortCycleResult {
@@ -74,6 +86,22 @@ function clamp01(value: number | null | undefined): number | null {
     return Math.max(0, Math.min(1, Number(value)));
 }
 
+function normalizeConfidenceSource(value: unknown): RecommendationConfidenceSource | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'bootstrap') return 'bootstrap';
+    if (normalized === 'empirical_warmup') return 'empirical_warmup';
+    if (normalized === 'empirical_stable') return 'empirical_stable';
+    if (normalized === 'hybrid_shadow') return 'hybrid_shadow';
+    return null;
+}
+
+function normalizeConfidenceSourceReason(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 function normalizeTotalOutcomes(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.floor(value));
@@ -96,6 +124,8 @@ function buildActiveSnapshot(
         close_reason: null,
         elapsed_days: Number(elapsedDays.toFixed(4)),
         outcomes_in_cycle: outcomesInCycle,
+        opened_confidence_source: state.opened_confidence_source,
+        opened_confidence_source_reason: state.opened_confidence_source_reason,
     };
 }
 
@@ -189,6 +219,8 @@ function newCycleState(observation: CohortCycleObservation): CohortCycleState {
         opened_total_outcomes: normalizeTotalOutcomes(observation.total_outcomes),
         opened_median_confidence: clamp01(observation.median_confidence),
         opened_median_success_rate: clamp01(observation.median_success_rate),
+        opened_confidence_source: normalizeConfidenceSource(observation.confidence_source),
+        opened_confidence_source_reason: normalizeConfidenceSourceReason(observation.confidence_source_reason),
     };
 }
 
@@ -248,6 +280,8 @@ function fallbackUpsertRecommendationCohortCycle(
         close_reason: decision.reason,
         elapsed_days: decision.elapsed_days,
         outcomes_in_cycle: decision.outcomes_in_cycle,
+        opened_confidence_source: existing.opened_confidence_source,
+        opened_confidence_source_reason: existing.opened_confidence_source_reason,
     };
 
     const nextCycle = newCycleState(observation);
@@ -287,6 +321,9 @@ function isMissingRpcFunctionError(error: { code?: string | null; message?: stri
 export async function upsertRecommendationCohortCycle(
     observation: CohortCycleObservation,
 ): Promise<RecommendationCohortCycleResult> {
+    const resolvedConfidenceSource = normalizeConfidenceSource(observation.confidence_source);
+    const resolvedConfidenceSourceReason = normalizeConfidenceSourceReason(observation.confidence_source_reason);
+
     const payload = {
         p_customer_id: observation.customer_id,
         p_task_name: observation.task_name,
@@ -294,6 +331,8 @@ export async function upsertRecommendationCohortCycle(
         p_total_outcomes: normalizeTotalOutcomes(observation.total_outcomes),
         p_median_confidence: clamp01(observation.median_confidence),
         p_median_success_rate: clamp01(observation.median_success_rate),
+        p_opened_confidence_source: resolvedConfidenceSource,
+        p_opened_confidence_source_reason: resolvedConfidenceSourceReason,
     };
 
     try {
@@ -323,7 +362,29 @@ export async function upsertRecommendationCohortCycle(
             return fallbackUpsertRecommendationCohortCycle(observation);
         }
 
-        return data;
+        return {
+            ...data,
+            active_cycle: {
+                ...data.active_cycle,
+                opened_confidence_source:
+                    data.active_cycle.opened_confidence_source
+                    ?? resolvedConfidenceSource
+                    ?? null,
+                opened_confidence_source_reason:
+                    data.active_cycle.opened_confidence_source_reason
+                    ?? resolvedConfidenceSourceReason
+                    ?? null,
+            },
+            previous_cycle: data.previous_cycle
+                ? {
+                    ...data.previous_cycle,
+                    opened_confidence_source:
+                        data.previous_cycle.opened_confidence_source ?? null,
+                    opened_confidence_source_reason:
+                        data.previous_cycle.opened_confidence_source_reason ?? null,
+                }
+                : null,
+        };
     } catch (err: any) {
         console.warn(
             '[cohort-cycle] RPC threw; using in-memory fallback:',

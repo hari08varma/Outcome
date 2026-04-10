@@ -36,6 +36,10 @@ class GetScoresResponse(BaseModel):
     outcomes_needed: int = 0
     # Decision id emitted by /v1/get-scores for counterfactual linkage.
     decision_id: str | None = None
+    # Source that determined the primary confidence shown in response.
+    confidence_source: str | None = None
+    # Machine-readable policy + gating explanation envelope.
+    traceability: Dict[str, Any] | None = None
     context_id: str = ""
     agent_id: str = ""
     served_from_cache: bool = False
@@ -43,13 +47,15 @@ class GetScoresResponse(BaseModel):
 
 class LogOutcomeRequest(BaseModel):
     agent_id: str
-    action_name: str  # Required: API validates via validateActionMiddleware
-    action_id: str | None = None   # kept for backward compat — ignored by API
+    action_name: str | None = None
+    action_id: str | None = None
+    action_id_input: str | None = None
     session_id: str | None = None
     context_id: str = ""
     issue_type: str
     success: bool
-    outcome_score: float = Field(ge=0.0, le=1.0)
+    # Optional: when omitted, backend infers score from binary + soft signals.
+    outcome_score: float | None = Field(default=None, ge=0.0, le=1.0)
     # API accepts any string; normalizes to: resolved | partial | failed | unknown
     # NOTE: "pending" (previous SDK value) is not canonical — maps to "unknown".
     # Use "partial" for partial outcomes.
@@ -60,6 +66,9 @@ class LogOutcomeRequest(BaseModel):
     # API accepts any string; known values: immediate | delayed | none
     # Unknown values normalize to "none" (no clear feedback signal).
     feedback_signal: str = "immediate"
+    execution_status: Literal["COMPLETED", "FAILED"] | None = None
+    failure_reason_code: str | None = None
+    failure_stage: str | None = None
     idempotency_key: str | None = None
 
 
@@ -75,6 +84,23 @@ class IngestionQuality(BaseModel):
     mapping_tier: str
     # Confidence (0.0–1.0) of issue_type → task_name mapping.
     mapping_confidence: float
+    inconsistency_type: str | None = None
+    inconsistency_reason: str | None = None
+    inconsistency_rule_version: str | None = None
+    inference_confidence: float | None = None
+    outcome_class: str | None = None
+    execution_status: Literal["COMPLETED", "FAILED"] | None = None
+    failure_reason_code: str | None = None
+    failure_stage: str | None = None
+    status_origin: Literal[
+        "explicit",
+        "inferred_from_success",
+        "inferred_from_score",
+        "reconciled_feedback",
+    ] | None = None
+    semantic_cluster: Dict[str, Any] | None = None
+    retry_chain: Dict[str, Any] | None = None
+    cross_event_status: str | None = None
 
 
 class LogOutcomeResponse(BaseModel):
@@ -223,6 +249,8 @@ class Recommendation:
     data_freshness: 'RecommendationDataFreshness | None' = None
     reason: str | None = None
     confidence: float | None = None
+    confidence_source: str | None = None
+    traceability: Dict[str, Any] | None = None
 
 
 @dataclass

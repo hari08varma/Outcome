@@ -15,6 +15,10 @@ type OutcomeSignalRow = {
     outcome_id: string;
     success: boolean;
     signal_confidence: number | null;
+    execution_status: 'COMPLETED' | 'FAILED' | null;
+    status_origin: string | null;
+    failure_reason_code: string | null;
+    failure_stage: string | null;
 };
 
 type CrossEventOutcomeRow = {
@@ -26,6 +30,10 @@ type CrossEventOutcomeRow = {
     cross_event_status: string | null;
     inconsistency_type: string | null;
     inconsistency_reason: string | null;
+    execution_status: 'COMPLETED' | 'FAILED' | null;
+    status_origin: string | null;
+    failure_reason_code: string | null;
+    failure_stage: string | null;
 };
 
 type InconsistentOutcomeRow = {
@@ -34,6 +42,10 @@ type InconsistentOutcomeRow = {
     signal_confidence: number | null;
     inconsistency_type: string | null;
     inconsistency_reason: string | null;
+    execution_status: 'COMPLETED' | 'FAILED' | null;
+    status_origin: string | null;
+    failure_reason_code: string | null;
+    failure_stage: string | null;
 };
 
 type ContractRow = {
@@ -46,6 +58,19 @@ type ContractRow = {
 type ActionRow = {
     action_id: string;
     action_name: string;
+};
+
+type DiscrepancyTraceFields = {
+    reason_code: string | null;
+    trace_reason_code: string | null;
+    trace_stage: string | null;
+    trace_gate: string | null;
+    source_execution_status: 'COMPLETED' | 'FAILED' | null;
+    source_status_origin: string | null;
+    source_failure_reason_code: string | null;
+    source_failure_stage: string | null;
+    trace_payload: Record<string, unknown> | null;
+    trace_context: Record<string, unknown> | null;
 };
 
 const discrepancyRoute = new Hono();
@@ -75,6 +100,31 @@ async function hasUnresolvedDiscrepancy(
     }
 
     return (data ?? []).length > 0;
+}
+
+function buildTraceFields(overrides: Partial<DiscrepancyTraceFields>): DiscrepancyTraceFields {
+    const normalizedReasonCode = overrides.reason_code ?? overrides.trace_reason_code ?? null;
+    const normalizedTracePayload = overrides.trace_payload ?? overrides.trace_context ?? null;
+
+    const merged: DiscrepancyTraceFields = {
+        reason_code: normalizedReasonCode,
+        trace_reason_code: null,
+        trace_stage: null,
+        trace_gate: null,
+        source_execution_status: null,
+        source_status_origin: null,
+        source_failure_reason_code: null,
+        source_failure_stage: null,
+        trace_payload: normalizedTracePayload,
+        trace_context: null,
+        ...overrides,
+    };
+
+    merged.reason_code = normalizedReasonCode;
+    merged.trace_reason_code = normalizedReasonCode;
+    merged.trace_payload = normalizedTracePayload;
+    merged.trace_context = normalizedTracePayload;
+    return merged;
 }
 
 discrepancyRoute.get('/', async (c) => {
@@ -169,6 +219,16 @@ discrepancyRoute.post('/detect', async (c) => {
                     action_name: row.event_type,
                     discrepancy_type: 'expired_no_signal',
                     detail: 'Signal registration expired without receiving a webhook',
+                    ...buildTraceFields({
+                        trace_reason_code: 'pending_signal_expired',
+                        trace_stage: 'signal_wait',
+                        trace_gate: 'registration_expiry',
+                        trace_context: {
+                            event_type: row.event_type,
+                            platform: row.platform,
+                            expiry_at: row.expiry_at,
+                        },
+                    }),
                 }));
 
             if (expiredInserts.length > 0) {
@@ -248,7 +308,7 @@ discrepancyRoute.post('/detect', async (c) => {
 
             const { data: outcomes, error: outcomesError } = await supabase
                 .from('fact_outcomes')
-                .select('outcome_id, success, signal_confidence')
+                .select('outcome_id, success, signal_confidence, execution_status, status_origin, failure_reason_code, failure_stage')
                 .in('outcome_id', outcomeIds)
                 .not('signal_confidence', 'is', null);
 
@@ -267,6 +327,14 @@ discrepancyRoute.post('/detect', async (c) => {
                 actual_outcome: boolean;
                 signal_confidence: number;
                 detail: string;
+                trace_reason_code: string | null;
+                trace_stage: string | null;
+                trace_gate: string | null;
+                source_execution_status: 'COMPLETED' | 'FAILED' | null;
+                source_status_origin: string | null;
+                source_failure_reason_code: string | null;
+                source_failure_stage: string | null;
+                trace_context: Record<string, unknown> | null;
             }> = [];
             const lowConfidenceCandidates: Array<{
                 customer_id: string;
@@ -279,6 +347,14 @@ discrepancyRoute.post('/detect', async (c) => {
                 signal_confidence: number;
                 threshold_used: number;
                 detail: string;
+                trace_reason_code: string | null;
+                trace_stage: string | null;
+                trace_gate: string | null;
+                source_execution_status: 'COMPLETED' | 'FAILED' | null;
+                source_status_origin: string | null;
+                source_failure_reason_code: string | null;
+                source_failure_stage: string | null;
+                trace_context: Record<string, unknown> | null;
             }> = [];
 
             for (const outcome of (outcomes ?? []) as OutcomeSignalRow[]) {
@@ -306,6 +382,21 @@ discrepancyRoute.post('/detect', async (c) => {
                         actual_outcome: actualOutcome,
                         signal_confidence: outcome.signal_confidence,
                         detail: 'Signal outcome contradicts confidence score',
+                        ...buildTraceFields({
+                            trace_reason_code: 'signal_outcome_mismatch',
+                            trace_stage: 'signal_reconciliation',
+                            trace_gate: 'confidence_polarity',
+                            source_execution_status: outcome.execution_status,
+                            source_status_origin: outcome.status_origin,
+                            source_failure_reason_code: outcome.failure_reason_code,
+                            source_failure_stage: outcome.failure_stage,
+                            trace_context: {
+                                event_type: registration.event_type,
+                                platform: registration.platform,
+                                expected_outcome: expectedOutcome,
+                                actual_outcome: actualOutcome,
+                            },
+                        }),
                     });
                 }
 
@@ -321,6 +412,21 @@ discrepancyRoute.post('/detect', async (c) => {
                         signal_confidence: outcome.signal_confidence,
                         threshold_used: 0.4,
                         detail: 'Outcome marked success but confidence is critically low',
+                        ...buildTraceFields({
+                            trace_reason_code: 'confidence_below_threshold',
+                            trace_stage: 'signal_reconciliation',
+                            trace_gate: 'critical_confidence_floor',
+                            source_execution_status: outcome.execution_status,
+                            source_status_origin: outcome.status_origin,
+                            source_failure_reason_code: outcome.failure_reason_code,
+                            source_failure_stage: outcome.failure_stage,
+                            trace_context: {
+                                event_type: registration.event_type,
+                                platform: registration.platform,
+                                threshold_used: 0.4,
+                                observed_confidence: outcome.signal_confidence,
+                            },
+                        }),
                     });
                 }
             }
@@ -390,7 +496,7 @@ discrepancyRoute.post('/detect', async (c) => {
 
         const { data: crossEventRows, error: crossEventError } = await supabase
             .from('fact_outcomes')
-            .select('outcome_id, action_id, success, outcome_score, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason')
+            .select('outcome_id, action_id, success, outcome_score, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason, execution_status, status_origin, failure_reason_code, failure_stage')
             .eq('customer_id', customerId)
             .eq('cross_event_status', 'conflict')
             .not('outcome_id', 'is', null);
@@ -417,19 +523,38 @@ discrepancyRoute.post('/detect', async (c) => {
 
         const crossEventInserts = ((crossEventRows ?? []) as CrossEventOutcomeRow[])
             .filter((row) => !existingCrossEventSet.has(row.outcome_id))
-            .map((row) => ({
-                customer_id: customerId,
-                outcome_id: row.outcome_id,
-                action_name: row.action_id ? `action:${row.action_id}` : 'unknown_action',
-                discrepancy_type: 'cross_event_conflict',
-                expected_outcome: row.success,
-                actual_outcome: row.outcome_score === null
+            .map((row) => {
+                const actualOutcome = row.outcome_score === null
                     ? row.success
-                    : row.outcome_score >= 0.5,
-                signal_confidence: row.signal_confidence,
-                detail: row.inconsistency_reason
-                    ?? `Cross-event delayed signal conflict detected (expected=${String(row.success)} actual=${String(row.outcome_score === null ? row.success : row.outcome_score >= 0.5)}).`,
-            }));
+                    : row.outcome_score >= 0.5;
+
+                return {
+                    customer_id: customerId,
+                    outcome_id: row.outcome_id,
+                    action_name: row.action_id ? `action:${row.action_id}` : 'unknown_action',
+                    discrepancy_type: 'cross_event_conflict',
+                    expected_outcome: row.success,
+                    actual_outcome: actualOutcome,
+                    signal_confidence: row.signal_confidence,
+                    detail: row.inconsistency_reason
+                        ?? `Cross-event delayed signal conflict detected (expected=${String(row.success)} actual=${String(actualOutcome)}).`,
+                    ...buildTraceFields({
+                        trace_reason_code: row.inconsistency_type ?? 'cross_event_conflict',
+                        trace_stage: 'cross_event_reconciliation',
+                        trace_gate: 'cross_event_status_conflict',
+                        source_execution_status: row.execution_status,
+                        source_status_origin: row.status_origin,
+                        source_failure_reason_code: row.failure_reason_code,
+                        source_failure_stage: row.failure_stage,
+                        trace_context: {
+                            cross_event_status: row.cross_event_status,
+                            inconsistency_reason: row.inconsistency_reason,
+                            expected_outcome: row.success,
+                            actual_outcome: actualOutcome,
+                        },
+                    }),
+                };
+            });
 
         if (crossEventInserts.length > 0) {
             const { error: crossEventInsertError } = await supabase
@@ -486,6 +611,14 @@ discrepancyRoute.post('/detect', async (c) => {
             action_name: string;
             discrepancy_type: 'pending_state_mismatch';
             detail: string;
+            trace_reason_code: string | null;
+            trace_stage: string | null;
+            trace_gate: string | null;
+            source_execution_status: 'COMPLETED' | 'FAILED' | null;
+            source_status_origin: string | null;
+            source_failure_reason_code: string | null;
+            source_failure_stage: string | null;
+            trace_context: Record<string, unknown> | null;
         }> = [];
 
         for (const outcomeId of pendingOutcomeSet) {
@@ -498,6 +631,16 @@ discrepancyRoute.post('/detect', async (c) => {
                     action_name: 'signal_pending',
                     discrepancy_type: 'pending_state_mismatch',
                     detail: 'Outcome marked signal_pending=true but no unresolved registration exists.',
+                    ...buildTraceFields({
+                        trace_reason_code: 'pending_registration_state_mismatch',
+                        trace_stage: 'pending_signal_state',
+                        trace_gate: 'pending_registration_alignment',
+                        trace_context: {
+                            outcome_id: outcomeId,
+                            pending_signal: true,
+                            unresolved_registration_exists: false,
+                        },
+                    }),
                 });
             }
         }
@@ -512,6 +655,18 @@ discrepancyRoute.post('/detect', async (c) => {
                     action_name: `${reg.platform}:${reg.event_type}`,
                     discrepancy_type: 'pending_state_mismatch',
                     detail: 'Unresolved pending registration exists while outcome.signal_pending is false.',
+                    ...buildTraceFields({
+                        trace_reason_code: 'pending_registration_state_mismatch',
+                        trace_stage: 'pending_signal_state',
+                        trace_gate: 'pending_registration_alignment',
+                        trace_context: {
+                            outcome_id: outcomeId,
+                            pending_signal: false,
+                            unresolved_registration_exists: true,
+                            event_type: reg.event_type,
+                            platform: reg.platform,
+                        },
+                    }),
                 });
             }
         }
@@ -544,7 +699,7 @@ discrepancyRoute.post('/detect', async (c) => {
 
         const { data: inconsistentFactRows, error: inconsistentRowsError } = await supabase
             .from('fact_outcomes')
-            .select('outcome_id, action_id, signal_confidence, inconsistency_type, inconsistency_reason')
+            .select('outcome_id, action_id, signal_confidence, inconsistency_type, inconsistency_reason, execution_status, status_origin, failure_reason_code, failure_stage')
             .eq('customer_id', customerId)
             .not('inconsistency_type', 'is', null)
             .not('outcome_id', 'is', null);
@@ -577,6 +732,19 @@ discrepancyRoute.post('/detect', async (c) => {
                     detail:
                         row.inconsistency_reason
                         ?? `Inconsistency taxonomy flagged type=${row.inconsistency_type}.`,
+                    ...buildTraceFields({
+                        trace_reason_code: row.inconsistency_type ?? 'ingestion_inconsistency',
+                        trace_stage: 'ingest_validation',
+                        trace_gate: 'inconsistency_taxonomy',
+                        source_execution_status: row.execution_status,
+                        source_status_origin: row.status_origin,
+                        source_failure_reason_code: row.failure_reason_code,
+                        source_failure_stage: row.failure_stage,
+                        trace_context: {
+                            inconsistency_reason: row.inconsistency_reason,
+                            inconsistency_type: row.inconsistency_type,
+                        },
+                    }),
                 }));
 
             if (inserts.length > 0) {

@@ -30,10 +30,10 @@ console.log(`Policy: ${scores.policy}`);      // exploit | explore | escalate
 // Log the outcome after the action runs
 await client.logOutcome({
   agent_id: 'my-agent',
-  action_id: scores.top_action!.action_id,
-  context_id: scores.context_id,
+  action_name: scores.top_action!.action_name,
   issue_type: 'billing_dispute',
   success: true,
+  // optional: if omitted, LI infers score from success/failure + soft signals
   outcome_score: 0.9,
   business_outcome: 'resolved',
 });
@@ -53,8 +53,8 @@ const resolveTicket = tool(
     const action = scores.top_action!;
     // ... run the action ...
     await layerinfinite.logOutcome({
-      agent_id: agentId, action_id: action.action_id,
-      context_id: scores.context_id, issue_type: issueType,
+      agent_id: agentId, action_name: action.action_name,
+      issue_type: issueType,
       success: true, outcome_score: 0.85, business_outcome: 'resolved',
     });
     return action.action_name;

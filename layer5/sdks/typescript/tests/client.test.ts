@@ -131,6 +131,15 @@ const MOCK_LOG_OUTCOME_BODY = {
     agent_trust_score: 0.74,
     trust_status: 'trusted',
     policy: 'exploit',
+    ingestion_quality: {
+        data_quality: 0.92,
+        score_origin: 'inferred',
+        is_inconsistent: false,
+        mapping_tier: 'exact_match',
+        mapping_confidence: 1.0,
+        execution_status: 'COMPLETED',
+        status_origin: 'inferred_from_success',
+    },
 };
 
 const MOCK_LOG_OUTCOME_BODY_LEGACY_DEGRADED = {
@@ -203,6 +212,13 @@ const MOCK_RECOMMENDATION_BODY = {
     },
     reason: 'historically strongest action',
     confidence: 0.91,
+    confidence_source: 'empirical_stable',
+    traceability: {
+        reason_code: 'stable_recommendation',
+        stage: 'decision',
+        gate: null,
+        detail: 'Recommendation is stable under current reliability gates.',
+    },
 };
 
 function mockResponse(
@@ -350,6 +366,8 @@ describe('LayerinfiniteClient', () => {
         expect(typeof response.agent_trust_score).toBe('number');
         expect(response.outcome_id).toBe('out-uuid-1');
         expect(response.trust_status).toBe('trusted');
+        expect(response.ingestion_quality?.score_origin).toBe('inferred');
+        expect(response.ingestion_quality?.execution_status).toBe('COMPLETED');
     });
 
     it('Test 4b: logOutcome normalizes legacy degraded trust_status to sandbox', async () => {
@@ -387,6 +405,29 @@ describe('LayerinfiniteClient', () => {
         const body = JSON.parse(String(init.body)) as { idempotency_key?: string };
         expect(typeof body.idempotency_key).toBe('string');
         expect((body.idempotency_key ?? '').length).toBeGreaterThan(0);
+    });
+
+    it('Test 4d: logOutcome accepts missing outcome_score and maps action_id to action_id_input', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_LOG_OUTCOME_BODY));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        await client.logOutcome({
+            agent_id: 'my-agent',
+            action_id: 'act-uuid-no-score',
+            issue_type: 'billing_dispute',
+            success: true,
+        });
+
+        const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body)) as {
+            outcome_score?: number;
+            action_id?: string;
+            action_id_input?: string;
+        };
+
+        expect(body.outcome_score).toBeUndefined();
+        expect(body.action_id).toBe('act-uuid-no-score');
+        expect(body.action_id_input).toBe('act-uuid-no-score');
     });
 
     // ── Test 5 ─────────────────────────────────────────────────
@@ -452,6 +493,8 @@ describe('LayerinfiniteClient', () => {
         expect(rec.dataFreshness?.ageHours).toBe(4);
         expect(rec.dataFreshness?.isStale).toBe(false);
         expect(rec.dataFreshness?.staleThresholdHours).toBe(72);
+        expect(rec.confidenceSource).toBe('empirical_stable');
+        expect((rec.traceability as { reason_code?: string } | null)?.reason_code).toBe('stable_recommendation');
     });
 
     it('Test 8: registerPendingSignal enforces delayed feedback signal', async () => {

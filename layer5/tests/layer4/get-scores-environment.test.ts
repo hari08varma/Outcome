@@ -156,6 +156,8 @@ describe('get-scores environment scoping', () => {
 
         expect(res.status).toBe(200);
         expect(json.environment).toBe('staging');
+        expect(json.confidence_source_reason).toBe('top_confidence_stable');
+        expect(json.traceability?.reason_code).toBe('policy_test_policy');
         expect(contextChain.eq).toHaveBeenCalledWith('environment', 'staging');
         expect(findClosestContext).not.toHaveBeenCalled();
     });
@@ -397,5 +399,8 @@ describe('get-scores environment scoping', () => {
         expect(json.runtime_guardrail?.shadow_applied).toBe(true);
         expect(json.runtime_guardrail?.top_action_shadow_weight).toBeGreaterThan(0);
         expect(json.runtime_guardrail?.exploit_gate_applied).toBe(true);
+        expect(json.confidence_source).toBe('hybrid_shadow');
+        expect(json.confidence_source_reason).toBe('runtime_shadow_blend_applied');
+        expect(json.traceability?.reason_code).toBe('simulation_exploit_gate');
     });
 });

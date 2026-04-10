@@ -127,18 +127,18 @@ describe('discrepancy route', () => {
             const p = Promise.resolve(resolveValue);
             const chain: any = {
                 select: vi.fn(),
-                eq:     vi.fn(),
-                not:    vi.fn(),
-                in:     vi.fn(),
-                lt:     vi.fn(),
-                is:     vi.fn(),
-                order:  vi.fn(),
-                limit:  vi.fn(),
+                eq: vi.fn(),
+                not: vi.fn(),
+                in: vi.fn(),
+                lt: vi.fn(),
+                is: vi.fn(),
+                order: vi.fn(),
+                limit: vi.fn(),
                 maybeSingle: vi.fn().mockResolvedValue(resolveValue),
-                single:      vi.fn().mockResolvedValue(resolveValue),
+                single: vi.fn().mockResolvedValue(resolveValue),
                 insert: vi.fn().mockResolvedValue({ error: null }),
-                then:    p.then.bind(p),
-                catch:   p.catch.bind(p),
+                then: p.then.bind(p),
+                catch: p.catch.bind(p),
                 finally: p.finally.bind(p),
             };
             chain.select.mockReturnValue(chain);
@@ -185,10 +185,10 @@ describe('discrepancy route', () => {
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'dim_pending_signal_registrations') return pendingChain;
-            if (table === 'dim_discrepancy_log')             return discChain;
-            if (table === 'dim_signal_contracts')            return makeThenable({ data: [], error: null });
-            if (table === 'dim_actions')                     return makeThenable({ data: [], error: null });
-            if (table === 'fact_outcomes')                   return factsChain;
+            if (table === 'dim_discrepancy_log') return discChain;
+            if (table === 'dim_signal_contracts') return makeThenable({ data: [], error: null });
+            if (table === 'dim_actions') return makeThenable({ data: [], error: null });
+            if (table === 'fact_outcomes') return factsChain;
             return makeThenable({ data: [], error: null });
         });
 
@@ -202,6 +202,18 @@ describe('discrepancy route', () => {
         expect(body.cases).toEqual({ expired: 1, mismatch: 0, low_confidence: 0 });
         expect(inserted.length).toBe(1);
         expect(inserted[0].discrepancy_type).toBe('expired_no_signal');
+        expect(inserted[0].reason_code).toBe('pending_signal_expired');
+        expect(inserted[0].trace_reason_code).toBe('pending_signal_expired');
+        expect(inserted[0].trace_stage).toBe('signal_wait');
+        expect(inserted[0].trace_gate).toBe('registration_expiry');
+        expect(inserted[0].trace_payload).toMatchObject({
+            event_type: 'charge.refund.updated',
+            platform: 'stripe',
+        });
+        expect(inserted[0].trace_context).toMatchObject({
+            event_type: 'charge.refund.updated',
+            platform: 'stripe',
+        });
     });
 
     test('POST /detect — skips duplicate (already logged unresolved row)', async () => {
@@ -211,18 +223,18 @@ describe('discrepancy route', () => {
             const p = Promise.resolve(resolveValue);
             const chain: any = {
                 select: vi.fn(),
-                eq:     vi.fn(),
-                not:    vi.fn(),
-                in:     vi.fn(),
-                lt:     vi.fn(),
-                is:     vi.fn(),
-                order:  vi.fn(),
-                limit:  vi.fn(),
+                eq: vi.fn(),
+                not: vi.fn(),
+                in: vi.fn(),
+                lt: vi.fn(),
+                is: vi.fn(),
+                order: vi.fn(),
+                limit: vi.fn(),
                 maybeSingle: vi.fn().mockResolvedValue(resolveValue),
-                single:      vi.fn().mockResolvedValue(resolveValue),
+                single: vi.fn().mockResolvedValue(resolveValue),
                 insert: vi.fn().mockResolvedValue({ error: null }),
-                then:    p.then.bind(p),
-                catch:   p.catch.bind(p),
+                then: p.then.bind(p),
+                catch: p.catch.bind(p),
                 finally: p.finally.bind(p),
             };
             chain.select.mockReturnValue(chain);
@@ -244,7 +256,7 @@ describe('discrepancy route', () => {
         };
         const pendingExpiredChain = makeThenable({ data: [expiredRow], error: null });
         pendingExpiredChain.lt = vi.fn().mockResolvedValue({ data: [expiredRow], error: null });
-        const pendingAllChain   = makeThenable({ data: [], error: null });
+        const pendingAllChain = makeThenable({ data: [], error: null });
 
         let pendingSelectCount = 0;
         const pendingChain: any = {
@@ -267,10 +279,10 @@ describe('discrepancy route', () => {
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'dim_pending_signal_registrations') return pendingChain;
-            if (table === 'dim_discrepancy_log')             return discChain;
-            if (table === 'dim_signal_contracts')            return makeThenable({ data: [], error: null });
-            if (table === 'dim_actions')                     return makeThenable({ data: [], error: null });
-            if (table === 'fact_outcomes')                   return factsChain;
+            if (table === 'dim_discrepancy_log') return discChain;
+            if (table === 'dim_signal_contracts') return makeThenable({ data: [], error: null });
+            if (table === 'dim_actions') return makeThenable({ data: [], error: null });
+            if (table === 'fact_outcomes') return factsChain;
             return makeThenable({ data: [], error: null });
         });
 

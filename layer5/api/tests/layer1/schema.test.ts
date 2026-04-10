@@ -158,4 +158,43 @@ describe('Layer 1 — Schema validation', () => {
         expect(res.status).toBe(201);
         expect(body.outcome_id).toBeDefined();
     });
+
+    test('rejects conflicting execution_status and success payload', async () => {
+        const res = await app.request('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: crypto.randomUUID(),
+                action_name: 'send_refund',
+                issue_type: 'billing',
+                success: true,
+                execution_status: 'FAILED',
+                failure_reason_code: 'execution_failed',
+                failure_stage: 'action_execution',
+            }),
+        });
+
+        expect(res.status).toBe(400);
+        const body = await res.json() as any;
+        expect(body.code).toBe('STATUS_CONFLICT');
+    });
+
+    test('rejects conflicting execution_status and outcome_score polarity payload', async () => {
+        const res = await app.request('/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: crypto.randomUUID(),
+                action_name: 'send_refund',
+                issue_type: 'billing',
+                success: true,
+                execution_status: 'COMPLETED',
+                outcome_score: 0.2,
+            }),
+        });
+
+        expect(res.status).toBe(400);
+        const body = await res.json() as any;
+        expect(body.code).toBe('STATUS_CONFLICT');
+    });
 });

@@ -40,6 +40,10 @@ export interface GetScoresResponse {
     context_id: string;
     agent_id: string;
     served_from_cache?: boolean;
+    /** Origin of confidence display in API response. */
+    confidence_source?: string | null;
+    /** Machine-readable policy/gating explanation envelope. */
+    traceability?: Record<string, unknown> | null;
     /**
      * True when the top two actions are statistically indistinguishable
      * (score gap ≤ 0.05, both in the 40–65% win-rate band).
@@ -55,17 +59,22 @@ export interface GetScoresResponse {
  */
 export interface LogOutcomeRequest {
     agent_id: string;
-    action_id: string;
-    context_id: string;
+    action_name?: string;
+    action_id?: string;
+    action_id_input?: string;
+    context_id?: string;
     issue_type: string;
     success: boolean;
-    /** Must be between 0.0 and 1.0 */
-    outcome_score: number;
+    /** Optional: when omitted, backend infers score from binary + soft signals. */
+    outcome_score?: number;
     business_outcome?: string;
     decision_id?: string;
     episode_id?: string;
     response_ms?: number;
     feedback_signal?: string;
+    execution_status?: 'COMPLETED' | 'FAILED';
+    failure_reason_code?: string;
+    failure_stage?: string;
     /** Optional idempotency key for replay-safe outcome ingestion. */
     idempotency_key?: string;
 }
@@ -88,6 +97,23 @@ export interface IngestionQuality {
     mapping_tier: string;
     /** Confidence (0.0–1.0) of issue_type → task_name mapping. */
     mapping_confidence: number;
+    inconsistency_type?: string | null;
+    inconsistency_reason?: string | null;
+    inconsistency_rule_version?: string | null;
+    inference_confidence?: number | null;
+    outcome_class?: string | null;
+    execution_status?: 'COMPLETED' | 'FAILED' | null;
+    failure_reason_code?: string | null;
+    failure_stage?: string | null;
+    status_origin?:
+    | 'explicit'
+    | 'inferred_from_success'
+    | 'inferred_from_score'
+    | 'reconciled_feedback'
+    | null;
+    semantic_cluster?: Record<string, unknown> | null;
+    retry_chain?: Record<string, unknown> | null;
+    cross_event_status?: string | null;
 }
 
 export interface LogOutcomeResponse {
@@ -267,6 +293,8 @@ export interface Recommendation {
     dataFreshness: RecommendationDataFreshness | null;
     reason: string | null;
     confidence: number | null;
+    confidenceSource?: string | null;
+    traceability?: Record<string, unknown> | null;
 }
 
 export interface ObservationSummary {

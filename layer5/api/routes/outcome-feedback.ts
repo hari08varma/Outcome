@@ -6,8 +6,9 @@
  * the original outcome was logged.
  *
  * This is the ONE permitted UPDATE path on fact_outcomes.
- * Only outcome_score, business_outcome, and feedback_received_at
- * are modified. All other columns remain immutable.
+ * It updates reconciliation fields (score, business_outcome,
+ * feedback timestamps, pending/cross-event state, and
+ * execution-status trace metadata). All identity fields remain immutable.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -83,9 +84,16 @@ outcomeFeedbackRouter.post('/', async (c) => {
 
     // ── Update fact_outcomes with final score ────────────────
     // This is the ONE permitted UPDATE on fact_outcomes.
-    // The prevent_outcome_update trigger allows changes ONLY to
-    // outcome_score, business_outcome, and feedback_received_at.
+    // The prevent_outcome_update trigger enforces append-only semantics for
+    // identity columns while allowing the reconciliation field set below.
     const feedbackSignalsSuccess = body.final_score >= 0.5;
+    const executionStatus = feedbackSignalsSuccess ? 'COMPLETED' : 'FAILED';
+    const failureReasonCode = executionStatus === 'FAILED'
+        ? 'delayed_feedback_failed'
+        : null;
+    const failureStage = executionStatus === 'FAILED'
+        ? 'delayed_feedback'
+        : null;
     const crossEventStatus = outcome.signal_pending === true
         ? (outcome.success === feedbackSignalsSuccess ? 'confirmed' : 'conflict')
         : (outcome.success === feedbackSignalsSuccess ? 'resolved' : 'conflict');
@@ -101,6 +109,10 @@ outcomeFeedbackRouter.post('/', async (c) => {
             signal_updated_at: nowIso,
             cross_event_status: crossEventStatus,
             cross_event_last_updated: nowIso,
+            execution_status: executionStatus,
+            failure_reason_code: failureReasonCode,
+            failure_stage: failureStage,
+            status_origin: 'reconciled_feedback',
         })
         .eq('outcome_id', body.outcome_id)
         .eq('customer_id', customerId);
@@ -151,6 +163,24 @@ outcomeFeedbackRouter.post('/', async (c) => {
                     detail:
                         'Delayed feedback contradicted initial outcome polarity. ' +
                         `initial_success=${String(outcome.success)} final_score=${body.final_score.toFixed(4)}.`,
+                    reason_code: 'cross_event_feedback_conflict',
+                    trace_reason_code: 'cross_event_feedback_conflict',
+                    trace_stage: 'delayed_feedback',
+                    trace_gate: 'cross_event_status_conflict',
+                    source_execution_status: executionStatus,
+                    source_status_origin: 'reconciled_feedback',
+                    source_failure_reason_code: failureReasonCode,
+                    source_failure_stage: failureStage,
+                    trace_payload: {
+                        initial_success: outcome.success,
+                        final_score: body.final_score,
+                        signal_pending_before_feedback: outcome.signal_pending === true,
+                    },
+                    trace_context: {
+                        initial_success: outcome.success,
+                        final_score: body.final_score,
+                        signal_pending_before_feedback: outcome.signal_pending === true,
+                    },
                 });
         }
     }
@@ -188,6 +218,10 @@ outcomeFeedbackRouter.post('/', async (c) => {
         outcome_id: body.outcome_id,
         final_score: body.final_score,
         business_outcome: body.business_outcome,
+        execution_status: executionStatus,
+        failure_reason_code: failureReasonCode,
+        failure_stage: failureStage,
+        status_origin: 'reconciled_feedback',
         cross_event_status: crossEventStatus,
         cross_event_conflict: crossEventStatus === 'conflict',
     });

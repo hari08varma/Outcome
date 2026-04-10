@@ -142,6 +142,69 @@ describe('Parser: field extraction', () => {
         expect(extractSuccess({ success: 'unknown_status' })).toBeNull();
     });
 
+    it('derives success from execution_status when success field is absent', () => {
+        const parsed = dryRunParse(
+            [
+                {
+                    action_name: 'retry_with_cache',
+                    issue_type: 'payment_failed',
+                    execution_status: 'FAILED',
+                    failure_reason_code: 'timeout_error',
+                    failure_stage: 'action_execution',
+                },
+            ],
+            'agent-test-1',
+            'customer-test-1',
+        );
+
+        expect(parsed.validation_errors).toHaveLength(0);
+        expect(parsed.valid_rows).toHaveLength(1);
+        expect(parsed.valid_rows[0]!.row.success).toBe(false);
+        expect(parsed.valid_rows[0]!.row.execution_status).toBe('FAILED');
+        expect(parsed.valid_rows[0]!.row.failure_reason_code).toBe('timeout_error');
+        expect(parsed.valid_rows[0]!.row.failure_stage).toBe('action_execution');
+    });
+
+    it('rejects row when execution_status conflicts with outcome_score polarity', () => {
+        const parsed = dryRunParse(
+            [
+                {
+                    action_name: 'retry_with_cache',
+                    issue_type: 'payment_failed',
+                    execution_status: 'COMPLETED',
+                    outcome_score: 0.2,
+                },
+            ],
+            'agent-test-1',
+            'customer-test-1',
+        );
+
+        expect(parsed.valid_rows).toHaveLength(0);
+        expect(parsed.validation_errors).toHaveLength(1);
+        expect(parsed.validation_errors[0]?.field).toBe('outcome_score');
+    });
+
+    it('maps unknown failure reason tokens to bounded fallback vocab', () => {
+        const parsed = dryRunParse(
+            [
+                {
+                    action_name: 'retry_with_cache',
+                    issue_type: 'payment_failed',
+                    execution_status: 'FAILED',
+                    failure_reason_code: 'totally_custom_reason',
+                    failure_stage: 'my_custom_stage',
+                },
+            ],
+            'agent-test-1',
+            'customer-test-1',
+        );
+
+        expect(parsed.validation_errors).toHaveLength(0);
+        expect(parsed.valid_rows).toHaveLength(1);
+        expect(parsed.valid_rows[0]!.row.failure_reason_code).toBe('unknown_failure');
+        expect(parsed.valid_rows[0]!.row.failure_stage).toBe('unknown_stage');
+    });
+
     it('clamps percentage scores to 0-1 range', () => {
         expect(extractScore({ score: '85' })).toBe(0.85);
         expect(extractScore({ score: 0.9 })).toBe(0.9);

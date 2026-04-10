@@ -61,6 +61,19 @@ export interface RecommendationSimulationGuardrailMeta {
     exploit_gate_min_samples: number;
 }
 
+export type RecommendationConfidenceSource =
+    | 'bootstrap'
+    | 'empirical_warmup'
+    | 'empirical_stable'
+    | 'hybrid_shadow';
+
+export interface RecommendationTraceability {
+    reason_code: string;
+    stage: string;
+    gate: string | null;
+    detail: string | null;
+}
+
 export interface RecommendationResult {
     task: string;
     state: RecommendationState;
@@ -95,6 +108,9 @@ export interface RecommendationResult {
     _data_source?: 'mv' | 'fact_fallback' | 'unknown';
     _noise_gate?: RecommendationNoiseGateMeta;
     _simulation_guardrail?: RecommendationSimulationGuardrailMeta;
+    confidence_source?: RecommendationConfidenceSource;
+    confidence_source_reason?: string;
+    traceability?: RecommendationTraceability;
     agent_id: string | null;
     generated_at: string;
     registered_actions: string[];
@@ -279,6 +295,103 @@ function resolveEvidenceThresholds(
         stableSamples: rolloutConfig.noisyStableSamples,
         highConfidenceSamples: rolloutConfig.noisyHighConfidenceSamples,
         reason: noise.reasons.join('+') || 'noisy_task_thresholds',
+    };
+}
+
+function deriveConfidenceSourceFromResult(
+    result: RecommendationResult,
+): { source: RecommendationConfidenceSource; reason: string } {
+    if (result._trust_gate_blocked) {
+        return {
+            source: 'bootstrap',
+            reason: 'trust_gate_blocked',
+        };
+    }
+
+    if (result.state === 'no_data') {
+        return {
+            source: 'bootstrap',
+            reason: 'insufficient_evidence',
+        };
+    }
+
+    if (result._simulation_guardrail?.shadow_applied) {
+        return {
+            source: 'hybrid_shadow',
+            reason: 'simulation_shadow_assist',
+        };
+    }
+
+    if (result.state === 'early_signal') {
+        return {
+            source: 'empirical_warmup',
+            reason: 'empirical_signal_warming',
+        };
+    }
+
+    return {
+        source: 'empirical_stable',
+        reason: 'empirical_signal_stable',
+    };
+}
+
+function buildTraceabilityFromResult(result: RecommendationResult): RecommendationTraceability {
+    if (result._trust_gate_blocked) {
+        return {
+            reason_code: 'trust_gate_blocked',
+            stage: 'evidence_gate',
+            gate: 'trust_status',
+            detail: `Recommendation blocked by trust status: ${result._trust_status ?? 'unknown'}.`,
+        };
+    }
+
+    if (result.state === 'no_data') {
+        return {
+            reason_code: 'insufficient_evidence',
+            stage: 'evidence_gate',
+            gate: result._noise_gate?.decision_gate_reason ?? 'warmup_threshold',
+            detail: 'Insufficient qualified actions or samples for a recommendation.',
+        };
+    }
+
+    if (result.state === 'early_signal') {
+        if (result._simulation_guardrail?.exploit_gate_applied) {
+            return {
+                reason_code: 'simulation_exploit_gate',
+                stage: 'simulation_guardrail',
+                gate: 'exploit_gate_min_samples',
+                detail: 'Simulation-assisted top action lacks minimum empirical samples for stable exploit.',
+            };
+        }
+        if (result._simulation_guardrail?.confidence_ceiling_applied) {
+            return {
+                reason_code: 'simulation_confidence_ceiling',
+                stage: 'simulation_guardrail',
+                gate: 'confidence_ceiling',
+                detail: 'Confidence capped due to simulation shadow influence.',
+            };
+        }
+        if (result._silent_failure_warning) {
+            return {
+                reason_code: 'silent_failure_risk',
+                stage: 'stability_gate',
+                gate: 'degradation_alert_recent',
+                detail: 'Recent degradation alerts detected for qualified actions.',
+            };
+        }
+        return {
+            reason_code: 'confidence_below_stable_threshold',
+            stage: 'stability_gate',
+            gate: result._noise_gate?.decision_gate_reason ?? 'stable_samples_or_gap',
+            detail: 'Signal exists but has not reached stable confidence thresholds.',
+        };
+    }
+
+    return {
+        reason_code: 'stable_recommendation',
+        stage: 'decision',
+        gate: null,
+        detail: 'Recommendation is stable under current reliability gates.',
     };
 }
 
@@ -530,10 +643,18 @@ export async function getRecommendation(
         noiseMeta: RecommendationNoiseGateMeta = defaultNoiseMeta,
         simulationMeta: RecommendationSimulationGuardrailMeta = defaultSimulationMeta,
     ): RecommendationResult {
-        return {
+        const enriched: RecommendationResult = {
             ...result,
             _noise_gate: noiseMeta,
             _simulation_guardrail: simulationMeta,
+        };
+
+        const confidenceSource = deriveConfidenceSourceFromResult(enriched);
+        return {
+            ...enriched,
+            confidence_source: confidenceSource.source,
+            confidence_source_reason: confidenceSource.reason,
+            traceability: buildTraceabilityFromResult(enriched),
         };
     }
 

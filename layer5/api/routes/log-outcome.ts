@@ -110,9 +110,76 @@ interface RetryChainState {
     canonicalOutcomeId: string | null;
 }
 
+type ExecutionStatus = 'COMPLETED' | 'FAILED';
+type StatusOrigin = 'explicit' | 'inferred_from_success' | 'inferred_from_score' | 'reconciled_feedback';
+
 function clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
+}
+
+function normalizeExecutionStatus(value: unknown): ExecutionStatus | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'COMPLETED') return 'COMPLETED';
+    if (normalized === 'FAILED') return 'FAILED';
+    return null;
+}
+
+function normalizeFailureToken(value: unknown, maxLen: number): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = sanitizeString(value, maxLen)
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    if (!normalized) return null;
+    return normalized.slice(0, maxLen);
+}
+
+const FAILURE_REASON_CODE_VOCAB = new Set([
+    'execution_failed',
+    'timeout_error',
+    'validation_failed',
+    'dependency_failure',
+    'policy_blocked',
+    'feedback_marked_failure',
+    'cross_event_conflict',
+    'unknown_failure',
+]);
+
+const FAILURE_STAGE_VOCAB = new Set([
+    'action_selection',
+    'action_execution',
+    'ingest_validation',
+    'verification',
+    'delayed_feedback',
+    'downstream_signal',
+    'policy_gate',
+    'unknown_stage',
+]);
+
+function normalizeFailureReasonCode(value: unknown): string | null {
+    const token = normalizeFailureToken(value, 80);
+    if (!token) return null;
+    return FAILURE_REASON_CODE_VOCAB.has(token)
+        ? token
+        : 'unknown_failure';
+}
+
+function normalizeFailureStage(value: unknown): string | null {
+    const token = normalizeFailureToken(value, 40);
+    if (!token) return null;
+    return FAILURE_STAGE_VOCAB.has(token)
+        ? token
+        : 'unknown_stage';
+}
+
+function statusFromOutcomeScore(score: number | null): ExecutionStatus | null {
+    if (score === null || !Number.isFinite(score)) return null;
+    return score >= 0.5 ? 'COMPLETED' : 'FAILED';
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -194,6 +261,8 @@ const LogOutcomeBody = z.object({
     session_id: z.string().uuid().optional(),
     idempotency_key: z.string().max(255).optional(),
     action_name: z.string().min(1).max(255).optional(),
+    // Legacy alias still used by older SDK/manual clients.
+    action_id: z.string().optional(),
     action_id_input: z.string().optional(),
     action_params: z.record(z.string(), z.unknown()).optional(),
     issue_type: z
@@ -313,6 +382,13 @@ const LogOutcomeBody = z.object({
     task_name: z.string().min(1).max(255).optional(),
     retry_chain_id: z.string().uuid().optional(),
     retry_attempt: z.number().int().min(0).max(1000).optional(),
+    execution_status: z
+        .preprocess(
+            (val) => typeof val === 'string' ? val.trim().toUpperCase() : val,
+            z.enum(['COMPLETED', 'FAILED']).optional(),
+        ),
+    failure_reason_code: z.string().max(80).optional(),
+    failure_stage: z.string().max(40).optional(),
 });
 
 // ── Helper: fetch real agent trust ──
@@ -620,6 +696,10 @@ async function resolveRetryChainState(
 async function insertCoreOutcome(
     agentId: string, customerId: string, actionId: string, contextId: string,
     body: any, finalSuccess: boolean, finalOutcomeScore: number | null, verification: any,
+    executionStatus: ExecutionStatus,
+    failureReasonCode: string | null,
+    failureStage: string | null,
+    statusOrigin: StatusOrigin,
     outcomeScoreRaw: number | null,
     dataQuality: number,
     isInconsistent: boolean,
@@ -686,6 +766,10 @@ async function insertCoreOutcome(
         cross_event_attempt_count: retryChain.crossEventAttemptCount,
         canonical_outcome_id: retryChain.canonicalOutcomeId,
         pending_registration_id: null,
+        execution_status: executionStatus,
+        failure_reason_code: failureReasonCode,
+        failure_stage: failureStage,
+        status_origin: statusOrigin,
         // ── Decision Recommendation Engine ───────────────────────
         // Task resolution rule: developer-provided wins, else infer.
         task_name: body._resolved_task_name ?? null,
@@ -981,6 +1065,42 @@ logOutcomeRouter.post('/', async (c) => {
         // score_origin: was outcome_score explicitly provided by the developer?
         const scoreOrigin: 'provided' | 'inferred' = outcomeScoreRaw !== null ? 'provided' : 'inferred';
 
+        const requestedExecutionStatus = normalizeExecutionStatus(body.execution_status ?? null);
+        if (requestedExecutionStatus && ((requestedExecutionStatus === 'COMPLETED') !== finalSuccess)) {
+            throw new Error('STATUS_CONFLICT:execution_status conflicts with resolved success value');
+        }
+
+        const scoreDerivedStatus = statusFromOutcomeScore(outcomeScoreRaw);
+        if (requestedExecutionStatus && scoreDerivedStatus && requestedExecutionStatus !== scoreDerivedStatus) {
+            throw new Error('STATUS_CONFLICT:execution_status conflicts with outcome_score_raw polarity');
+        }
+
+        const executionStatus: ExecutionStatus = requestedExecutionStatus
+            ?? (finalSuccess ? 'COMPLETED' : 'FAILED');
+
+        const statusOrigin: StatusOrigin = requestedExecutionStatus
+            ? 'explicit'
+            : scoreOrigin === 'inferred'
+                ? 'inferred_from_score'
+                : 'inferred_from_success';
+
+        let failureReasonCode = normalizeFailureReasonCode(body.failure_reason_code);
+        let failureStage = normalizeFailureStage(body.failure_stage);
+
+        if (executionStatus === 'COMPLETED') {
+            failureReasonCode = null;
+            failureStage = null;
+        } else {
+            if (!failureReasonCode) {
+                failureReasonCode = normalizeFailureReasonCode(body.error_code) ?? 'execution_failed';
+            }
+            if (!failureStage) {
+                failureStage = body.feedback_signal === 'delayed'
+                    ? 'delayed_feedback'
+                    : 'action_execution';
+            }
+        }
+
         // mapping_tier: exact tier string from TaskInferResult (persisted for audit trail).
         const mappingTier: string = taskInferResult.tier;
 
@@ -1061,6 +1181,10 @@ logOutcomeRouter.post('/', async (c) => {
         const outcome = await insertCoreOutcome(
             agentId, customerId, actionId, contextId,
             body, finalSuccess, resolvedOutcomeScore, verification,
+            executionStatus,
+            failureReasonCode,
+            failureStage,
+            statusOrigin,
             outcomeScoreRaw,
             dataQuality,
             inconsistency.isInconsistent,
@@ -1149,6 +1273,10 @@ logOutcomeRouter.post('/', async (c) => {
                 mapping_confidence: mappingConfidence,
                 inference_confidence: inferenceConfidence,
                 outcome_class: outcomeClass,
+                execution_status: executionStatus,
+                failure_reason_code: failureReasonCode,
+                failure_stage: failureStage,
+                status_origin: statusOrigin,
                 semantic_cluster: {
                     key: semanticCluster.clusterKey,
                     domain: semanticCluster.domain,
@@ -1208,6 +1336,13 @@ logOutcomeRouter.post('/', async (c) => {
         }
         if (err.message === 'DECISION_AGENT_MISMATCH') {
             return c.json({ error: 'decision_id belongs to a different agent', code: 'DECISION_AGENT_MISMATCH' }, 400);
+        }
+        if (err.message.startsWith('STATUS_CONFLICT:')) {
+            return c.json({
+                error: 'execution_status conflicts with resolved success',
+                details: err.message.substring(16),
+                code: 'STATUS_CONFLICT',
+            }, 400);
         }
         if (err.message.startsWith('UNKNOWN_ACTION:')) {
             const parts = err.message.split(':');

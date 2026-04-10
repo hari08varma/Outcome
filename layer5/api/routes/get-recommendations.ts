@@ -94,6 +94,39 @@ function medianOf(values: number[]): number | null {
     return Number(((finite[middle - 1] + finite[middle]) / 2).toFixed(4));
 }
 
+function buildTraceability(params: {
+    result: RecommendationResult;
+    requestedScope: RecommendationScope;
+    servedScope: RecommendationScope;
+    fallbackApplied: boolean;
+    scopeReason: string | null;
+}): {
+    reason_code: string;
+    stage: string;
+    gate: string | null;
+    detail: string | null;
+} {
+    const { result, requestedScope, servedScope, fallbackApplied, scopeReason } = params;
+
+    const baseTraceability = result.traceability ?? {
+        reason_code: 'unknown_recommendation_trace',
+        stage: 'decision',
+        gate: null,
+        detail: null,
+    };
+
+    if (fallbackApplied && requestedScope === 'agent_scoped' && servedScope === 'customer_blended') {
+        return {
+            ...baseTraceability,
+            detail: baseTraceability.detail
+                ? `${baseTraceability.detail} Scope fallback: ${scopeReason ?? 'agent scope reliability gate.'}`
+                : `Scope fallback: ${scopeReason ?? 'agent scope reliability gate.'}`,
+        };
+    }
+
+    return baseTraceability;
+}
+
 // GET /tasks — returns distinct task_names available for a customer (+ optional agent scope)
 // Uses mv_task_action_performance with automatic fallback to fact_outcomes.
 // Must be registered before '/' so Hono matches it first
@@ -208,6 +241,8 @@ getRecommendationsRouter.get('/', async (c) => {
         }
 
         const fallbackApplied = requestedScope !== servedScope;
+        const confidenceSource = result.confidence_source ?? 'bootstrap';
+        const confidenceSourceReason = result.confidence_source_reason ?? 'unknown_confidence_source_reason';
         const thresholdHint = scopeThresholdProgress
             ? scopeThresholdProgress.next_threshold === null
                 ? `Evidence bucket: ${scopeThresholdProgress.bucket} (${scopeThresholdProgress.current_samples} samples, cohort-anchor reached).`
@@ -241,6 +276,8 @@ getRecommendationsRouter.get('/', async (c) => {
                 total_outcomes: totalOutcomes,
                 median_confidence: result.confidence,
                 median_success_rate: medianSuccessRate,
+                confidence_source: confidenceSource,
+                confidence_source_reason: confidenceSourceReason,
             }),
             // Only fetch data_sources when scoped to an agent — most useful context
             // for developers who have uploaded historical data for that agent.
@@ -249,6 +286,13 @@ getRecommendationsRouter.get('/', async (c) => {
                 : Promise.resolve(null),
         ]);
         const cohortReliability = computeCohortReliability(result, cohortCycle);
+        const traceability = buildTraceability({
+            result,
+            requestedScope,
+            servedScope,
+            fallbackApplied,
+            scopeReason,
+        });
 
         return c.json(
             {
@@ -277,6 +321,9 @@ getRecommendationsRouter.get('/', async (c) => {
                 customer_id: customerId,
                 noise_gate: result._noise_gate ?? null,
                 simulation_guardrail: result._simulation_guardrail ?? null,
+                confidence_source: confidenceSource,
+                confidence_source_reason: confidenceSourceReason,
+                traceability,
                 // ISSUE 1: Action registry validation.
                 // Tells the developer if the recommended action matches what they have registered.
                 // action_mismatch=true means the recommended action name does not exist in

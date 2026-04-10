@@ -513,9 +513,12 @@ function parseKeyValueRecords(text: string): Record<string, unknown>[] {
 const ACTION_FIELDS = ['action_name', 'action', 'action_taken', 'handler', 'function_name'];
 const ISSUE_FIELDS = ['issue_type', 'task_type', 'task', 'issue', 'type', 'context', 'category', 'event_type'];
 const SUCCESS_FIELDS = ['success', 'result', 'outcome', 'status', 'passed', 'succeeded'];
+const STATUS_FIELDS = ['execution_status', 'run_status', 'result_status'];
 const SCORE_FIELDS = ['outcome_score', 'score', 'confidence', 'quality'];
 const TIMESTAMP_FIELDS = ['timestamp', 'created_at', 'occurred_at', 'event_at', 'logged_at', 'date', 'time'];
 const ENVIRONMENT_FIELDS = ['environment', 'env', 'runtime_environment', 'deployment_environment', 'stage'];
+const FAILURE_REASON_FIELDS = ['failure_reason_code', 'failure_reason', 'reason_code', 'error_code'];
+const FAILURE_STAGE_FIELDS = ['failure_stage', 'error_stage', 'stage_name'];
 const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -541,6 +544,71 @@ export function extractSuccess(record: Record<string, unknown>): boolean | null 
         if (['false', '0', 'no', 'fail', 'failed', 'error', 'failure', 'partial'].includes(s)) return false;
         return null;
     });
+}
+
+function extractExecutionStatus(record: Record<string, unknown>): 'COMPLETED' | 'FAILED' | null {
+    return extractField(record, STATUS_FIELDS, (v) => {
+        const normalized = String(v).trim().toUpperCase();
+        if (normalized === 'COMPLETED') return 'COMPLETED';
+        if (normalized === 'FAILED') return 'FAILED';
+        return null;
+    });
+}
+
+function normalizeFailureToken(value: string | null, maxLen: number): string | null {
+    if (!value) return null;
+    const normalized = sanitizeString(value, maxLen)
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    if (!normalized) return null;
+    return normalized.slice(0, maxLen);
+}
+
+const FAILURE_REASON_CODE_VOCAB = new Set([
+    'execution_failed',
+    'timeout_error',
+    'validation_failed',
+    'dependency_failure',
+    'policy_blocked',
+    'feedback_marked_failure',
+    'cross_event_conflict',
+    'unknown_failure',
+]);
+
+const FAILURE_STAGE_VOCAB = new Set([
+    'action_selection',
+    'action_execution',
+    'ingest_validation',
+    'verification',
+    'delayed_feedback',
+    'downstream_signal',
+    'policy_gate',
+    'unknown_stage',
+]);
+
+function normalizeFailureReasonCode(value: string | null): string | null {
+    const token = normalizeFailureToken(value, 80);
+    if (!token) return null;
+    return FAILURE_REASON_CODE_VOCAB.has(token)
+        ? token
+        : 'unknown_failure';
+}
+
+function normalizeFailureStage(value: string | null): string | null {
+    const token = normalizeFailureToken(value, 40);
+    if (!token) return null;
+    return FAILURE_STAGE_VOCAB.has(token)
+        ? token
+        : 'unknown_stage';
+}
+
+function statusFromOutcomeScore(score: number | null): 'COMPLETED' | 'FAILED' | null {
+    if (score === null || !Number.isFinite(score)) return null;
+    return score >= 0.5 ? 'COMPLETED' : 'FAILED';
 }
 
 export function extractScore(record: Record<string, unknown>): number | null {
@@ -641,10 +709,33 @@ export function dryRunParse(
             rowErrors.push({ row: rowIndex, field: 'issue_type', reason: 'Missing. Add issue_type, task_type, task, or category field.' });
         }
 
-        // Required: success
-        const success = extractSuccess(rec);
+        const executionStatus = extractExecutionStatus(rec);
+
+        // Required: success (can be derived from explicit execution_status)
+        let success = extractSuccess(rec);
+        if (success === null && executionStatus !== null) {
+            success = executionStatus === 'COMPLETED';
+        }
         if (success === null) {
             rowErrors.push({ row: rowIndex, field: 'success', reason: 'Cannot determine success/failure. Add result=true/false or success=1/0.' });
+        }
+
+        if (success !== null && executionStatus !== null && (success !== (executionStatus === 'COMPLETED'))) {
+            rowErrors.push({
+                row: rowIndex,
+                field: 'execution_status',
+                reason: 'execution_status conflicts with success. COMPLETED must map to success=true and FAILED to success=false.',
+            });
+        }
+
+        const outcomeScore = extractScore(rec);
+        const scoreDerivedStatus = statusFromOutcomeScore(outcomeScore);
+        if (executionStatus !== null && scoreDerivedStatus !== null && executionStatus !== scoreDerivedStatus) {
+            rowErrors.push({
+                row: rowIndex,
+                field: 'outcome_score',
+                reason: 'execution_status conflicts with outcome_score polarity. COMPLETED requires outcome_score >= 0.5 and FAILED requires <= 0.5.',
+            });
         }
 
         if (rowErrors.length > 0) {
@@ -653,7 +744,6 @@ export function dryRunParse(
         }
 
         // Optional fields
-        const outcomeScore = extractScore(rec);
         const timestamp = extractTimestamp(rec);
         const businessOutcomeRaw = extractField(rec, ['business_outcome', 'outcome', 'resolution', 'resolution_status'], (v) => String(v));
         const businessOutcome = normalizeBusinessOutcome(businessOutcomeRaw);
@@ -661,6 +751,12 @@ export function dryRunParse(
             const n = Number(v);
             return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
         });
+        const failureReasonCode = normalizeFailureReasonCode(
+            extractField(rec, FAILURE_REASON_FIELDS, (v) => String(v)),
+        );
+        const failureStage = normalizeFailureStage(
+            extractField(rec, FAILURE_STAGE_FIELDS, (v) => String(v)),
+        );
         const sessionId = extractField(rec, ['session_id', 'session', 'request_id', 'trace_id'], (v) => {
             const s = String(v).trim();
             return UUID_RE.test(s) ? s : null;
@@ -723,6 +819,13 @@ export function dryRunParse(
                 task_mapping_confidence: taskResult.confidence,
                 task_mapping_tier: taskResult.tier,
                 idempotency_key: idempotencyKey,
+                execution_status: executionStatus ?? (success! ? 'COMPLETED' : 'FAILED'),
+                failure_reason_code: (executionStatus ?? (success! ? 'COMPLETED' : 'FAILED')) === 'FAILED'
+                    ? (failureReasonCode ?? 'execution_failed')
+                    : null,
+                failure_stage: (executionStatus ?? (success! ? 'COMPLETED' : 'FAILED')) === 'FAILED'
+                    ? (failureStage ?? 'action_execution')
+                    : null,
             },
             idempotency_key: idempotencyKey,
             quality,

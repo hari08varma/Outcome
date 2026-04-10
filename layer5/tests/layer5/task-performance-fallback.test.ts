@@ -177,6 +177,59 @@ describe('task performance fallback', () => {
         ]);
     });
 
+    it('uses execution_status polarity before legacy success in fact fallback scoring', async () => {
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
+            if (table === 'mv_task_action_performance_180d') {
+                return makeQuery({
+                    data: null,
+                    error: {
+                        code: '42P01',
+                        message: 'relation "mv_task_action_performance_180d" does not exist',
+                    },
+                }) as any;
+            }
+
+            if (table === 'fact_outcomes') {
+                return makeQuery({
+                    data: [
+                        {
+                            action_id: 'a-status',
+                            success: true,
+                            execution_status: 'FAILED',
+                            timestamp: '2026-04-02T10:00:00.000Z',
+                            dim_actions: { action_name: 'restart_service' },
+                        },
+                        {
+                            action_id: 'a-status',
+                            success: true,
+                            execution_status: 'FAILED',
+                            timestamp: '2026-04-03T10:00:00.000Z',
+                            dim_actions: { action_name: 'restart_service' },
+                        },
+                    ],
+                    error: null,
+                }) as any;
+            }
+
+            if (table === 'mv_action_scores') {
+                return makeQuery({ data: [], error: null }) as any;
+            }
+
+            throw new Error(`unexpected table: ${table}`);
+        });
+
+        const result = await fetchTaskActionPerformance({
+            customerId: 'cust-1',
+            taskName: 'incident_resolution',
+            agentId: null,
+        });
+
+        expect(result.source).toBe('fact_fallback');
+        expect(result.rows).toHaveLength(1);
+        expect(result.rows[0]?.success_rate).toBe(1);
+        expect(result.rows[0]?.resolution_rate).toBeCloseTo(0, 6);
+    });
+
     it('falls back to fact_outcomes task list and normalizes task names', async () => {
         vi.mocked(supabase.from).mockImplementation((table: string) => {
             if (table === 'mv_task_action_performance_180d') {

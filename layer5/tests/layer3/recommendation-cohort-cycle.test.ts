@@ -150,4 +150,86 @@ describe('recommendation cohort cycle rotation', () => {
             }),
         );
     });
+
+    it('persists confidence source labels on active cycle when provided', async () => {
+        const rpcPayload = {
+            active_cycle: {
+                cycle_id: 'rpc-cycle-source',
+                opened_at: '2026-04-01T00:00:00.000Z',
+                closed_at: null,
+                close_reason: null,
+                elapsed_days: 0,
+                outcomes_in_cycle: 0,
+                opened_confidence_source: 'hybrid_shadow',
+                opened_confidence_source_reason: 'simulation_shadow_assist',
+            },
+            previous_cycle: null,
+            rotation_triggered: false,
+            rotation_reason: null,
+            thresholds: {
+                max_days: 7,
+                max_outcomes: 100,
+                confidence_drop: 0.1,
+                success_rate_drop: 0.15,
+            },
+        };
+
+        vi.mocked((supabase as any).rpc).mockResolvedValueOnce({
+            data: rpcPayload,
+            error: null,
+        });
+
+        const result = await upsertRecommendationCohortCycle(observation({
+            confidence_source: 'hybrid_shadow',
+            confidence_source_reason: 'simulation_shadow_assist',
+        }));
+
+        expect((supabase as any).rpc).toHaveBeenCalledWith(
+            'upsert_recommendation_cohort_cycle',
+            expect.objectContaining({
+                p_opened_confidence_source: 'hybrid_shadow',
+                p_opened_confidence_source_reason: 'simulation_shadow_assist',
+            }),
+        );
+
+        expect(result.active_cycle.opened_confidence_source).toBe('hybrid_shadow');
+        expect(result.active_cycle.opened_confidence_source_reason).toBe('simulation_shadow_assist');
+    });
+
+    it('falls back to observation confidence source labels when RPC omits them', async () => {
+        const rpcPayload = {
+            active_cycle: {
+                cycle_id: 'rpc-cycle-no-source',
+                opened_at: '2026-04-01T00:00:00.000Z',
+                closed_at: null,
+                close_reason: null,
+                elapsed_days: 0,
+                outcomes_in_cycle: 0,
+                opened_confidence_source: null,
+                opened_confidence_source_reason: null,
+            },
+            previous_cycle: null,
+            rotation_triggered: false,
+            rotation_reason: null,
+            thresholds: {
+                max_days: 7,
+                max_outcomes: 100,
+                confidence_drop: 0.1,
+                success_rate_drop: 0.15,
+            },
+        };
+
+        vi.mocked((supabase as any).rpc).mockResolvedValueOnce({
+            data: rpcPayload,
+            error: null,
+        });
+
+        const result = await upsertRecommendationCohortCycle(observation({
+            confidence_source: 'empirical_warmup',
+            confidence_source_reason: 'warmup_bucket_10_99',
+        }));
+
+        expect(result.active_cycle.opened_confidence_source).toBe('empirical_warmup');
+        expect(result.active_cycle.opened_confidence_source_reason).toBe('warmup_bucket_10_99');
+    });
 });

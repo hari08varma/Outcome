@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 // Layerinfinite SDK — client.ts
 // Decision intelligence layer for AI agents. No LLMs. Just math.
 
@@ -153,7 +155,7 @@ function readBaseUrlsFromEnv(): string[] {
     }
     return raw
         .split(',')
-        .map(url => normalizeBaseUrl(url))
+        .map((url: string) => normalizeBaseUrl(url))
         .filter(Boolean);
 }
 
@@ -668,6 +670,8 @@ export class Layerinfinite {
                 : null,
             reason: raw.reason ?? null,
             confidence: raw.confidence ?? null,
+            confidenceSource: (raw as { confidence_source?: string | null }).confidence_source ?? null,
+            traceability: (raw as { traceability?: Record<string, unknown> | null }).traceability ?? null,
         };
 
         // Pretty-print
@@ -791,8 +795,28 @@ export class Layerinfinite {
      * Compatible with old LogOutcomeRequest shape (backward compat).
      */
     async logOutcome(request: LogOutcomeRequest): Promise<LogOutcomeResponse> {
+        const hasActionName = typeof request.action_name === 'string' && request.action_name.trim().length > 0;
+        const hasActionIdInput = typeof request.action_id_input === 'string' && request.action_id_input.trim().length > 0;
+        const hasActionId = typeof request.action_id === 'string' && request.action_id.trim().length > 0;
+
+        if (!hasActionName && !hasActionIdInput && !hasActionId) {
+            throw new LayerinfiniteError(
+                "logOutcome requires at least one action identifier: action_name, action_id_input, or action_id."
+            );
+        }
+
+        if (request.execution_status) {
+            const expectedSuccess = request.execution_status === 'COMPLETED';
+            if (expectedSuccess !== request.success) {
+                throw new LayerinfiniteError(
+                    "execution_status conflicts with success. Use COMPLETED with success=true or FAILED with success=false."
+                );
+            }
+        }
+
         const payloadToSend: LogOutcomeRequest = {
             ...request,
+            action_id_input: request.action_id_input ?? request.action_id,
             idempotency_key: request.idempotency_key ?? crypto.randomUUID(),
         };
 
@@ -812,6 +836,7 @@ export class Layerinfinite {
             agent_trust_score: Number(payload.agent_trust_score ?? 0),
             trust_status: normalizeTrustStatus(payload.trust_status),
             policy: String(payload.policy ?? ''),
+            ingestion_quality: payload.ingestion_quality,
         };
     }
 

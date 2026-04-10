@@ -128,6 +128,7 @@ li.log_outcome(LogOutcomeRequest(
     action_name="switch_provider",
     issue_type="payment_failed",
     success=True,
+    # optional: if omitted, LI infers score from success/failure + soft signals
     outcome_score=0.82,
     business_outcome=li.normalize_business_outcome("ok"),  # -> "resolved"
 ))

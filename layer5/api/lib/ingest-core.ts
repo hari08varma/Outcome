@@ -34,6 +34,12 @@ import type { InferredOutcomeScore } from './outcome-score-inference.js';
 // ── Types ─────────────────────────────────────────────────────
 
 export type IngestionSource = 'sdk' | 'import';
+export type ExecutionStatus = 'COMPLETED' | 'FAILED';
+export type StatusOrigin =
+    | 'explicit'
+    | 'inferred_from_success'
+    | 'inferred_from_score'
+    | 'reconciled_feedback';
 
 export interface IngestCoreOptions {
     /** Never triggers trust update when true (used for 'import' rows). */
@@ -117,6 +123,10 @@ export interface NormalizedOutcomeRow {
     cross_event_attempt_count?: number | null;
     canonical_outcome_id?: string | null;
     pending_registration_id?: string | null;
+    execution_status?: ExecutionStatus | 'completed' | 'failed' | string | null;
+    failure_reason_code?: string | null;
+    failure_stage?: string | null;
+    status_origin?: StatusOrigin | string | null;
 }
 
 export interface IngestCoreResult {
@@ -130,6 +140,8 @@ export interface IngestCoreResult {
         mapping_confidence: number;
         inference_confidence: number | null;
         outcome_class: string | null;
+        execution_status: ExecutionStatus;
+        status_origin: StatusOrigin;
     };
 }
 
@@ -154,6 +166,80 @@ interface RetryChainState {
 function clamp01(v: number): number {
     if (!Number.isFinite(v)) return 0;
     return Math.max(0, Math.min(1, v));
+}
+
+function normalizeExecutionStatus(value: unknown): ExecutionStatus | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'COMPLETED') return 'COMPLETED';
+    if (normalized === 'FAILED') return 'FAILED';
+    return null;
+}
+
+function normalizeStatusOrigin(value: unknown): StatusOrigin | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'explicit') return 'explicit';
+    if (normalized === 'inferred_from_success') return 'inferred_from_success';
+    if (normalized === 'inferred_from_score') return 'inferred_from_score';
+    if (normalized === 'reconciled_feedback') return 'reconciled_feedback';
+    return null;
+}
+
+function normalizeFailureToken(value: string | null | undefined, maxLen: number): string | null {
+    if (!value) return null;
+    const normalized = sanitizeString(value, maxLen)
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    if (!normalized) return null;
+    return normalized.slice(0, maxLen);
+}
+
+const FAILURE_REASON_CODE_VOCAB = new Set([
+    'execution_failed',
+    'timeout_error',
+    'validation_failed',
+    'dependency_failure',
+    'policy_blocked',
+    'feedback_marked_failure',
+    'cross_event_conflict',
+    'unknown_failure',
+]);
+
+const FAILURE_STAGE_VOCAB = new Set([
+    'action_selection',
+    'action_execution',
+    'ingest_validation',
+    'verification',
+    'delayed_feedback',
+    'downstream_signal',
+    'policy_gate',
+    'unknown_stage',
+]);
+
+function normalizeFailureReasonCode(value: string | null | undefined): string | null {
+    const token = normalizeFailureToken(value, 80);
+    if (!token) return null;
+    return FAILURE_REASON_CODE_VOCAB.has(token)
+        ? token
+        : 'unknown_failure';
+}
+
+function normalizeFailureStage(value: string | null | undefined): string | null {
+    const token = normalizeFailureToken(value, 40);
+    if (!token) return null;
+    return FAILURE_STAGE_VOCAB.has(token)
+        ? token
+        : 'unknown_stage';
+}
+
+function statusFromOutcomeScore(score: number | null): ExecutionStatus | null {
+    if (score === null || !Number.isFinite(score)) return null;
+    return score >= 0.5 ? 'COMPLETED' : 'FAILED';
 }
 
 export function computeOutcomeDataQuality(params: {
@@ -633,6 +719,12 @@ export async function ingestOutcome(
     if (row.idempotency_key) {
         const existing = await checkIdempotency(row.idempotency_key, customerId);
         if (existing) {
+            const replayRequestedStatus = normalizeExecutionStatus(row.execution_status ?? null);
+            const replayExecutionStatus: ExecutionStatus = replayRequestedStatus
+                ?? (row.success ? 'COMPLETED' : 'FAILED');
+            const replayStatusOrigin: StatusOrigin = normalizeStatusOrigin(row.status_origin)
+                ?? (replayRequestedStatus ? 'explicit' : 'inferred_from_success');
+
             // Return existing outcome — no duplicate insert
             return {
                 outcomeId: existing,
@@ -645,6 +737,8 @@ export async function ingestOutcome(
                     mapping_confidence: 1.0,
                     inference_confidence: null,
                     outcome_class: null,
+                    execution_status: replayExecutionStatus,
+                    status_origin: replayStatusOrigin,
                 },
             };
         }
@@ -670,6 +764,26 @@ export async function ingestOutcome(
     const scoreOrigin: 'provided' | 'inferred' =
         opts.precomputed?.scoreOrigin
         ?? (outcomeScoreRaw !== null ? 'provided' : 'inferred');
+
+    const requestedStatus = normalizeExecutionStatus(row.execution_status ?? null);
+    if (requestedStatus && ((requestedStatus === 'COMPLETED') !== finalSuccess)) {
+        throw new Error('STATUS_CONFLICT:execution_status conflicts with resolved success value');
+    }
+
+    const scoreDerivedStatus = statusFromOutcomeScore(outcomeScoreRaw);
+    if (requestedStatus && scoreDerivedStatus && requestedStatus !== scoreDerivedStatus) {
+        throw new Error('STATUS_CONFLICT:execution_status conflicts with outcome_score_raw polarity');
+    }
+
+    const executionStatus: ExecutionStatus = requestedStatus
+        ?? (finalSuccess ? 'COMPLETED' : 'FAILED');
+
+    const statusOrigin: StatusOrigin = normalizeStatusOrigin(row.status_origin)
+        ?? (requestedStatus
+            ? 'explicit'
+            : scoreOrigin === 'inferred'
+                ? 'inferred_from_score'
+                : 'inferred_from_success');
 
     // 4. Inconsistency + quality
     const computedInconsistency = evaluateInconsistencyRules({
@@ -733,6 +847,23 @@ export async function ingestOutcome(
     // 9. Sanitize free-text fields
     const safeErrorMessage = row.error_message ? sanitizeString(row.error_message, 1000) : null;
     const safeErrorCode = row.error_code ? sanitizeString(row.error_code, 100) : null;
+
+    let failureReasonCode = normalizeFailureReasonCode(row.failure_reason_code);
+    let failureStage = normalizeFailureStage(row.failure_stage);
+
+    if (executionStatus === 'COMPLETED') {
+        failureReasonCode = null;
+        failureStage = null;
+    } else {
+        if (!failureReasonCode) {
+            failureReasonCode = normalizeFailureReasonCode(safeErrorCode) ?? 'execution_failed';
+        }
+        if (!failureStage) {
+            failureStage = row.feedback_signal === 'delayed'
+                ? 'delayed_feedback'
+                : 'action_execution';
+        }
+    }
 
     // 10. Outcome Score Inference — 3-layer engine
     // When developer omits outcome_score, infer from hard + soft + relative signals.
@@ -820,6 +951,8 @@ export async function ingestOutcome(
                     mapping_confidence: mappingConfidence,
                     inference_confidence: resolvedScoreConfidence,
                     outcome_class: resolvedOutcomeClass,
+                    execution_status: executionStatus,
+                    status_origin: statusOrigin,
                 },
             };
         }
@@ -867,6 +1000,10 @@ export async function ingestOutcome(
         cross_event_attempt_count: row.cross_event_attempt_count ?? null,
         canonical_outcome_id: row.canonical_outcome_id ?? null,
         pending_registration_id: row.pending_registration_id ?? null,
+        execution_status: executionStatus,
+        failure_reason_code: failureReasonCode,
+        failure_stage: failureStage,
+        status_origin: statusOrigin,
         task_name: taskInferResult.task,
         semantic_cluster_key: semanticCluster.clusterKey,
         semantic_cluster_domain: semanticCluster.domain,
@@ -935,6 +1072,8 @@ export async function ingestOutcome(
             mapping_confidence: mappingConfidence,
             inference_confidence: resolvedScoreConfidence,
             outcome_class: resolvedOutcomeClass,
+            execution_status: executionStatus,
+            status_origin: statusOrigin,
         },
     };
 }

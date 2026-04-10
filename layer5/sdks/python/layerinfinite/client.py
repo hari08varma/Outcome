@@ -927,6 +927,8 @@ class Layerinfinite:
             data_freshness=freshness,
             reason=data.get("reason"),
             confidence=data.get("confidence"),
+            confidence_source=data.get("confidence_source"),
+            traceability=data.get("traceability"),
         )
 
         print(f'\n[layerinfinite] Recommendation for "{task}":')
@@ -1186,10 +1188,15 @@ class Layerinfinite:
         task = request.issue_type
         action_name = request.action_name
 
+        if action_name is None and not (request.action_id or request.action_id_input):
+            raise LayerinfiniteError(
+                "log_outcome requires action_name or action_id/action_id_input."
+            )
+
         # Fix 2b: Fuzzy match action_name against registered actions for this task.
         with self._registry_lock:
             registered_actions = list(self._actions.get(task, {}).keys())
-        if registered_actions and action_name not in registered_actions:
+        if action_name is not None and registered_actions and action_name not in registered_actions:
             matches = difflib.get_close_matches(action_name, registered_actions, n=1, cutoff=0.8)
             if matches:
                 logger.warning(
@@ -1221,7 +1228,17 @@ class Layerinfinite:
                 )
                 request = request.model_copy(update={"business_outcome": canonical})
 
+        if request.execution_status is not None:
+            inferred_success_from_status = request.execution_status == "COMPLETED"
+            if inferred_success_from_status != request.success:
+                raise LayerinfiniteError(
+                    "execution_status conflicts with success. "
+                    "Use COMPLETED with success=True or FAILED with success=False."
+                )
+
         payload = request.model_dump(exclude_none=True)
+        if payload.get("action_id") and not payload.get("action_id_input"):
+            payload["action_id_input"] = payload["action_id"]
         if not payload.get("session_id"):
             payload["session_id"] = str(uuid.uuid4())
         if not payload.get("idempotency_key"):
@@ -1237,10 +1254,14 @@ class Layerinfinite:
         result = LogOutcomeResponse.model_validate(response.json())
 
         # Fix 2d: Contradiction quarantine — warn when ingestion_quality flags inconsistency.
-        if result.ingestion_quality and result.ingestion_quality.is_inconsistent:
+        if (
+            result.ingestion_quality
+            and result.ingestion_quality.is_inconsistent
+            and request.outcome_score is not None
+        ):
             print(
-                f"[layerinfinite] Inconsistency detected: success=True but "
-                f"outcome_score={request.outcome_score:.2f} for '{task}/{action_name}'. "
+                f"[layerinfinite] Inconsistency detected: success={request.success} and "
+                f"outcome_score={request.outcome_score:.2f} for '{task}/{action_name or request.action_id or request.action_id_input}'. "
                 f"Logged, but flagged. Consider revising your scoring logic."
             )
 

@@ -108,6 +108,9 @@ describe('Recommendation Engine - silent failure propagation', () => {
 
         expect(result.state).toBe('early_signal');
         expect(result._silent_failure_warning).toBe(true);
+        expect(result.confidence_source).toBe('empirical_warmup');
+        expect(result.confidence_source_reason).toBe('empirical_signal_warming');
+        expect(result.traceability?.reason_code).toBe('silent_failure_risk');
 
         const actionIdInCall = inCalls.find(([column]) => column === 'action_id');
         expect(actionIdInCall).toBeTruthy();
@@ -213,6 +216,8 @@ describe('Recommendation Engine - silent failure propagation', () => {
         const result = await getRecommendation('cust-noise', 'payment_task');
 
         expect(result.state).toBe('no_data');
+        expect(result.confidence_source).toBe('bootstrap');
+        expect(result.traceability?.reason_code).toBe('insufficient_evidence');
         expect(result._noise_gate?.is_noisy_task).toBe(true);
         expect(result._noise_gate?.required_samples).toBe(30);
         expect(result._noise_gate?.decision_gate_reason).toContain('noise_score_above_threshold');
@@ -288,6 +293,9 @@ describe('Recommendation Engine - silent failure propagation', () => {
 
         expect(result.state).toBe('early_signal');
         expect(result.confidence).toBeLessThanOrEqual(0.65);
+        expect(result.confidence_source).toBe('hybrid_shadow');
+        expect(result.confidence_source_reason).toBe('simulation_shadow_assist');
+        expect(result.traceability?.reason_code).toBe('simulation_exploit_gate');
         expect(result._simulation_guardrail?.shadow_applied).toBe(true);
         expect(result._simulation_guardrail?.confidence_ceiling_applied).toBe(true);
         expect(result._simulation_guardrail?.exploit_gate_applied).toBe(true);

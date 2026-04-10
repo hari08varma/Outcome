@@ -84,6 +84,13 @@ MOCK_RECOMMENDATION_RESPONSE = {
     },
     "reason": "historically strongest action",
     "confidence": 0.91,
+    "confidence_source": "empirical_stable",
+    "traceability": {
+        "reason_code": "stable_recommendation",
+        "stage": "decision",
+        "gate": None,
+        "detail": "Recommendation is stable under current reliability gates.",
+    },
 }
 
 MOCK_PENDING_SIGNAL_RESPONSE = {
@@ -261,6 +268,56 @@ def test_log_outcome_auto_populates_idempotency_key_when_missing(monkeypatch):
 
     assert isinstance(captured_payload.get('idempotency_key'), str)
     assert len(captured_payload.get('idempotency_key', '')) > 0
+
+
+def test_log_outcome_accepts_missing_outcome_score_and_maps_action_id_alias(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    request = LogOutcomeRequest(
+        agent_id='my-agent',
+        action_name='escalate_to_senior',
+        action_id='act-uuid-legacy-alias',
+        issue_type='billing_dispute',
+        success=True,
+    )
+    response = client.log_outcome(request)
+
+    assert isinstance(response, LogOutcomeResponse)
+    assert 'outcome_score' not in captured_payload
+    assert captured_payload.get('action_id') == 'act-uuid-legacy-alias'
+    assert captured_payload.get('action_id_input') == 'act-uuid-legacy-alias'
+
+
+def test_log_outcome_accepts_action_id_only_payload(monkeypatch):
+    client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    request = LogOutcomeRequest(
+        agent_id='my-agent',
+        action_id='act-uuid-only',
+        issue_type='billing_dispute',
+        success=True,
+    )
+    response = client.log_outcome(request)
+
+    assert isinstance(response, LogOutcomeResponse)
+    assert captured_payload.get('action_id') == 'act-uuid-only'
+    assert captured_payload.get('action_id_input') == 'act-uuid-only'
 
 
 def test_log_outcome_queues_and_replays_after_network_recovery(tmp_path, monkeypatch):
@@ -593,6 +650,9 @@ def test_recommend_maps_data_freshness():
     assert rec.data_freshness.age_hours == pytest.approx(4.0)
     assert rec.data_freshness.is_stale is False
     assert rec.data_freshness.stale_threshold_hours == 72
+    assert rec.confidence_source == 'empirical_stable'
+    assert rec.traceability is not None
+    assert rec.traceability.get('reason_code') == 'stable_recommendation'
 
 
 def test_run_uses_entry_score_fn_for_outcome_score(monkeypatch):
