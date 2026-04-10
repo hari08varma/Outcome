@@ -300,7 +300,7 @@ async function batchFetchIPSSignals(
     return signals;
 }
 
-// ── 5-Factor scoring formula ─────────────────────────────────
+// ── 6-Factor scoring formula ─────────────────────────────────
 /**
  * @param contextMatch — cosine similarity from context-embed.ts.
  *   null means exact match (fallback) → treated as 1.0.

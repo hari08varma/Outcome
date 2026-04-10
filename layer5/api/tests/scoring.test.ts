@@ -25,6 +25,7 @@ import {
     W_TREND,
     W_SALIENCE,
     W_RECENCY,
+    W_LATENCY,
     MIN_CONFIDENCE,
 } from '../lib/scoring.js';
 import type { ActionScore } from '../lib/supabase.js';
@@ -79,15 +80,17 @@ describe('computeCompositeScore', () => {
         expect(score).toBeLessThanOrEqual(1);
 
         const expectedSuccess = (0 * 0 + PRIOR_ALPHA) / (0 + PRIOR_ALPHA + PRIOR_BETA);
+        // 6-factor formula: latency defaults to 0.5 for cold-start (no avg_response_ms)
         const expected =
             W_SUCCESS * expectedSuccess +
             W_CONF * 0 +
             W_TREND * 0.5 +
             W_SALIENCE * 1.0 +
-            W_RECENCY * 0.5;
+            W_RECENCY * 0.5 +
+            W_LATENCY * 0.5;
 
         expect(Math.abs(score - expected)).toBeLessThan(0.001);
-        expect(Math.abs(score - 0.45)).toBeLessThan(0.001);
+        expect(Math.abs(score - expected)).toBeLessThan(0.001);
         expect(MIN_CONFIDENCE).toBe(0.3);
     });
 
