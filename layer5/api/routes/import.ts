@@ -37,6 +37,9 @@ import {
 } from '../lib/ingest-core.js';
 import { normalizeActionName } from '../middleware/validate-action.js';
 import { sanitizeString } from '../lib/sanitize.js';
+import { isLangChainTrace, flattenLangChainTrace } from '../lib/adapters/langchain-adapter.js';
+import { isLangGraphTrace, flattenLangGraphTrace } from '../lib/adapters/langgraph-adapter.js';
+import type { NormalizedOutcomeRow } from '../lib/ingest-core.js';
 
 export const importRouter = new Hono();
 
@@ -1187,9 +1190,57 @@ importRouter.post('/', async (c) => {
     }
 
     // ── Parse file ─────────────────────────────────────────
-    const { records, error: parseError } = parseFileContent(fileContent);
-    if (parseError) {
-        return c.json({ error: parseError, code: 'PARSE_ERROR' }, 422);
+    // Detect format: auto (default), langchain, langgraph
+    const formatHint = typeof (c.req.query('format')) === 'string'
+        ? c.req.query('format')!.trim().toLowerCase()
+        : 'auto';
+
+    let adapterRows: NormalizedOutcomeRow[] | null = null;
+
+    if (formatHint === 'langchain' || formatHint === 'langgraph' || formatHint === 'auto') {
+        // Try parsing raw JSON first for adapter detection
+        let parsedJson: unknown = null;
+        try {
+            parsedJson = JSON.parse(fileContent.replace(/^\uFEFF/, '').trim());
+        } catch { /* not JSON, fall through to standard parse */ }
+
+        if (parsedJson !== null) {
+            if (formatHint === 'langchain' || (formatHint === 'auto' && isLangChainTrace(parsedJson))) {
+                adapterRows = flattenLangChainTrace(parsedJson, agentId, 'langchain_trace');
+            } else if (formatHint === 'langgraph' || (formatHint === 'auto' && isLangGraphTrace(parsedJson))) {
+                adapterRows = flattenLangGraphTrace(parsedJson, agentId, 'langgraph_trace');
+            }
+        }
+    }
+
+    let records: Record<string, unknown>[];
+
+    if (adapterRows !== null && adapterRows.length > 0) {
+        // Adapter produced rows — convert NormalizedOutcomeRow[] to Record<string, unknown>[]
+        // so they flow through the existing dryRunParse → processImportJob pipeline.
+        records = adapterRows.map((row) => ({
+            action_name: row.action_name,
+            issue_type: row.issue_type,
+            success: row.success,
+            response_time_ms: row.response_time_ms,
+            error_message: row.error_message,
+            error_code: row.error_code,
+            episode_id: row.episode_id,
+            session_id: row.session_id,
+            environment: row.environment,
+            feedback_signal: row.feedback_signal,
+            signal_source: row.signal_source,
+            resource_cost_units: row.resource_cost_units,
+            resource_cost_type: row.resource_cost_type,
+            retry_attempt: row.retry_attempt,
+        }));
+    } else {
+        // Standard parse: JSON / JSONL / CSV / key=value
+        const { records: parsedRecords, error: parseError } = parseFileContent(fileContent);
+        if (parseError) {
+            return c.json({ error: parseError, code: 'PARSE_ERROR' }, 422);
+        }
+        records = parsedRecords;
     }
 
     if (records.length === 0) {

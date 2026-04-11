@@ -3,6 +3,7 @@ import { writeCounterfactuals } from './ips-engine.js';
 import { upsertSequence, closeSequence } from './sequence-tracker.js';
 import { backpropagateReward } from './reward-backprop.js';
 import { invalidateCache } from './scoring.js';
+import { predictDrift } from './predictive-drift.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type TrustLifecycleStatus = 'trusted' | 'probation' | 'sandbox' | 'suspended' | 'new';
@@ -192,6 +193,17 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         invalidateCache(params.customerId, params.contextId);
     }
 
+    async function taskPredictiveDrift(): Promise<void> {
+        // Predictive drift only runs for live SDK outcomes, not imports.
+        if (params.skipTrust === true) return;
+        await predictDrift(
+            params.actionId,
+            params.customerId,
+            params.agentId,
+            params.actionName,
+        );
+    }
+
     // Trust atomicity is guaranteed by the update_trust_and_audit() RPC (migration 062),
     // which writes both the trust score UPDATE and audit INSERT in one DB transaction.
     // Surfacing trust failures as HTTP 500 to agents is counterproductive — a trust DB
@@ -204,6 +216,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         taskSequence(),
         taskLatencySpike(),
         taskCacheInvalidation(),
+        taskPredictiveDrift(),
     ]);
 
     const taskNames = [
@@ -214,6 +227,7 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
         'sequence',
         'latency-spike',
         'cache-invalidation',
+        'predictive-drift',
     ];
 
     const criticalTaskFailures: string[] = [];

@@ -275,9 +275,41 @@ const LogOutcomeBody = z.object({
         .max(255)
         .transform(val => sanitizeString(val, 255).trim())
         .refine(val => val.length > 0, { message: 'issue_type cannot be blank' }),
-    success: z.boolean(),
-    response_time_ms: z.number().int().positive().optional(),
-    response_ms: z.number().int().positive().optional(), // SDK alias — maps to response_time_ms
+    success: z.preprocess(
+        (val) => {
+            if (typeof val === 'boolean') return val;
+            if (typeof val === 'string') {
+                const lower = val.trim().toLowerCase();
+                if (['true', '1', 'yes', 'ok', 'pass', 'resolved'].includes(lower)) return true;
+                if (['false', '0', 'no', 'fail', 'failed'].includes(lower)) return false;
+            }
+            if (typeof val === 'number') return val === 1;
+            return val;
+        },
+        z.boolean(),
+    ),
+    response_time_ms: z.preprocess(
+        (val) => {
+            if (typeof val === 'number') return val;
+            if (typeof val === 'string') {
+                const parsed = Number(val);
+                return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined;
+            }
+            return val;
+        },
+        z.number().int().positive().optional(),
+    ),
+    response_ms: z.preprocess(
+        (val) => {
+            if (typeof val === 'number') return val;
+            if (typeof val === 'string') {
+                const parsed = Number(val);
+                return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined;
+            }
+            return val;
+        },
+        z.number().int().positive().optional(),
+    ), // SDK alias — maps to response_time_ms
     error_code: z.string().max(100).optional(),
     error_message: z.string().max(1000).optional(),
     raw_context: z.record(z.string(), z.unknown()).optional(),
@@ -309,9 +341,20 @@ const LogOutcomeBody = z.object({
         }),
     customer_tier: z.enum(['free', 'pro', 'enterprise']).optional(),
 
-    outcome_score: z.number().min(0.0).max(1.0, {
-        message: 'outcome_score must be between 0.0 and 1.0',
-    }).optional(),
+    outcome_score: z.preprocess(
+        (val) => {
+            if (val === undefined || val === null) return undefined;
+            const num = Number(val);
+            if (!Number.isFinite(num)) return val; // let Zod reject non-numeric
+            // Percentage auto-detection: values >=2 and <=100 → divide by 100
+            // Values between 1.0 and 2.0 are rejected as invalid (ambiguous range).
+            if (num >= 2 && num <= 100) return num / 100;
+            return num;
+        },
+        z.number().min(0.0).max(1.0, {
+            message: 'outcome_score must be between 0.0 and 1.0 (or 2-100 for percentage)',
+        }).optional(),
+    ),
 
     business_outcome: z
         .string()
@@ -393,6 +436,20 @@ const LogOutcomeBody = z.object({
         ),
     failure_reason_code: z.string().max(80).optional(),
     failure_stage: z.string().max(40).optional(),
+
+    // ── Resource cost tracking ────────────────────────────────
+    // Tracks token usage, API call count, or compute cost per outcome.
+    // Agent frameworks (LangChain, CrewAI) report token_usage.total_tokens;
+    // this field captures that signal for cost-per-outcome analysis.
+    resource_cost_units: z.preprocess(
+        (val) => {
+            if (val === undefined || val === null) return undefined;
+            const num = Number(val);
+            return Number.isFinite(num) && num >= 0 ? num : undefined;
+        },
+        z.number().min(0).optional(),
+    ),
+    resource_cost_type: z.enum(['tokens', 'api_calls', 'compute_seconds']).optional(),
 });
 
 // ── Helper: fetch real agent trust ──

@@ -131,6 +131,8 @@ export interface NormalizedOutcomeRow {
     failure_reason_code?: string | null;
     failure_stage?: string | null;
     status_origin?: StatusOrigin | string | null;
+    resource_cost_units?: number | null;
+    resource_cost_type?: 'tokens' | 'api_calls' | 'compute_seconds' | null;
 }
 
 export interface IngestCoreResult {
@@ -1028,6 +1030,9 @@ export async function ingestOutcome(
         ...(opts.sourceEventAt ? { source_event_at: opts.sourceEventAt.toISOString() } : {}),
         // Override the DB timestamp for historical imports
         ...(timestampOverride ? { timestamp: timestampOverride } : {}),
+        // Resource cost tracking (token usage, API calls, compute time)
+        ...(row.resource_cost_units != null ? { resource_cost_units: row.resource_cost_units } : {}),
+        ...(row.resource_cost_type ? { resource_cost_type: row.resource_cost_type } : {}),
     };
 
     const insertedOutcome = await insertOutcomeRecord(insertPayload);
