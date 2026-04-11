@@ -28,7 +28,11 @@ import type { TaskInferResult, TaskMappingTier } from './recommendation/task-inf
 import { inferSemanticActionCluster } from './recommendation/semantic-action-cluster.js';
 import type { SemanticActionClusterResult } from './recommendation/semantic-action-cluster.js';
 import { sanitizeContext, sanitizeString } from './sanitize.js';
-import { inferOutcomeScore, fetchActionBaseline } from './outcome-score-inference.js';
+import {
+    inferOutcomeScore,
+    fetchActionBaseline,
+    invalidateActionBaselineCache,
+} from './outcome-score-inference.js';
 import type { InferredOutcomeScore } from './outcome-score-inference.js';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -1027,6 +1031,8 @@ export async function ingestOutcome(
     };
 
     const insertedOutcome = await insertOutcomeRecord(insertPayload);
+
+    invalidateActionBaselineCache(row.agent_id, actionId);
 
     // 12. Idempotency record
     await saveIdempotencyRecord(row.idempotency_key, insertedOutcome.outcomeId, customerId);

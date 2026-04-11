@@ -27,6 +27,7 @@ vi.mock('../middleware/validate-action.js', () => ({
 vi.mock('../lib/outcome-score-inference.js', () => ({
     fetchActionBaseline: vi.fn().mockResolvedValue(null),
     inferOutcomeScore: vi.fn().mockReturnValue({ score: 0.5, confidence: 0.6, class: 'neutral' }),
+    invalidateActionBaselineCache: vi.fn(),
 }));
 
 vi.mock('../lib/outcome-orchestrator.js', () => ({
@@ -45,14 +46,14 @@ function makeChain(
     insertValue: { data: any; error?: any } = { data: { outcome_id: 'mock-id', timestamp: new Date().toISOString() }, error: null }
 ) {
     const chain: any = {};
-    chain.select   = vi.fn().mockReturnValue(chain);
-    chain.eq       = vi.fn().mockReturnValue(chain);
-    chain.upsert   = vi.fn().mockReturnValue(chain);
-    chain.order    = vi.fn().mockReturnValue(chain);
-    chain.limit    = vi.fn().mockReturnValue(chain);
-    chain.gte      = vi.fn().mockReturnValue(chain);
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.upsert = vi.fn().mockReturnValue(chain);
+    chain.order = vi.fn().mockReturnValue(chain);
+    chain.limit = vi.fn().mockReturnValue(chain);
+    chain.gte = vi.fn().mockReturnValue(chain);
     chain.maybeSingle = vi.fn().mockResolvedValue(terminalValue);
-    chain.single      = vi.fn().mockResolvedValue(terminalValue);
+    chain.single = vi.fn().mockResolvedValue(terminalValue);
     // insert returns a nested chain where select().single() resolves the record
     const insertChain: any = {};
     insertChain.select = vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue(insertValue) });
@@ -116,27 +117,27 @@ describe('Sanitization in log-outcome', () => {
 
     const createMockReq = (bodyObj: any) => ({
         method: 'POST',
-        url:    'http://localhost/v1/log-outcome',
-        json:   async () => bodyObj,
+        url: 'http://localhost/v1/log-outcome',
+        json: async () => bodyObj,
     } as unknown as Request);
 
     const createContext = (req: Request, bodyObj: any) => ({
         req,
         get: (key: string) => {
-            if (key === 'agent_id')        return 'agent-1';
-            if (key === 'customer_id')     return 'customer-1';
-            if (key === 'parsed_body')     return bodyObj;
+            if (key === 'agent_id') return 'agent-1';
+            if (key === 'customer_id') return 'customer-1';
+            if (key === 'parsed_body') return bodyObj;
             if (key === 'validated_action') return { action_id: 'action-1', action_name: bodyObj.action_name, action_category: 'test' };
             return null;
         },
-        json:   (data: any, status: number) => ({ data, status }),
+        json: (data: any, status: number) => ({ data, status }),
         header: vi.fn(),
     } as any);
 
     // ── Helper: run handler and assert it did NOT 500 ──────────────────────────
     async function runHandler(bodyObj: any) {
         const req = createMockReq(bodyObj);
-        const c   = createContext(req, bodyObj);
+        const c = createContext(req, bodyObj);
         const handler = logOutcomeRouter.routes.find(
             (r: any) => r.method === 'POST' && r.path === '/'
         )?.handler as Function;
@@ -151,10 +152,10 @@ describe('Sanitization in log-outcome', () => {
 
     it('raw_context deep object is sanitized before insert', async () => {
         const bodyObj = {
-            session_id:  '123e4567-e89b-12d3-a456-426614174000',
+            session_id: '123e4567-e89b-12d3-a456-426614174000',
             action_name: 'test_action',
-            issue_type:  'bug',
-            success:     true,
+            issue_type: 'bug',
+            success: true,
             raw_context: { a: { b: { c: { d: { e: { f: 'deep' } } } } } },
         };
 
@@ -169,10 +170,10 @@ describe('Sanitization in log-outcome', () => {
 
     it('null bytes in error_message are stripped before insert', async () => {
         const bodyObj = {
-            session_id:    '123e4567-e89b-12d3-a456-426614174000',
-            action_name:   'test_action',
-            issue_type:    'bug',
-            success:       false,
+            session_id: '123e4567-e89b-12d3-a456-426614174000',
+            action_name: 'test_action',
+            issue_type: 'bug',
+            success: false,
             error_message: 'Payment\0 failed',
         };
 

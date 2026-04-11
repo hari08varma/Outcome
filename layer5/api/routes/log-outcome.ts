@@ -17,7 +17,11 @@ import {
     inferSemanticActionCluster,
     type SemanticActionClusterResult,
 } from '../lib/recommendation/semantic-action-cluster.js';
-import { inferOutcomeScore, fetchActionBaseline } from '../lib/outcome-score-inference.js';
+import {
+    inferOutcomeScore,
+    fetchActionBaseline,
+    invalidateActionBaselineCache,
+} from '../lib/outcome-score-inference.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -1115,16 +1119,17 @@ logOutcomeRouter.post('/', async (c) => {
         let mappingConfidence: number = (body as any)._mapping_confidence ?? 1.0;
 
         // 4. Resolve References
-        const actionId = await resolveActionId(c, body, customerId);
-        const contextId = await resolveContextId(body, customerId); // ← FIX: pass customerId
+        const [actionId, contextId, retryChain] = await Promise.all([
+            resolveActionId(c, body, customerId),
+            resolveContextId(body, customerId),
+            resolveRetryChainState(customerId, body),
+        ]);
 
         const semanticCluster = inferSemanticActionCluster({
             actionName: body.action_name ?? 'unknown_action',
             issueType: body.issue_type,
             taskName: (body as any)._resolved_task_name ?? null,
         });
-
-        const retryChain = await resolveRetryChainState(customerId, body);
 
         const crossEventStatus: 'none' | 'pending_signal' | 'confirmed' | 'conflict' | 'resolved' =
             body.feedback_signal === 'delayed'
@@ -1200,6 +1205,8 @@ logOutcomeRouter.post('/', async (c) => {
             inferenceConfidence,
             outcomeClass,
         );
+
+        invalidateActionBaselineCache(agentId, actionId);
 
         // 6. Post-Insert Synchronous Updates
         await saveIdempotencyRecord(body.idempotency_key, outcome.outcome_id, customerId);

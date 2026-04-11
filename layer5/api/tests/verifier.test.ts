@@ -27,6 +27,7 @@ vi.mock('../middleware/validate-action.js', () => ({
 vi.mock('../lib/outcome-score-inference.js', () => ({
     fetchActionBaseline: vi.fn().mockResolvedValue(null),
     inferOutcomeScore: vi.fn().mockReturnValue({ score: 0.5, confidence: 0.6, class: 'neutral' }),
+    invalidateActionBaselineCache: vi.fn(),
 }));
 
 vi.mock('../lib/outcome-orchestrator.js', () => ({
@@ -41,15 +42,15 @@ function makeChain(
     terminalValue: { data: any; error?: any } = { data: null, error: null }
 ): any {
     const chain: any = Object.assign({}, {
-        select:    vi.fn(),
-        eq:        vi.fn(),
-        upsert:    vi.fn(),
-        order:     vi.fn(),
-        limit:     vi.fn(),
-        gte:       vi.fn(),
-        single:    vi.fn().mockResolvedValue(terminalValue),
+        select: vi.fn(),
+        eq: vi.fn(),
+        upsert: vi.fn(),
+        order: vi.fn(),
+        limit: vi.fn(),
+        gte: vi.fn(),
+        single: vi.fn().mockResolvedValue(terminalValue),
         maybeSingle: vi.fn().mockResolvedValue(terminalValue),
-        insert:    vi.fn(),
+        insert: vi.fn(),
     });
     // All builder methods return the same chain
     chain.select.mockReturnValue(chain);
@@ -95,36 +96,36 @@ describe('Independent Verification Layer in log-outcome', () => {
 
         (supabase.from as any).mockImplementation((table: string) => {
             switch (table) {
-                case 'fact_outcomes':            return factOutcomesChain;
+                case 'fact_outcomes': return factOutcomesChain;
                 case 'degradation_alert_events': return degradationChain;
-                case 'dim_contexts':             return makeChain({ data: { context_id: 'ctx-1' }, error: null });
-                default:                         return makeChain({ data: null, error: null });
+                case 'dim_contexts': return makeChain({ data: { context_id: 'ctx-1' }, error: null });
+                default: return makeChain({ data: null, error: null });
             }
         });
     });
 
     const createMockReq = (bodyObj: any) => ({
         method: 'POST',
-        url:    'http://localhost/v1/log-outcome',
-        json:   async () => bodyObj,
+        url: 'http://localhost/v1/log-outcome',
+        json: async () => bodyObj,
     } as unknown as Request);
 
     const createContext = (req: Request, bodyObj: any) => ({
         req,
         get: (key: string) => {
-            if (key === 'agent_id')         return 'agent-1';
-            if (key === 'customer_id')      return 'customer-1';
-            if (key === 'parsed_body')      return bodyObj;
+            if (key === 'agent_id') return 'agent-1';
+            if (key === 'customer_id') return 'customer-1';
+            if (key === 'parsed_body') return bodyObj;
             if (key === 'validated_action') return { action_id: 'action-1', action_name: bodyObj.action_name, action_category: 'test' };
             return null;
         },
-        json:   (data: any, status: number) => ({ data, status }),
+        json: (data: any, status: number) => ({ data, status }),
         header: vi.fn(),
     } as any);
 
     async function runHandler(bodyObj: any) {
         const req = createMockReq(bodyObj);
-        const c   = createContext(req, bodyObj);
+        const c = createContext(req, bodyObj);
         const handler = logOutcomeRouter.routes.find(
             (r: any) => r.method === 'POST' && r.path === '/'
         )?.handler as Function;
@@ -139,10 +140,10 @@ describe('Independent Verification Layer in log-outcome', () => {
 
     it('http_status_code 500 overrides agent success=true', async () => {
         const bodyObj = {
-            session_id:      '123e4567-e89b-12d3-a456-426614174000',
-            action_name:     'test_action',
-            issue_type:      'bug',
-            success:         true,
+            session_id: '123e4567-e89b-12d3-a456-426614174000',
+            action_name: 'test_action',
+            issue_type: 'bug',
+            success: true,
             verifier_signal: { source: 'http_status_code', value: 500 },
         };
 
@@ -157,10 +158,10 @@ describe('Independent Verification Layer in log-outcome', () => {
 
     it('human_review false overrides agent success=true and fires alert', async () => {
         const bodyObj = {
-            session_id:      '123e4567-e89b-12d3-a456-426614174000',
-            action_name:     'test_action',
-            issue_type:      'bug',
-            success:         true,
+            session_id: '123e4567-e89b-12d3-a456-426614174000',
+            action_name: 'test_action',
+            issue_type: 'bug',
+            success: true,
             verifier_signal: { source: 'human_review', value: false },
         };
 
@@ -174,16 +175,16 @@ describe('Independent Verification Layer in log-outcome', () => {
         // degradation alert must be fired
         expect(degradationInsertMock).toHaveBeenCalledWith(expect.objectContaining({
             alert_type: 'success_hallucination',
-            severity:   'critical',
+            severity: 'critical',
         }));
     });
 
     it('no verifier preserves original agent signal', async () => {
         const bodyObj = {
-            session_id:   '123e4567-e89b-12d3-a456-426614174000',
-            action_name:  'test_action',
-            issue_type:   'bug',
-            success:      true,
+            session_id: '123e4567-e89b-12d3-a456-426614174000',
+            action_name: 'test_action',
+            issue_type: 'bug',
+            success: true,
             outcome_score: 0.9,
         };
 

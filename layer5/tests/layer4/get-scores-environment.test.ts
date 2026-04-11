@@ -6,7 +6,7 @@ vi.mock('../../api/lib/scoring.js', () => ({
 }));
 
 vi.mock('../../api/lib/decision-writer.js', () => ({
-    persistDecision: vi.fn(async () => 'dec-test-id'),
+    bufferDecision: vi.fn(() => 'dec-test-id'),
 }));
 
 vi.mock('../../api/lib/context-embed.js', () => ({
@@ -50,10 +50,13 @@ vi.mock('../../api/lib/supabase.js', () => ({
     },
 }));
 
-import { getScoresRouter } from '../../api/routes/get-scores.js';
+import {
+    __resetGetScoresRouteCachesForTests,
+    getScoresRouter,
+} from '../../api/routes/get-scores.js';
 import { supabase } from '../../api/lib/supabase.js';
 import { getScores } from '../../api/lib/scoring.js';
-import { persistDecision } from '../../api/lib/decision-writer.js';
+import { bufferDecision } from '../../api/lib/decision-writer.js';
 import { findClosestContext, generateEmbedding } from '../../api/lib/context-embed.js';
 
 function makeThenableQuery(result: any) {
@@ -118,6 +121,7 @@ describe('get-scores environment scoping', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        __resetGetScoresRouteCachesForTests();
         if (prevShadowFlag === undefined) delete process.env.LI_FEATURE_SIMULATION_SHADOW_V1;
         else process.env.LI_FEATURE_SIMULATION_SHADOW_V1 = prevShadowFlag;
 
@@ -187,7 +191,7 @@ describe('get-scores environment scoping', () => {
 
         expect(res.status).toBe(200);
         expect(json.decision_id).toBe('dec-test-id');
-        expect(vi.mocked(persistDecision)).toHaveBeenCalled();
+        expect(vi.mocked(bufferDecision)).toHaveBeenCalled();
     });
 
     it('defaults unknown environment to production and passes it to embedding fallback', async () => {

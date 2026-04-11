@@ -16,6 +16,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabase } from '../lib/supabase.js';
 import { invalidateCache } from '../lib/scoring.js';
+import { invalidateActionBaselineCache } from '../lib/outcome-score-inference.js';
 
 export const outcomeFeedbackRouter = new Hono();
 
@@ -55,7 +56,7 @@ outcomeFeedbackRouter.post('/', async (c) => {
     // ── Verify outcome belongs to this customer ──────────────
     const { data: outcome, error: lookupErr } = await supabase
         .from('fact_outcomes')
-        .select('outcome_id, customer_id, context_id, success, signal_pending, cross_event_status, action_id')
+        .select('outcome_id, customer_id, context_id, success, signal_pending, cross_event_status, action_id, agent_id')
         .eq('outcome_id', body.outcome_id)
         .maybeSingle();
 
@@ -123,6 +124,7 @@ outcomeFeedbackRouter.post('/', async (c) => {
 
     // ── Trigger score cache refresh (async, non-blocking) ────
     invalidateCache(customerId, outcome.context_id);
+    invalidateActionBaselineCache(outcome.agent_id ?? undefined, outcome.action_id ?? undefined);
 
     const { error: resolvePendingError } = await supabase
         .from('dim_pending_signal_registrations')

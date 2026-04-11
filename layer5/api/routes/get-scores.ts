@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import { getScores, ScoredAction } from '../lib/scoring.js';
 import { supabase } from '../lib/supabase.js';
-import { persistDecision } from '../lib/decision-writer.js';
+import { bufferDecision } from '../lib/decision-writer.js';
 import { generateEmbedding, findClosestContext, buildContextText } from '../lib/context-embed.js';
 import {
     getPolicyDecision,
@@ -24,9 +24,58 @@ import {
 import { computePropensities, RankedActionEntry } from '../lib/ips-engine.js';
 import { getRecommendationRolloutConfig } from '../lib/recommendation/rollout-flags.js';
 
+interface TimedCacheEntry<T> {
+    value: T;
+    expiresAt: number;
+}
+
+const agentTrustCache = new Map<string, TimedCacheEntry<AgentTrustScore>>();
+const customerConfigCache = new Map<string, TimedCacheEntry<CustomerPolicyConfig>>();
+
+const POLICY_META_CACHE_TTL_MS_DEFAULT = 60 * 1000;
+const POLICY_META_CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+
+function readPositiveInt(value: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(value ?? '', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return parsed;
+}
+
+function getPolicyMetaCacheTtlMs(): number {
+    return readPositiveInt(
+        process.env.POLICY_META_CACHE_TTL_MS,
+        POLICY_META_CACHE_TTL_MS_DEFAULT,
+    );
+}
+
+export function __resetGetScoresRouteCachesForTests(): void {
+    agentTrustCache.clear();
+    customerConfigCache.clear();
+}
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of agentTrustCache.entries()) {
+        if (entry.expiresAt <= now) {
+            agentTrustCache.delete(key);
+        }
+    }
+    for (const [key, entry] of customerConfigCache.entries()) {
+        if (entry.expiresAt <= now) {
+            customerConfigCache.delete(key);
+        }
+    }
+}, POLICY_META_CACHE_CLEANUP_INTERVAL_MS).unref();
+
 // ── Helper: fetch real agent trust from DB (falls back to DEFAULT_TRUST) ──
 async function getAgentTrust(agentId: string | undefined): Promise<AgentTrustScore> {
     if (!agentId) return DEFAULT_TRUST;
+
+    const cached = agentTrustCache.get(agentId);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+    }
+
     const { data, error } = await supabase
         .from('agent_trust_scores')
         .select('trust_score, trust_status, consecutive_failures')
@@ -42,7 +91,7 @@ async function getAgentTrust(agentId: string | undefined): Promise<AgentTrustSco
             ? (aliasedStatus as AgentTrustScore['trust_status'])
             : DEFAULT_TRUST.trust_status;
 
-    return {
+    const resolved: AgentTrustScore = {
         trust_score: typeof data.trust_score === 'number'
             ? data.trust_score
             : DEFAULT_TRUST.trust_score,
@@ -51,10 +100,22 @@ async function getAgentTrust(agentId: string | undefined): Promise<AgentTrustSco
             ? data.consecutive_failures
             : DEFAULT_TRUST.consecutive_failures,
     };
+
+    agentTrustCache.set(agentId, {
+        value: resolved,
+        expiresAt: Date.now() + getPolicyMetaCacheTtlMs(),
+    });
+
+    return resolved;
 }
 
 // ── Helper: fetch real customer config from DB (falls back to DEFAULT_POLICY_CONFIG) ──
 async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConfig> {
+    const cached = customerConfigCache.get(customerId);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+    }
+
     const { data, error } = await supabase
         .from('dim_customers')
         .select('config')
@@ -62,13 +123,21 @@ async function getCustomerConfig(customerId: string): Promise<CustomerPolicyConf
         .maybeSingle();
     if (error || !data?.config) return DEFAULT_POLICY_CONFIG;
     const cfg = data.config as Record<string, unknown>;
-    return {
+
+    const resolved: CustomerPolicyConfig = {
         risk_tolerance: (['conservative', 'balanced', 'aggressive'].includes(cfg.risk_tolerance as string)
             ? cfg.risk_tolerance : 'balanced') as CustomerPolicyConfig['risk_tolerance'],
         escalation_score: typeof cfg.escalation_score === 'number' ? cfg.escalation_score : 0.20,
         exploration_rate: typeof cfg.exploration_rate === 'number' ? cfg.exploration_rate : 0.05,
         min_confidence: typeof cfg.min_confidence === 'number' ? cfg.min_confidence : 0.30,
     };
+
+    customerConfigCache.set(customerId, {
+        value: resolved,
+        expiresAt: Date.now() + getPolicyMetaCacheTtlMs(),
+    });
+
+    return resolved;
 }
 
 const STALE_THRESHOLD_MINUTES = 10;
@@ -540,7 +609,7 @@ getScoresRouter.get('/', async (c) => {
         const episodePosition = episodeHistory ? episodeHistory.length : 0;
 
         if (agentId) {
-            decisionId = await persistDecision({
+            decisionId = bufferDecision({
                 agent_id: agentId,
                 context_id: resolvedContextId!,
                 context_hash: contextHash,

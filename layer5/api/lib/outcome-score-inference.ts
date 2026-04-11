@@ -26,6 +26,55 @@
 
 import { supabase } from './supabase.js';
 
+interface BaselineCacheEntry {
+    value: ActionBaseline | null;
+    expiresAt: number;
+}
+
+const actionBaselineCache = new Map<string, BaselineCacheEntry>();
+
+const BASELINE_CACHE_TTL_MS_DEFAULT = 2 * 60 * 1000;
+const BASELINE_CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const BASELINE_CACHE_MAX_ENTRIES = 5000;
+
+function readPositiveInt(value: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(value ?? '', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return parsed;
+}
+
+function getBaselineCacheTtlMs(): number {
+    return readPositiveInt(
+        process.env.ACTION_BASELINE_CACHE_TTL_MS,
+        BASELINE_CACHE_TTL_MS_DEFAULT,
+    );
+}
+
+function baselineCacheKey(agentId: string, actionId: string): string {
+    return `${agentId}:${actionId}`;
+}
+
+export function invalidateActionBaselineCache(agentId?: string, actionId?: string): void {
+    if (agentId && actionId) {
+        actionBaselineCache.delete(baselineCacheKey(agentId, actionId));
+        return;
+    }
+    actionBaselineCache.clear();
+}
+
+export function __resetActionBaselineCacheForTests(): void {
+    actionBaselineCache.clear();
+}
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of actionBaselineCache.entries()) {
+        if (entry.expiresAt <= now) {
+            actionBaselineCache.delete(key);
+        }
+    }
+}, BASELINE_CACHE_CLEANUP_INTERVAL_MS).unref();
+
 // ── Types ─────────────────────────────────────────────────────
 
 export interface InferenceSignals {
@@ -282,6 +331,13 @@ export async function fetchActionBaseline(
     agentId: string,
     actionId: string,
 ): Promise<ActionBaseline | null> {
+    const cacheKey = baselineCacheKey(agentId, actionId);
+    const now = Date.now();
+    const cached = actionBaselineCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+        return cached.value;
+    }
+
     const { data } = await supabase
         .from('fact_outcomes')
         .select('response_time_ms, success')
@@ -293,25 +349,49 @@ export async function fetchActionBaseline(
         .order('timestamp', { ascending: false })
         .limit(20);
 
-    if (!data || data.length < 5) return null;
+    if (!data || data.length < 5) {
+        actionBaselineCache.set(cacheKey, {
+            value: null,
+            expiresAt: now + getBaselineCacheTtlMs(),
+        });
+        return null;
+    }
 
     const latencies = data
         .map(r => r.response_time_ms)
         .filter((v): v is number => typeof v === 'number' && v > 0)
         .sort((a, b) => a - b);
 
-    if (latencies.length === 0) return null;
+    if (latencies.length === 0) {
+        actionBaselineCache.set(cacheKey, {
+            value: null,
+            expiresAt: now + getBaselineCacheTtlMs(),
+        });
+        return null;
+    }
 
     const p50 = latencies[Math.floor(latencies.length * 0.5)] ?? 0;
     const p75 = latencies[Math.floor(latencies.length * 0.75)] ?? p50;
     const successes = data.filter(r => r.success).length;
 
-    return {
+    const baseline: ActionBaseline = {
         p50ResponseMs: p50,
         p75ResponseMs: p75,
         recentSuccessRate: successes / data.length,
         sampleCount: data.length,
     };
+
+    actionBaselineCache.set(cacheKey, {
+        value: baseline,
+        expiresAt: now + getBaselineCacheTtlMs(),
+    });
+
+    if (actionBaselineCache.size > BASELINE_CACHE_MAX_ENTRIES) {
+        const oldestKey = actionBaselineCache.keys().next().value as string | undefined;
+        if (oldestKey) actionBaselineCache.delete(oldestKey);
+    }
+
+    return baseline;
 }
 
 // ── Public Entry Point ────────────────────────────────────────

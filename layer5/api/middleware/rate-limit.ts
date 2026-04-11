@@ -1,15 +1,11 @@
 import { Context, Next } from 'hono';
+import crypto from 'node:crypto';
 
-interface RateLimitWindow {
-    count: number;
-    windowStart: number;
-}
-
-const rateLimitWindows = new Map<string, RateLimitWindow>();
+import { supabase } from '../lib/supabase.js';
 
 const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_MAX_REQUESTS = 300;
-const CLEANUP_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_FAIL_OPEN = true;
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
     const parsed = Number.parseInt(value ?? '', 10);
@@ -25,23 +21,76 @@ function getMaxRequests(): number {
     return readPositiveInt(process.env.RATE_LIMIT_MAX, DEFAULT_MAX_REQUESTS);
 }
 
-setInterval(() => {
-    const now = Date.now();
-    const maxAgeMs = getWindowMs() * 2;
+function readBoolean(value: string | undefined, fallback: boolean): boolean {
+    if (!value) return fallback;
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return fallback;
+}
 
-    for (const [customerId, entry] of rateLimitWindows.entries()) {
-        if (now - entry.windowStart > maxAgeMs) {
-            rateLimitWindows.delete(customerId);
-        }
+function shouldFailOpen(): boolean {
+    return readBoolean(process.env.RATE_LIMIT_FAIL_OPEN, DEFAULT_FAIL_OPEN);
+}
+
+function normalizeTier(value: unknown): string {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'free' || normalized === 'pro' || normalized === 'enterprise') {
+        return normalized;
     }
-}, CLEANUP_INTERVAL_MS).unref();
+    return 'pro';
+}
+
+function buildBucketKey(customerId: string): string {
+    return crypto
+        .createHash('sha256')
+        .update(`customer:${customerId}`)
+        .digest('hex');
+}
+
+interface ConsumeRateLimitRow {
+    allowed?: boolean;
+    retry_after_ms?: number;
+}
+
+async function consumeRateLimitBucket(params: {
+    customerId: string;
+    customerTier: string;
+    windowMs: number;
+    maxRequests: number;
+}): Promise<{ allowed: boolean; retryAfterMs: number }> {
+    const { data, error } = await supabase.rpc('consume_rate_limit_bucket', {
+        p_bucket_key: buildBucketKey(params.customerId),
+        p_window_ms: params.windowMs,
+        p_max_requests: params.maxRequests,
+        p_tier: params.customerTier,
+    });
+
+    if (error) {
+        throw new Error(error.message);
+    }
+
+    const first = Array.isArray(data)
+        ? (data[0] as ConsumeRateLimitRow | undefined)
+        : (data as ConsumeRateLimitRow | null);
+
+    if (!first || typeof first.allowed !== 'boolean') {
+        throw new Error('Rate limiter RPC returned invalid payload');
+    }
+
+    return {
+        allowed: first.allowed,
+        retryAfterMs: Math.max(0, Number(first.retry_after_ms ?? 0)),
+    };
+}
 
 export function __resetRateLimitStateForTests(): void {
-    rateLimitWindows.clear();
+    // no-op: DB-backed limiter has no in-process bucket state.
 }
 
 export const rateLimitMiddleware = async (c: Context, next: Next): Promise<Response | void> => {
     const customerId = c.get('customer_id') as string | undefined;
+    const customerTier = normalizeTier(c.get('customer_tier') as string | undefined);
 
     // Auth middleware handles missing customer context.
     if (!customerId) {
@@ -49,23 +98,25 @@ export const rateLimitMiddleware = async (c: Context, next: Next): Promise<Respo
         return;
     }
 
-    const now = Date.now();
     const windowMs = getWindowMs();
     const maxRequests = getMaxRequests();
 
-    const current = rateLimitWindows.get(customerId);
-
-    if (!current || now - current.windowStart >= windowMs) {
-        rateLimitWindows.set(customerId, {
-            count: 1,
-            windowStart: now,
+    try {
+        const consumeResult = await consumeRateLimitBucket({
+            customerId,
+            customerTier,
+            windowMs,
+            maxRequests,
         });
-        await next();
-        return;
-    }
 
-    if (current.count >= maxRequests) {
-        const retryAfterMs = Math.max(0, windowMs - (now - current.windowStart));
+        if (consumeResult.allowed) {
+            await next();
+            return;
+        }
+
+        const retryAfterMs = consumeResult.retryAfterMs > 0
+            ? consumeResult.retryAfterMs
+            : windowMs;
         const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
 
         c.header('Retry-After', String(retryAfterSeconds));
@@ -77,10 +128,19 @@ export const rateLimitMiddleware = async (c: Context, next: Next): Promise<Respo
             },
             429
         );
+    } catch (err: any) {
+        if (shouldFailOpen()) {
+            console.warn('[rate-limit] backend unavailable, fail-open enabled:', err?.message ?? 'unknown error');
+            await next();
+            return;
+        }
+
+        return c.json(
+            {
+                error: 'RATE_LIMIT_UNAVAILABLE',
+                message: 'Rate limiter is temporarily unavailable.',
+            },
+            503,
+        );
     }
-
-    current.count += 1;
-    rateLimitWindows.set(customerId, current);
-
-    await next();
 };

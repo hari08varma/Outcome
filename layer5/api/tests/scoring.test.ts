@@ -182,6 +182,30 @@ describe('computeCompositeScore', () => {
 
         expect(recent).toBeGreaterThan(stale);
     });
+
+    it('latency factor changes composite score when context p75 baseline is provided', () => {
+        const baselineP75 = 200;
+        const fast = computeCompositeScore(
+            makeRow({ avg_response_ms: 100 }) as ActionScore,
+            null,
+            null,
+            baselineP75,
+        );
+        const slow = computeCompositeScore(
+            makeRow({ avg_response_ms: 300 }) as ActionScore,
+            null,
+            null,
+            baselineP75,
+        );
+
+        expect(fast).toBeGreaterThan(slow);
+
+        // For this setup, only latency differs:
+        // f_latency(100ms, 200ms p75)=0.75 and f_latency(300ms, 200ms p75)=0.25
+        // so expected score delta is W_LATENCY * (0.75 - 0.25) = 0.5 * W_LATENCY.
+        const expectedDelta = 0.5 * W_LATENCY;
+        expect(Math.abs((fast - slow) - expectedDelta)).toBeLessThan(0.001);
+    });
 });
 
 describe('score cache smoke tests', () => {
