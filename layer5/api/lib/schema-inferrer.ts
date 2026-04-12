@@ -71,6 +71,36 @@ export interface InferResult {
 
 const SAMPLE_SIZE = 5;
 const MAX_SAMPLE_JSON_LENGTH = 8000; // chars per sample batch (avoid token bloat)
+const LLM_TIMEOUT_MS = 10_000; // 10 second timeout on LLM calls
+
+// ── Schema Fingerprint Cache ──────────────────────────────────
+// Caches mappings by schema fingerprint so the same data shape
+// doesn't trigger redundant LLM calls across multiple uploads.
+const mappingCache = new Map<string, SchemaMapping>();
+const MAX_CACHE_SIZE = 100;
+
+/** Clears the schema mapping cache. Exported for testing. */
+export function clearMappingCache(): void {
+    mappingCache.clear();
+}
+
+function computeSchemaFingerprint(records: Record<string, unknown>[]): string {
+    // Use the key structure of the first 3 records as a fingerprint.
+    // The values don't matter — only the shape.
+    const samples = records.slice(0, 3);
+    const keyStructures = samples.map((r) => {
+        const keys = Object.keys(r).sort();
+        const nested = keys.map((k) => {
+            const v = r[k];
+            if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+                return `${k}:{${Object.keys(v as Record<string, unknown>).sort().join(',')}}`;
+            }
+            return k;
+        });
+        return nested.join('|');
+    });
+    return keyStructures.join('\n');
+}
 
 // ── LLM Prompt ────────────────────────────────────────────────
 
@@ -363,42 +393,50 @@ export function createDefaultLLMProvider(): LLMProvider | null {
         modelId: isGemini ? 'gemini-2.0-flash' : 'openai-compatible',
         async complete(systemPrompt: string, userPrompt: string): Promise<string> {
             if (isGemini) {
+                const controller1 = new AbortController();
+                const timeout1 = setTimeout(() => controller1.abort(), LLM_TIMEOUT_MS);
                 const res = await fetch(`${apiUrl}?key=${apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    signal: controller1.signal,
                     body: JSON.stringify({
                         system_instruction: { parts: [{ text: systemPrompt }] },
                         contents: [{ parts: [{ text: userPrompt }] }],
                         generationConfig: {
-                            temperature: 0.1,
+                            temperature: 0,
                             responseMimeType: 'application/json',
                             maxOutputTokens: 1024,
                         },
                     }),
                 });
+                clearTimeout(timeout1);
                 if (!res.ok) throw new Error(`Gemini API error: ${res.status} ${await res.text()}`);
                 const json = await res.json() as any;
                 return json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
             }
 
             // OpenAI-compatible fallback
+            const controller2 = new AbortController();
+            const timeout2 = setTimeout(() => controller2.abort(), LLM_TIMEOUT_MS);
             const res = await fetch(apiUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`,
                 },
+                signal: controller2.signal,
                 body: JSON.stringify({
                     model: process.env.SCHEMA_INFERRER_MODEL || 'gpt-4o-mini',
                     messages: [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: userPrompt },
                     ],
-                    temperature: 0.1,
+                    temperature: 0,
                     max_tokens: 1024,
                     response_format: { type: 'json_object' },
                 }),
             });
+            clearTimeout(timeout2);
             if (!res.ok) throw new Error(`LLM API error: ${res.status} ${await res.text()}`);
             const json = await res.json() as any;
             return json.choices?.[0]?.message?.content ?? '';
@@ -426,6 +464,22 @@ export async function inferSchemaAndMap(
 
     if (records.length === 0) {
         return { result: null, error: 'No records to infer' };
+    }
+
+    // 0. Check cache first — avoid redundant LLM calls for same schema shape
+    const fingerprint = computeSchemaFingerprint(records);
+    const cachedMapping = mappingCache.get(fingerprint);
+    if (cachedMapping) {
+        const mappedRecords = applyMapping(records, cachedMapping);
+        return {
+            result: {
+                mapping: cachedMapping,
+                mappedRecords,
+                sampleCount: 0,
+                llmModel: 'cache',
+            },
+            error: null,
+        };
     }
 
     // 1. Sample records (limit JSON size to avoid token bloat)
@@ -489,7 +543,15 @@ export async function inferSchemaAndMap(
         return { result: null, error: `Mapping spot-check failed: ${spotCheck.error}` };
     }
 
-    // 6. Apply mapping to ALL records (deterministic, no LLM)
+    // 6. Cache the mapping for future uploads with the same schema shape
+    if (mappingCache.size >= MAX_CACHE_SIZE) {
+        // Evict oldest entry
+        const firstKey = mappingCache.keys().next().value;
+        if (firstKey) mappingCache.delete(firstKey);
+    }
+    mappingCache.set(fingerprint, mapping);
+
+    // 7. Apply mapping to ALL records (deterministic, no LLM)
     const mappedRecords = applyMapping(records, mapping);
 
     return {

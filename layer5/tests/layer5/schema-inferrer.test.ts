@@ -18,9 +18,17 @@ import {
     applyMapping,
     standardFieldsPresent,
     inferSchemaAndMap,
+    clearMappingCache,
     type SchemaMapping,
     type LLMProvider,
 } from '../../api/lib/schema-inferrer.js';
+
+import { beforeEach } from 'vitest';
+
+// Clear cache before each test to prevent cross-contamination
+beforeEach(() => {
+    clearMappingCache();
+});
 
 // ══════════════════════════════════════════════════════════════
 // FIXTURES: Simulated agent trace data from various frameworks

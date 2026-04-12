@@ -544,8 +544,8 @@ function extractField<T = string>(
 export function extractSuccess(record: Record<string, unknown>): boolean | null {
     return extractField(record, SUCCESS_FIELDS, (v) => {
         const s = String(v).toLowerCase().trim();
-        if (['true', '1', 'yes', 'success', 'pass', 'passed', 'ok', 'resolved'].includes(s)) return true;
-        if (['false', '0', 'no', 'fail', 'failed', 'error', 'failure', 'partial'].includes(s)) return false;
+        if (['true', '1', 'yes', 'success', 'pass', 'passed', 'ok', 'resolved', 'completed', 'complete', 'done'].includes(s)) return true;
+        if (['false', '0', 'no', 'fail', 'failed', 'error', 'failure', 'partial', 'timeout', 'rejected', 'aborted'].includes(s)) return false;
         return null;
     });
 }
