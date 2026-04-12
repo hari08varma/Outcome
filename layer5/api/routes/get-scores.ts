@@ -672,6 +672,46 @@ getScoresRouter.get('/', async (c) => {
             already_resolved: false,  // caller can check via episode state
         } : null;
 
+        // ── Step Performance (Intelligence Layer 3.3) ────────
+        let stepPerformance: {
+            position: number;
+            historical_success_rate: number;
+            is_bottleneck: boolean;
+        } | null = null;
+
+        if (episodeHistory && topActionForResponse) {
+            try {
+                // Fetch this specific step's performance
+                const { data: stepData } = await supabase
+                    .from('mv_step_performance')
+                    .select('step_success_rate')
+                    .eq('customer_id', customerId)
+                    .eq('action_id', topActionForResponse.action_id)
+                    .eq('episode_position', episodePosition)
+                    .maybeSingle();
+
+                if (stepData) {
+                    // Fetch all step performances for this customer to find the episode average
+                    const { data: allSteps } = await supabase
+                        .from('mv_step_performance')
+                        .select('step_success_rate')
+                        .eq('customer_id', customerId);
+                    
+                    const epAvg = allSteps && allSteps.length > 0
+                        ? allSteps.reduce((acc: number, row: any) => acc + Number(row.step_success_rate ?? 0), 0) / allSteps.length
+                        : topActionForResponse.composite_score;
+
+                    stepPerformance = {
+                        position: episodePosition,
+                        historical_success_rate: Number(stepData.step_success_rate),
+                        is_bottleneck: Number(stepData.step_success_rate) < epAvg - 0.20,
+                    };
+                }
+            } catch (err: any) {
+                console.warn('[get-scores] Step performance lookup failed:', err.message);
+            }
+        }
+
         const topForGuardrail = topActionForResponse ?? ranked[0] ?? null;
         const topActionShadowWeight = Number((
             topForGuardrail
@@ -867,6 +907,7 @@ getScoresRouter.get('/', async (c) => {
             decision_id: decisionId,
             recommended_sequence: recommendedSequence,
             sequence_context: sequenceContext,
+            step_performance: stepPerformance,
             // ── Phase 1: Signal contract (always null until Phase 4) ──
             // Phase 4 will replace this with a real lookup when a Signal
             // Contract exists for the top_action. Phase 6's instrument.py
