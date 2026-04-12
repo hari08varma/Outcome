@@ -39,6 +39,7 @@ import { normalizeActionName } from '../middleware/validate-action.js';
 import { sanitizeString } from '../lib/sanitize.js';
 import { isLangChainTrace, flattenLangChainTrace } from '../lib/adapters/langchain-adapter.js';
 import { isLangGraphTrace, flattenLangGraphTrace } from '../lib/adapters/langgraph-adapter.js';
+import { inferSchemaAndMap, standardFieldsPresent } from '../lib/schema-inferrer.js';
 import type { NormalizedOutcomeRow } from '../lib/ingest-core.js';
 
 export const importRouter = new Hono();
@@ -1245,6 +1246,31 @@ importRouter.post('/', async (c) => {
 
     if (records.length === 0) {
         return c.json({ error: 'No records found in file.', code: 'EMPTY_FILE' }, 422);
+    }
+
+    // ── Auto-infer schema if standard fields not found ────
+    // Only runs when:
+    //   1. LangChain/LangGraph adapters didn't match
+    //   2. Standard parser produced records but they lack action_name/success fields
+    //   3. An LLM API key is configured (SCHEMA_INFERRER_API_KEY)
+    let inferredMapping: Record<string, string | null> | null = null;
+
+    if (adapterRows === null && !standardFieldsPresent(records)) {
+        const { result: inferResult, error: inferError } = await inferSchemaAndMap(records);
+
+        if (inferResult) {
+            // LLM successfully inferred the schema
+            records = inferResult.mappedRecords;
+            inferredMapping = inferResult.mapping as unknown as Record<string, string | null>;
+            console.log(
+                `[schema-inferrer] Auto-mapped ${records.length} records from "${inferResult.mapping.detected_framework}" format ` +
+                `(confidence: ${inferResult.mapping.confidence}, model: ${inferResult.llmModel})`
+            );
+        } else if (inferError) {
+            // LLM wasn't available or inference failed — log and continue with standard parse.
+            // The standard parse might still work if field names partially match.
+            console.warn(`[schema-inferrer] Inference skipped: ${inferError}`);
+        }
     }
 
     // Row count guard

@@ -70,6 +70,92 @@ function detectConfidenceDenominator(sql) {
     return null;
 }
 
+function getMigrationFilesByPrefix(files, prefix) {
+    return files.filter((file) => parsePrefix(file) === prefix);
+}
+
+function assertSqlContains(fileName, sql, checks, issues) {
+    for (const check of checks) {
+        if (!check.pattern.test(sql)) {
+            issues.push(
+                `${fileName} missing status-schema contract: ${check.description}`
+            );
+        }
+    }
+}
+
+function validateStatusSchemaMigrations(files, issues, warnings) {
+    const migrationSpecs = [
+        {
+            prefix: 110,
+            label: 'execution status + failure trace base schema',
+            checks: [
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+execution_status/i, description: 'execution_status column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+failure_reason_code/i, description: 'failure_reason_code column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+failure_stage/i, description: 'failure_stage column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+status_origin/i, description: 'status_origin column' },
+                { pattern: /chk_fact_outcomes_execution_status_enum/i, description: 'execution_status enum check constraint' },
+                { pattern: /chk_fact_outcomes_status_origin_enum/i, description: 'status_origin enum check constraint' },
+                { pattern: /chk_fact_outcomes_failure_fields_for_status/i, description: 'failure fields coherence check constraint' },
+                { pattern: /chk_fact_outcomes_success_status_coherence/i, description: 'success/status coherence check constraint' },
+            ],
+        },
+        {
+            prefix: 111,
+            label: 'feedback mutability + discrepancy source trace schema',
+            checks: [
+                { pattern: /create\s+or\s+replace\s+function\s+prevent_outcome_update/i, description: 'mutable-fields trigger function update' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+source_execution_status/i, description: 'source_execution_status column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+source_status_origin/i, description: 'source_status_origin column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+source_failure_reason_code/i, description: 'source_failure_reason_code column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+source_failure_stage/i, description: 'source_failure_stage column' },
+                { pattern: /chk_discrepancy_source_execution_status_enum/i, description: 'discrepancy source execution-status constraint' },
+            ],
+        },
+        {
+            prefix: 112,
+            label: 'status vocab hardening + staged score/status coherence',
+            checks: [
+                { pattern: /chk_fact_outcomes_failure_reason_code_vocab/i, description: 'failure_reason_code bounded-vocab constraint' },
+                { pattern: /chk_fact_outcomes_failure_stage_vocab/i, description: 'failure_stage bounded-vocab constraint' },
+                { pattern: /chk_fact_outcomes_status_score_raw_coherence/i, description: 'status/outcome_score_raw coherence constraint' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+reason_code/i, description: 'discrepancy reason_code column' },
+                { pattern: /add\s+column\s+if\s+not\s+exists\s+trace_payload/i, description: 'discrepancy trace_payload column' },
+            ],
+        },
+        {
+            prefix: 113,
+            label: 'final validation of status/outcome_score_raw coherence',
+            checks: [
+                { pattern: /chk_fact_outcomes_status_score_raw_coherence/i, description: 'status/outcome_score_raw coherence constraint reference' },
+                { pattern: /validate\s+constraint\s+chk_fact_outcomes_status_score_raw_coherence/i, description: 'constraint validation step' },
+            ],
+        },
+    ];
+
+    for (const spec of migrationSpecs) {
+        const matchingFiles = getMigrationFilesByPrefix(files, spec.prefix);
+
+        if (matchingFiles.length === 0) {
+            issues.push(
+                `Missing required migration prefix ${String(spec.prefix).padStart(3, '0')} for ${spec.label}.`
+            );
+            continue;
+        }
+
+        if (matchingFiles.length > 1) {
+            warnings.push(
+                `Multiple migration files found for prefix ${String(spec.prefix).padStart(3, '0')}: ${matchingFiles.join(', ')}`
+            );
+        }
+
+        for (const fileName of matchingFiles) {
+            const sql = readSql(fileName);
+            assertSqlContains(fileName, sql, spec.checks, issues);
+        }
+    }
+}
+
 function main() {
     if (!fs.existsSync(migrationsDir)) {
         console.error(`[migration-governance] Missing directory: ${migrationsDir}`);
@@ -110,6 +196,8 @@ function main() {
             );
         }
     }
+
+    validateStatusSchemaMigrations(files, issues, warnings);
 
     console.log('[migration-governance] Scan complete');
     console.log(`[migration-governance] Total SQL migrations: ${files.length}`);
