@@ -4,6 +4,8 @@ import { computeOutcomeEffectiveWeightForScore } from './outcome-weighting.js';
 export const ZERO_UUID_AGENT_ID = '00000000-0000-0000-0000-000000000000';
 const TASK_PERFORMANCE_MV = 'mv_task_action_performance_180d';
 const LEGACY_TASK_PERFORMANCE_MV = 'mv_task_action_performance';
+const RECOMMENDATION_WINDOW_DAYS = 180;
+const SUPABASE_PAGE_SIZE = 1000;
 
 function clampWeight(value: number, fallback: number): number {
     if (!Number.isFinite(value)) return fallback;
@@ -585,21 +587,37 @@ export async function fetchAvailableTasks(
     customerId: string,
     scopedAgentId: string | null,
 ): Promise<{ tasks: string[]; source: 'mv' | 'fact_fallback' }> {
-    let mvQuery = supabase
-        .from(TASK_PERFORMANCE_MV)
-        .select('task_name')
-        .eq('customer_id', customerId)
-        .neq('agent_id', ZERO_UUID_AGENT_ID);
+    const mvRows: Array<{ task_name: unknown }> = [];
+    let mvError: QueryError | null = null;
 
-    if (scopedAgentId) {
-        mvQuery = mvQuery.eq('agent_id', scopedAgentId);
+    for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+        let mvQuery = supabase
+            .from(TASK_PERFORMANCE_MV)
+            .select('task_name')
+            .eq('customer_id', customerId)
+            .neq('agent_id', ZERO_UUID_AGENT_ID)
+            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+
+        if (scopedAgentId) {
+            mvQuery = mvQuery.eq('agent_id', scopedAgentId);
+        }
+
+        const { data, error } = await mvQuery;
+        if (error) {
+            mvError = error as QueryError;
+            break;
+        }
+
+        const page = (data ?? []) as Array<{ task_name: unknown }>;
+        mvRows.push(...page);
+        if (page.length < SUPABASE_PAGE_SIZE) {
+            break;
+        }
     }
-
-    const { data: mvData, error: mvError } = await mvQuery;
 
     if (!mvError) {
         const tasks = [
-            ...new Set((mvData ?? [])
+            ...new Set(mvRows
                 .map((row: any) => normalizeTaskName(row.task_name))
                 .filter((task): task is string => task !== null)),
         ].sort();
@@ -607,32 +625,47 @@ export async function fetchAvailableTasks(
         return { tasks, source: 'mv' };
     }
 
-    const reason = isMissingMvError(mvError as QueryError)
+    const reason = isMissingMvError(mvError)
         ? 'materialized view is missing'
         : mvError.message;
     console.warn('[task-performance] task list fallback activated:', reason);
 
-    let fallbackQuery = supabase
-        .from('fact_outcomes')
-        .select('task_name')
-        .eq('customer_id', customerId)
-        .eq('is_deleted', false)
-        .eq('is_synthetic', false)
-        .not('task_name', 'is', null)
-        .neq('agent_id', ZERO_UUID_AGENT_ID);
+    const fallbackRows: Array<{ task_name: unknown }> = [];
+    const windowStart = new Date(
+        Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
 
-    if (scopedAgentId) {
-        fallbackQuery = fallbackQuery.eq('agent_id', scopedAgentId);
-    }
+    for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+        let fallbackQuery = supabase
+            .from('fact_outcomes')
+            .select('task_name')
+            .eq('customer_id', customerId)
+            .eq('is_deleted', false)
+            .eq('is_synthetic', false)
+            .not('task_name', 'is', null)
+            .neq('agent_id', ZERO_UUID_AGENT_ID)
+            .gte('timestamp', windowStart)
+            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
 
-    const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+        if (scopedAgentId) {
+            fallbackQuery = fallbackQuery.eq('agent_id', scopedAgentId);
+        }
 
-    if (fallbackError) {
-        throw new Error(`[task-performance] task list fallback failed: ${fallbackError.message}`);
+        const { data, error } = await fallbackQuery;
+
+        if (error) {
+            throw new Error(`[task-performance] task list fallback failed: ${error.message}`);
+        }
+
+        const page = (data ?? []) as Array<{ task_name: unknown }>;
+        fallbackRows.push(...page);
+        if (page.length < SUPABASE_PAGE_SIZE) {
+            break;
+        }
     }
 
     const tasks = [
-        ...new Set((fallbackData ?? [])
+        ...new Set(fallbackRows
             .map((row: any) => normalizeTaskName(row.task_name))
             .filter((task): task is string => task !== null)),
     ].sort();

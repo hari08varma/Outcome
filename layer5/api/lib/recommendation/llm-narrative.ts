@@ -60,6 +60,14 @@ export interface NarrativeOutput {
     message: string;
     /** One-line plain-English headline for the card header */
     headline: string;
+    /** 2-3 sentence narrative expanding on why one action is better */
+    narrative: string;
+    /** 1-3 concrete next steps the developer should take */
+    next_steps: string[];
+    /** 0-2 risk factors that could change this recommendation */
+    risk_factors: string[];
+    /** Overall trend direction based on available signal */
+    trend_direction: 'improving' | 'stable' | 'degrading' | 'unknown';
 }
 
 function buildPrompt(ctx: NarrativeContext): string {
@@ -93,18 +101,23 @@ function buildPrompt(ctx: NarrativeContext): string {
         `Return a JSON object with exactly these keys:`,
         `- "headline": 10-15 words max. The single most important thing a developer should know right now. No hedging.`,
         `- "summary": 1-2 sentences. Why is one action better, or why can't we say yet? Be specific.`,
+        `- "narrative": 2-3 sentences. Expand on the analysis: what does the performance gap mean in practice, what is the trajectory, and is the signal mature enough to act on?`,
         `- "evidence": 1 sentence. Cite the numbers: rates, sample counts, gap size.`,
         `- "confidence_note": 1 sentence. Explain what drives the confidence level and what would change it.`,
         `- "message": 1 sentence imperative. Tell the developer exactly what to do next.`,
+        `- "next_steps": array of 1-3 short strings. Concrete actions the developer should take now (e.g. "Promote escalate_to_human as the default action", "Continue logging outcomes for auto_retry").`,
+        `- "risk_factors": array of 0-2 short strings. What could invalidate or reverse this recommendation (e.g. "Success rate for escalate_to_human has declined 6pp this cycle", "Data freshness is low"). Empty array if none.`,
+        `- "trend_direction": one of "improving", "stable", "degrading", "unknown". Based on signal quality, confidence trajectory, and whether the recommendation is strengthening or weakening.`,
         ``,
         `Rules:`,
         `- Use the actual action names (e.g. "${ctx.best_action ?? 'action_name'}")`,
         `- Use percentages (e.g. "73.2%") not decimals`,
-        `- If state is no_data or collect_more_data: focus on what to log, not performance`,
-        `- If silent_failure_warning: mention that success signals may be unreliable`,
-        `- If reliability is anomalous or watch: note the uncertainty`,
-        `- If data is stale: mention that evidence is old`,
+        `- If state is no_data or collect_more_data: focus on what to log, not performance; next_steps should be about logging`,
+        `- If silent_failure_warning: mention that success signals may be unreliable in narrative and add it as a risk_factor`,
+        `- If reliability is anomalous or watch: note the uncertainty in narrative`,
+        `- If data is stale: mention that evidence is old in narrative and add it as a risk_factor`,
         `- If scope fallback is active: note recommendations come from the broader agent pool`,
+        `- trend_direction should be "improving" when confidence is high and data is fresh, "degrading" when reliability is anomalous or stale, "stable" otherwise`,
         `- Do NOT say "Layerinfinite recommends" — write as the system speaking directly`,
         `- Do NOT use em-dashes`,
         `- Return ONLY the JSON object, no markdown fences`,
@@ -159,7 +172,7 @@ async function callOpenAI(prompt: string): Promise<NarrativeOutput | null> {
             body: JSON.stringify({
                 model: MODEL,
                 temperature: 0,
-                max_tokens: 400,
+                max_tokens: 700,
                 messages: [
                     { role: 'user', content: prompt },
                 ],
@@ -183,16 +196,33 @@ async function callOpenAI(prompt: string): Promise<NarrativeOutput | null> {
 
         const parsed = JSON.parse(cleaned) as Partial<NarrativeOutput>;
 
-        // Validate all required keys are non-empty strings
-        const required: (keyof NarrativeOutput)[] = ['headline', 'summary', 'evidence', 'confidence_note', 'message'];
-        for (const key of required) {
-            if (typeof parsed[key] !== 'string' || parsed[key]!.trim() === '') {
+        // Validate required string keys are non-empty
+        const requiredStrings: (keyof NarrativeOutput)[] = ['headline', 'summary', 'narrative', 'evidence', 'confidence_note', 'message'];
+        for (const key of requiredStrings) {
+            if (typeof parsed[key] !== 'string' || (parsed[key] as string).trim() === '') {
                 console.warn(`[llm-narrative] missing key "${key}" in LLM response`);
                 return null;
             }
         }
 
-        return parsed as NarrativeOutput;
+        // Coerce array fields with safe fallbacks
+        const next_steps = Array.isArray(parsed.next_steps)
+            ? parsed.next_steps.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+            : [];
+        const risk_factors = Array.isArray(parsed.risk_factors)
+            ? parsed.risk_factors.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+            : [];
+        const validTrendDirections = ['improving', 'stable', 'degrading', 'unknown'] as const;
+        const trend_direction = validTrendDirections.includes(parsed.trend_direction as any)
+            ? (parsed.trend_direction as NarrativeOutput['trend_direction'])
+            : 'unknown';
+
+        return {
+            ...(parsed as Pick<NarrativeOutput, 'headline' | 'summary' | 'narrative' | 'evidence' | 'confidence_note' | 'message'>),
+            next_steps,
+            risk_factors,
+            trend_direction,
+        };
     } catch (err: any) {
         if (err?.name !== 'AbortError') {
             console.warn('[llm-narrative] call failed:', err.message);

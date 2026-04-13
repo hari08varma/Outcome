@@ -197,3 +197,39 @@ Residuals to track:
 
 1. After monitoring clean writes, evaluate validating `chk_fact_outcomes_status_score_raw_coherence`.
 2. Remove legacy discrepancy field dependency from downstream consumers once normalized fields are fully adopted.
+
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  ZONE 1: Command Bar (top)                                         │
+│  Agent selector │ Time range │ Scope toggle │ Refresh │ Export      │
+├────────────────────────┬────────────────────────────────────────────┤
+│  ZONE 2: Portfolio     │  ZONE 3: Deep Dive (main panel)           │
+│  Overview (left 30%)   │  (right 70%)                              │
+│                        │                                           │
+│  ┌──────────────────┐  │  ┌──────────────────────────────────────┐  │
+│  │ Agent Health Card │  │  │ A. AI Insight Panel (LLM-powered)   │  │
+│  │ Trust · Mode ·    │  │  │    Headline · Narrative · Next Step │  │
+│  │ Total Outcomes    │  │  └──────────────────────────────────────┘  │
+│  └──────────────────┘  │  ┌──────────────────────────────────────┐  │
+│                        │  │ B. Action Leaderboard (sortable)     │  │
+│  ┌──────────────────┐  │  │    Resolution% · Samples · Trend ·  │  │
+│  │ Task Heatmap     │  │  │    Confidence · ML Score · Cluster   │  │
+│  │ Grid of tasks    │  │  └──────────────────────────────────────┘  │
+│  │ colored by state │  │  ┌──────────┬───────────────────────────┐  │
+│  │ (no_data/early/  │  │  │ C. Perf  │ D. Evidence & Confidence │  │
+│  │  stable)         │  │  │  Delta   │    Progress meter +       │  │
+│  │ Click to select  │  │  │  Card    │    Confidence breakdown   │  │
+│  └──────────────────┘  │  └──────────┴───────────────────────────┘  │
+│                        │  ┌──────────────────────────────────────┐  │
+│  ┌──────────────────┐  │  │ E. Signal Quality Dashboard         │  │
+│  │ Portfolio KPIs   │  │  │    Data freshness · Cohort health ·  │  │
+│  │ Avg confidence   │  │  │    Scope · Source mix · Registry     │  │
+│  │ Tasks at stable  │  │  └──────────────────────────────────────┘  │
+│  │ Top improver     │  │  ┌──────────────────────────────────────┐  │
+│  │ Needs attention  │  │  │ F. Cohort Cycle Timeline             │  │
+│  └──────────────────┘  │  │    Historical cycles + rotation      │  │
+│                        │  │    reasons                            │  │
+├────────────────────────┴────────────────────────────────────────────┤
+│  ZONE 4: Footer bar — generated_at · scope_label · version         │
+└─────────────────────────────────────────────────────────────────────┘

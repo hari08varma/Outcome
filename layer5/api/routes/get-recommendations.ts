@@ -3,6 +3,9 @@ import {
     MIN_SAMPLES_STABLE,
     type RecommendationResult,
     getRecommendation,
+    MIN_SAMPLES,
+    MIN_SAMPLES_HIGH_CONFIDENCE,
+    RECOMMENDATION_WINDOW_DAYS,
 } from '../lib/recommendation/engine.js';
 import { buildActionableOutput } from '../lib/recommendation/reason.js';
 import {
@@ -13,6 +16,7 @@ import {
 } from '../lib/recommendation/scope-transition.js';
 import { buildRecommendationDataFreshness } from '../lib/recommendation/data-freshness.js';
 import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
+import { ZERO_UUID_AGENT_ID } from '../lib/recommendation/task-performance.js';
 import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
 import { computeCohortReliability } from '../lib/recommendation/cohort-reliability.js';
 import { supabase } from '../lib/supabase.js';
@@ -128,9 +132,145 @@ function buildTraceability(params: {
     return baseTraceability;
 }
 
+type QueryError = {
+    message: string;
+    code?: string | null;
+};
+
+const TASK_PERFORMANCE_MV = 'mv_task_action_performance_180d';
+const SUPABASE_PAGE_SIZE = 1000;
+
+function isMissingRecommendationMvError(error: QueryError): boolean {
+    const msg = (error.message ?? '').toLowerCase();
+    return error.code === '42P01'
+        || (msg.includes(TASK_PERFORMANCE_MV) && msg.includes('relation'));
+}
+
+function addOutcomeCount(
+    agentTaskTotals: Map<string, Map<string, number>>,
+    agentGrandTotals: Map<string, number>,
+    agent_id: string,
+    task_name: string,
+    increment: number,
+): void {
+    if (!agent_id || !task_name || !Number.isFinite(increment) || increment <= 0) {
+        return;
+    }
+
+    let taskMap = agentTaskTotals.get(agent_id);
+    if (!taskMap) {
+        taskMap = new Map<string, number>();
+        agentTaskTotals.set(agent_id, taskMap);
+    }
+
+    taskMap.set(task_name, (taskMap.get(task_name) ?? 0) + increment);
+    agentGrandTotals.set(agent_id, (agentGrandTotals.get(agent_id) ?? 0) + increment);
+}
+
+async function fetchAgentTaskOutcomeTotals(params: {
+    customerId: string;
+    agentId: string | null;
+}): Promise<{
+    agentTaskTotals: Map<string, Map<string, number>>;
+    agentGrandTotals: Map<string, number>;
+    source: 'mv' | 'fact_fallback';
+}> {
+    const { customerId, agentId } = params;
+    const agentTaskTotals = new Map<string, Map<string, number>>();
+    const agentGrandTotals = new Map<string, number>();
+
+    try {
+        for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+            let mvQuery = supabase
+                .from(TASK_PERFORMANCE_MV)
+                .select('agent_id, task_name, total_count')
+                .eq('customer_id', customerId)
+                .neq('agent_id', ZERO_UUID_AGENT_ID)
+                .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+
+            if (agentId) {
+                mvQuery = mvQuery.eq('agent_id', agentId);
+            }
+
+            const { data, error } = await mvQuery;
+            if (error) {
+                throw error as QueryError;
+            }
+
+            const page = (data ?? []) as Array<{
+                agent_id: string | null;
+                task_name: string | null;
+                total_count: number | null;
+            }>;
+
+            for (const row of page) {
+                addOutcomeCount(
+                    agentTaskTotals,
+                    agentGrandTotals,
+                    row.agent_id ?? '',
+                    row.task_name ?? '',
+                    Math.max(0, Number(row.total_count ?? 0)),
+                );
+            }
+
+            if (page.length < SUPABASE_PAGE_SIZE) {
+                return { agentTaskTotals, agentGrandTotals, source: 'mv' };
+            }
+        }
+    } catch (error: any) {
+        const queryError = error as QueryError;
+        const reason = isMissingRecommendationMvError(queryError)
+            ? 'materialized view missing'
+            : queryError.message;
+        console.warn('[agent-summary] mv aggregation unavailable, using facts fallback:', reason);
+    }
+
+    const windowStart = new Date(
+        Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+        let factsQuery = supabase
+            .from('fact_outcomes')
+            .select('agent_id, task_name')
+            .eq('customer_id', customerId)
+            .eq('is_synthetic', false)
+            .eq('is_deleted', false)
+            .neq('agent_id', ZERO_UUID_AGENT_ID)
+            .gte('timestamp', windowStart)
+            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+
+        if (agentId) {
+            factsQuery = factsQuery.eq('agent_id', agentId);
+        }
+
+        const { data, error } = await factsQuery;
+        if (error) {
+            throw new Error(`[agent-summary] fallback aggregation failed: ${error.message}`);
+        }
+
+        const page = (data ?? []) as Array<{ agent_id: string | null; task_name: string | null }>;
+        for (const row of page) {
+            addOutcomeCount(
+                agentTaskTotals,
+                agentGrandTotals,
+                row.agent_id ?? '',
+                row.task_name ?? '',
+                1,
+            );
+        }
+
+        if (page.length < SUPABASE_PAGE_SIZE) {
+            break;
+        }
+    }
+
+    return { agentTaskTotals, agentGrandTotals, source: 'fact_fallback' };
+}
+
 // GET /agent-summary — per-agent stats + per-task outcome counts
-// Task counts come from fact_outcomes (agent-scoped, reliable, no MV staleness risk).
-// Returns tasks only for the requested agent; total_outcomes is the raw fact count.
+// Uses the same 180-day evidence window as recommendation scoring.
+// Returns tasks only for the requested agent; totals are scope-aligned and paginated.
 getRecommendationsRouter.get('/agent-summary', async (c) => {
     const customerId = c.get('customer_id') as string | undefined;
     if (!customerId) {
@@ -146,17 +286,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
             .eq('customer_id', customerId);
         if (agentId) agentQuery = agentQuery.eq('agent_id', agentId);
 
-        // 2. Outcomes count from fact_outcomes — always agent-scoped when agentId provided
-        let outcomesQuery = supabase
-            .from('fact_outcomes')
-            .select('agent_id, task_name')
-            .eq('customer_id', customerId)
-            .eq('is_synthetic', false)
-            .eq('is_deleted', false)
-            .neq('agent_id', '00000000-0000-0000-0000-000000000000');
-        if (agentId) outcomesQuery = outcomesQuery.eq('agent_id', agentId);
-
-        const [agentResult, trustResult, outcomesResult] = await Promise.all([
+        const [agentResult, trustResult, outcomeTotals] = await Promise.all([
             agentQuery,
             agentId
                 ? supabase
@@ -165,7 +295,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                     .eq('agent_id', agentId)
                     .single()
                 : Promise.resolve({ data: null, error: null }),
-            outcomesQuery,
+            fetchAgentTaskOutcomeTotals({ customerId, agentId }),
         ]);
 
         const agentMeta = agentResult.data ?? [];
@@ -173,19 +303,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
             agent_id: string; trust_score: number; trust_status: string;
         } | null;
 
-        // Aggregate: count fact_outcomes per agent+task
-        type TaskTotals = Map<string, number>; // task_name -> total
-        const agentTaskTotals = new Map<string, TaskTotals>();
-        const agentGrandTotals = new Map<string, number>();
-
-        for (const row of (outcomesResult.data ?? []) as Array<{ agent_id: string; task_name: string }>) {
-            if (!row.agent_id || !row.task_name) continue;
-
-            let taskMap = agentTaskTotals.get(row.agent_id);
-            if (!taskMap) { taskMap = new Map(); agentTaskTotals.set(row.agent_id, taskMap); }
-            taskMap.set(row.task_name, (taskMap.get(row.task_name) ?? 0) + 1);
-            agentGrandTotals.set(row.agent_id, (agentGrandTotals.get(row.agent_id) ?? 0) + 1);
-        }
+        const { agentTaskTotals, agentGrandTotals, source } = outcomeTotals;
 
         if (agentId) {
             const meta = (agentMeta as any[]).find((a) => a.agent_id === agentId);
@@ -205,6 +323,8 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                 trust_status: trustMeta?.trust_status ?? null,
                 total_outcomes: grandTotal,
                 tasks,
+                window_days: RECOMMENDATION_WINDOW_DAYS,
+                counts_source: source,
             }, 200);
         } else {
             const agents = (agentMeta as any[]).map((a) => ({
@@ -215,7 +335,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                 total_outcomes: agentGrandTotals.get(a.agent_id) ?? 0,
             })).sort((a, b) => b.total_outcomes - a.total_outcomes);
 
-            return c.json({ agents }, 200);
+            return c.json({ agents, window_days: RECOMMENDATION_WINDOW_DAYS, counts_source: source }, 200);
         }
     } catch (err: any) {
         console.error('[agent-summary] error:', err.message);
@@ -417,10 +537,53 @@ getRecommendationsRouter.get('/', async (c) => {
                 },
                 llm_narrative: {
                     headline: narrative.headline,
+                    narrative: narrative.narrative,
+                    next_steps: narrative.next_steps,
+                    risk_factors: narrative.risk_factors,
+                    trend_direction: narrative.trend_direction,
                     generated: true,
+                    model: process.env.RECOMMENDATION_NARRATIVE_MODEL ?? 'gpt-4o-mini',
                 },
             }
-            : { llm_narrative: { headline: null, generated: false } };
+            : {
+                llm_narrative: {
+                    headline: null,
+                    narrative: null,
+                    next_steps: null,
+                    risk_factors: null,
+                    trend_direction: null,
+                    generated: false,
+                    model: null,
+                },
+            };
+
+        // Build cohort history from active + previous cycle for timeline display
+        const cohortHistory = [
+            cohortCycle.active_cycle
+                ? {
+                    cycle_id: cohortCycle.active_cycle.cycle_id,
+                    opened_at: cohortCycle.active_cycle.opened_at,
+                    closed_at: cohortCycle.active_cycle.closed_at,
+                    close_reason: cohortCycle.active_cycle.close_reason,
+                    elapsed_days: cohortCycle.active_cycle.elapsed_days,
+                    outcomes_in_cycle: cohortCycle.active_cycle.outcomes_in_cycle,
+                    confidence_source: cohortCycle.active_cycle.opened_confidence_source,
+                    is_active: true,
+                }
+                : null,
+            cohortCycle.previous_cycle
+                ? {
+                    cycle_id: cohortCycle.previous_cycle.cycle_id,
+                    opened_at: cohortCycle.previous_cycle.opened_at,
+                    closed_at: cohortCycle.previous_cycle.closed_at,
+                    close_reason: cohortCycle.previous_cycle.close_reason,
+                    elapsed_days: cohortCycle.previous_cycle.elapsed_days,
+                    outcomes_in_cycle: cohortCycle.previous_cycle.outcomes_in_cycle,
+                    confidence_source: cohortCycle.previous_cycle.opened_confidence_source,
+                    is_active: false,
+                }
+                : null,
+        ].filter(Boolean);
 
         return c.json(
             {
@@ -446,6 +609,7 @@ getRecommendationsRouter.get('/', async (c) => {
                 },
                 data_freshness: dataFreshness,
                 cohort_cycle: cohortCycle,
+                cohort_history: cohortHistory,
                 cohort_reliability: cohortReliability,
                 customer_id: customerId,
                 noise_gate: result._noise_gate ?? null,
