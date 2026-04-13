@@ -139,12 +139,25 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
     const agentId = c.req.query('agent_id')?.trim() || null;
 
     try {
-        // 1. Fetch agent metadata
-        const agentQuery = supabase
+        // 1. Fetch agent metadata — scoped to agentId when provided
+        let agentQuery = supabase
             .from('dim_agents')
             .select('agent_id, agent_name, agent_type, llm_model')
             .eq('customer_id', customerId);
-        if (agentId) agentQuery.eq('agent_id', agentId);
+        if (agentId) {
+            agentQuery = agentQuery.eq('agent_id', agentId);
+        }
+
+        // 2. Outcomes query — scope to agent when provided to avoid full table scans
+        let outcomesQuery = supabase
+            .from('fact_outcomes')
+            .select('agent_id, task_name, ingestion_source')
+            .eq('customer_id', customerId)
+            .eq('is_synthetic', false)
+            .eq('is_deleted', false);
+        if (agentId) {
+            outcomesQuery = outcomesQuery.eq('agent_id', agentId);
+        }
 
         const [agentResult, trustResult, outcomesResult] = await Promise.all([
             agentQuery,
@@ -155,14 +168,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                     .eq('agent_id', agentId)
                     .single()
                 : Promise.resolve({ data: null, error: null }),
-            // 2. Group outcomes by agent_id, task_name, ingestion_source
-            supabase
-                .from('fact_outcomes')
-                .select('agent_id, task_name, ingestion_source')
-                .eq('customer_id', customerId)
-                .eq('is_synthetic', false)
-                .eq('is_deleted', false)
-                .then(({ data }) => data ?? []),
+            outcomesQuery.then(({ data }) => data ?? []),
         ]);
 
         const agentMeta = agentResult.data ?? [];

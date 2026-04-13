@@ -915,41 +915,47 @@ export default function RecommendationsPage(): React.ReactElement {
                     const json = await res.json() as { agents: AgentSummary[] };
                     const list = json.agents ?? [];
                     setAgents(list);
-
-                    // Auto-select first agent
+                    // Auto-select first agent if none selected
                     setSelectedAgentId((cur) => {
                         if (cur && list.some((a) => a.agent_id === cur)) return cur;
                         return list[0]?.agent_id ?? null;
                     });
+                    return; // success — skip supabase fallback
                 }
+                console.warn('[recommendations] agent-summary list returned', res.status);
             } catch (e: any) {
                 if (e?.name === 'AbortError') return;
-                // Fallback: load from supabase directly
-                try {
-                    const { data } = await supabase
-                        .from('dim_agents')
-                        .select('agent_id, agent_name, agent_type, llm_model')
-                        .order('agent_name');
-                    const fallback: AgentSummary[] = (data ?? []).map((a) => ({
-                        agent_id: a.agent_id,
-                        agent_name: a.agent_name,
-                        agent_type: a.agent_type ?? null,
-                        llm_model: a.llm_model ?? null,
-                        trust_score: null,
-                        trust_status: null,
-                        total_outcomes: 0,
-                        sdk_outcomes: 0,
-                        imported_outcomes: 0,
-                        tasks: [],
-                    }));
-                    setAgents(fallback);
-                    setSelectedAgentId((cur) => {
-                        if (cur && fallback.some((a) => a.agent_id === cur)) return cur;
-                        return fallback[0]?.agent_id ?? null;
-                    });
-                } catch {}
+                console.warn('[recommendations] agent-summary list fetch failed:', e.message);
             } finally {
+                // Always clear loading — whether success or falling through to supabase
                 setAgentsLoading(false);
+            }
+
+            // Fallback: load agent names directly from supabase (no auth key needed)
+            try {
+                const { data } = await supabase
+                    .from('dim_agents')
+                    .select('agent_id, agent_name, agent_type, llm_model')
+                    .order('agent_name');
+                const fallback: AgentSummary[] = (data ?? []).map((a) => ({
+                    agent_id: a.agent_id,
+                    agent_name: a.agent_name,
+                    agent_type: a.agent_type ?? null,
+                    llm_model: a.llm_model ?? null,
+                    trust_score: null,
+                    trust_status: null,
+                    total_outcomes: 0,
+                    sdk_outcomes: 0,
+                    imported_outcomes: 0,
+                    tasks: [],
+                }));
+                setAgents(fallback);
+                setSelectedAgentId((cur) => {
+                    if (cur && fallback.some((a) => a.agent_id === cur)) return cur;
+                    return fallback[0]?.agent_id ?? null;
+                });
+            } catch (e: any) {
+                console.warn('[recommendations] supabase fallback failed:', e.message);
             }
         })();
 
@@ -958,10 +964,14 @@ export default function RecommendationsPage(): React.ReactElement {
 
     // ── Load per-agent summary when agent changes ─────────────────
     useEffect(() => {
+        // Always reset stale data immediately when agent changes
+        setAgentSummary(null);
+        setSelectedTask(null);
+        setRecData(null);
+        setRecError(null);
+
         if (!isValid || !apiKey || !API_BASE || !selectedAgentId) {
-            setAgentSummary(null);
-            setSelectedTask(null);
-            setRecData(null);
+            setSummaryLoading(false);
             return;
         }
         setSummaryLoading(true);
@@ -977,28 +987,24 @@ export default function RecommendationsPage(): React.ReactElement {
                 if (res.ok) {
                     const json = await res.json() as AgentSummary;
                     setAgentSummary(json);
-                    // Auto-select first task
-                    setSelectedTask((cur) => {
-                        if (cur && json.tasks.some((t) => t.task_name === cur)) return cur;
-                        return json.tasks[0]?.task_name ?? null;
-                    });
+                    // Auto-select first task after loading
+                    if (json.tasks.length > 0) {
+                        setSelectedTask(json.tasks[0]!.task_name);
+                    }
+                } else {
+                    console.warn('[recommendations] agent-summary returned', res.status);
                 }
             } catch (e: any) {
                 if (e?.name === 'AbortError') return;
+                console.warn('[recommendations] agent-summary fetch failed:', e.message);
             } finally {
                 setSummaryLoading(false);
             }
         })();
 
         return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
-
-    // Reset task + rec when agent changes
-    useEffect(() => {
-        setSelectedTask(null);
-        setRecData(null);
-        setRecError(null);
-    }, [selectedAgentId]);
 
     // ── Fetch recommendation for selected task ────────────────────
     const fetchRec = useCallback(
