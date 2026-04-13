@@ -137,34 +137,72 @@ type QueryError = {
     code?: string | null;
 };
 
-const TASK_PERFORMANCE_MV = 'mv_task_action_performance_180d';
 const SUPABASE_PAGE_SIZE = 1000;
 
-function isMissingRecommendationMvError(error: QueryError): boolean {
-    const msg = (error.message ?? '').toLowerCase();
-    return error.code === '42P01'
-        || (msg.includes(TASK_PERFORMANCE_MV) && msg.includes('relation'));
+function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+}
+
+function normalizeTaskSlug(value: string): string {
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/[\s\-]+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .replace(/^_+|_+$/g, '');
+}
+
+function hasRecommendationEvidence(result: RecommendationResult): boolean {
+    return result.all_actions.some((action) => Math.max(0, Number(action.total_count ?? 0)) > 0);
+}
+
+async function getRecommendationWithTaskFallback(
+    customerId: string,
+    requestedTaskName: string,
+    agentId: string | null,
+): Promise<{ taskName: string; result: RecommendationResult }> {
+    const primaryTaskName = requestedTaskName.trim();
+    const normalizedTaskName = normalizeTaskSlug(primaryTaskName);
+
+    const primaryResult = await getRecommendation(customerId, primaryTaskName, agentId);
+
+    if (
+        normalizedTaskName.length === 0
+        || normalizedTaskName === primaryTaskName
+        || hasRecommendationEvidence(primaryResult)
+        || primaryResult.state !== 'no_data'
+    ) {
+        return { taskName: primaryTaskName, result: primaryResult };
+    }
+
+    const normalizedResult = await getRecommendation(customerId, normalizedTaskName, agentId);
+    if (hasRecommendationEvidence(normalizedResult) || normalizedResult.state !== 'no_data') {
+        return { taskName: normalizedTaskName, result: normalizedResult };
+    }
+
+    return { taskName: primaryTaskName, result: primaryResult };
 }
 
 function addOutcomeCount(
     agentTaskTotals: Map<string, Map<string, number>>,
     agentGrandTotals: Map<string, number>,
-    agent_id: string,
-    task_name: string,
+    agentId: string,
+    taskName: string,
     increment: number,
 ): void {
-    if (!agent_id || !task_name || !Number.isFinite(increment) || increment <= 0) {
+    if (!agentId || !taskName || !Number.isFinite(increment) || increment <= 0) {
         return;
     }
 
-    let taskMap = agentTaskTotals.get(agent_id);
+    let taskMap = agentTaskTotals.get(agentId);
     if (!taskMap) {
         taskMap = new Map<string, number>();
-        agentTaskTotals.set(agent_id, taskMap);
+        agentTaskTotals.set(agentId, taskMap);
     }
 
-    taskMap.set(task_name, (taskMap.get(task_name) ?? 0) + increment);
-    agentGrandTotals.set(agent_id, (agentGrandTotals.get(agent_id) ?? 0) + increment);
+    taskMap.set(taskName, (taskMap.get(taskName) ?? 0) + increment);
+    agentGrandTotals.set(agentId, (agentGrandTotals.get(agentId) ?? 0) + increment);
 }
 
 async function fetchAgentTaskOutcomeTotals(params: {
@@ -173,61 +211,11 @@ async function fetchAgentTaskOutcomeTotals(params: {
 }): Promise<{
     agentTaskTotals: Map<string, Map<string, number>>;
     agentGrandTotals: Map<string, number>;
-    source: 'mv' | 'fact_fallback';
+    source: 'fact_outcomes';
 }> {
     const { customerId, agentId } = params;
     const agentTaskTotals = new Map<string, Map<string, number>>();
     const agentGrandTotals = new Map<string, number>();
-
-    try {
-        for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
-            let mvQuery = supabase
-                .from(TASK_PERFORMANCE_MV)
-                .select('agent_id, task_name, total_count')
-                .eq('customer_id', customerId)
-                .neq('agent_id', ZERO_UUID_AGENT_ID)
-                .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
-
-            if (agentId) {
-                mvQuery = mvQuery.eq('agent_id', agentId);
-            }
-
-            const { data, error } = await mvQuery;
-            if (error) {
-                throw error as QueryError;
-            }
-
-            const page = (data ?? []) as Array<{
-                agent_id: string | null;
-                task_name: string | null;
-                total_count: number | null;
-            }>;
-
-            for (const row of page) {
-                addOutcomeCount(
-                    agentTaskTotals,
-                    agentGrandTotals,
-                    row.agent_id ?? '',
-                    row.task_name ?? '',
-                    Math.max(0, Number(row.total_count ?? 0)),
-                );
-            }
-
-            if (page.length < SUPABASE_PAGE_SIZE) {
-                return { agentTaskTotals, agentGrandTotals, source: 'mv' };
-            }
-        }
-    } catch (error: any) {
-        const queryError = error as QueryError;
-        const reason = isMissingRecommendationMvError(queryError)
-            ? 'materialized view missing'
-            : queryError.message;
-        console.warn('[agent-summary] mv aggregation unavailable, using facts fallback:', reason);
-    }
-
-    const windowStart = new Date(
-        Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-    ).toISOString();
 
     for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
         let factsQuery = supabase
@@ -237,7 +225,6 @@ async function fetchAgentTaskOutcomeTotals(params: {
             .eq('is_synthetic', false)
             .eq('is_deleted', false)
             .neq('agent_id', ZERO_UUID_AGENT_ID)
-            .gte('timestamp', windowStart)
             .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
 
         if (agentId) {
@@ -265,12 +252,159 @@ async function fetchAgentTaskOutcomeTotals(params: {
         }
     }
 
-    return { agentTaskTotals, agentGrandTotals, source: 'fact_fallback' };
+    return { agentTaskTotals, agentGrandTotals, source: 'fact_outcomes' };
+}
+
+type AgentTaskActionRow = {
+    action_id: string | null;
+    outcome_score: number | null;
+    outcome_score_raw: number | null;
+    success: boolean | null;
+    execution_status: string | null;
+    timestamp: string | null;
+    dim_actions: { action_name: string | null } | Array<{ action_name: string | null }> | null;
+};
+
+type AgentTaskActionAggregate = {
+    action_id: string;
+    action_name: string;
+    total_count: number;
+    score_sum: number;
+    score_count: number;
+    last_seen_at: string | null;
+};
+
+function latestTimestamp(current: string | null, candidate: string | null): string | null {
+    if (!current) return candidate;
+    if (!candidate) return current;
+    return candidate > current ? candidate : current;
+}
+
+function deriveResolutionScore(row: AgentTaskActionRow): number | null {
+    if (typeof row.outcome_score === 'number' && Number.isFinite(row.outcome_score)) {
+        return clamp01(row.outcome_score);
+    }
+
+    if (typeof row.outcome_score_raw === 'number' && Number.isFinite(row.outcome_score_raw)) {
+        return clamp01(row.outcome_score_raw);
+    }
+
+    const status = typeof row.execution_status === 'string'
+        ? row.execution_status.trim().toLowerCase()
+        : '';
+
+    if (status === 'completed' || status === 'success' || status === 'succeeded') {
+        return 1;
+    }
+    if (status === 'partial' || status === 'degraded') {
+        return 0.5;
+    }
+    if (status === 'failed' || status === 'error') {
+        return 0;
+    }
+
+    if (typeof row.success === 'boolean') {
+        return row.success ? 1 : 0;
+    }
+
+    return null;
+}
+
+async function fetchAgentTaskActionPerformance(params: {
+    customerId: string;
+    agentId: string;
+    taskName: string;
+}): Promise<{
+    actions: Array<{
+        action_id: string;
+        action_name: string;
+        total_count: number;
+        effective_sample_count: number;
+        resolution_rate: number;
+        last_seen_at: string | null;
+    }>;
+    total_outcomes: number;
+}> {
+    const aggregates = new Map<string, AgentTaskActionAggregate>();
+
+    for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+        const query = supabase
+            .from('fact_outcomes')
+            .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, dim_actions!inner(action_name)')
+            .eq('customer_id', params.customerId)
+            .eq('agent_id', params.agentId)
+            .eq('task_name', params.taskName)
+            .eq('is_synthetic', false)
+            .eq('is_deleted', false)
+            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+
+        const { data, error } = await query;
+        if (error) {
+            throw new Error(`[get-recommendations] action performance query failed: ${error.message}`);
+        }
+
+        const page = (data ?? []) as AgentTaskActionRow[];
+
+        for (const row of page) {
+            const actionId = row.action_id ?? '';
+            if (!actionId) continue;
+
+            const relation = Array.isArray(row.dim_actions)
+                ? row.dim_actions[0]
+                : row.dim_actions;
+            const actionName = relation?.action_name ?? actionId;
+
+            const existing = aggregates.get(actionName) ?? {
+                action_id: actionId,
+                action_name: actionName,
+                total_count: 0,
+                score_sum: 0,
+                score_count: 0,
+                last_seen_at: null,
+            };
+
+            existing.total_count += 1;
+
+            const score = deriveResolutionScore(row);
+            if (score !== null) {
+                existing.score_sum += score;
+                existing.score_count += 1;
+            }
+
+            existing.last_seen_at = latestTimestamp(existing.last_seen_at, row.timestamp ?? null);
+
+            aggregates.set(actionName, existing);
+        }
+
+        if (page.length < SUPABASE_PAGE_SIZE) {
+            break;
+        }
+    }
+
+    const actions = Array.from(aggregates.values())
+        .map((entry) => ({
+            action_id: entry.action_id,
+            action_name: entry.action_name,
+            total_count: entry.total_count,
+            effective_sample_count: entry.total_count,
+            resolution_rate: entry.score_count > 0
+                ? Number((entry.score_sum / entry.score_count).toFixed(4))
+                : 0,
+            last_seen_at: entry.last_seen_at,
+        }))
+        .sort((a, b) => {
+            if (b.total_count !== a.total_count) return b.total_count - a.total_count;
+            return b.resolution_rate - a.resolution_rate;
+        });
+
+    const totalOutcomes = actions.reduce((sum, action) => sum + action.total_count, 0);
+
+    return { actions, total_outcomes: totalOutcomes };
 }
 
 // GET /agent-summary — per-agent stats + per-task outcome counts
-// Uses the same 180-day evidence window as recommendation scoring.
-// Returns tasks only for the requested agent; totals are scope-aligned and paginated.
+// Uses fact_outcomes directly (all-time) so agent/task totals reflect everything logged.
+// Returns tasks only for the requested agent.
 getRecommendationsRouter.get('/agent-summary', async (c) => {
     const customerId = c.get('customer_id') as string | undefined;
     if (!customerId) {
@@ -323,7 +457,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                 trust_status: trustMeta?.trust_status ?? null,
                 total_outcomes: grandTotal,
                 tasks,
-                window_days: RECOMMENDATION_WINDOW_DAYS,
+                window_days: null,
                 counts_source: source,
             }, 200);
         } else {
@@ -335,7 +469,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                 total_outcomes: agentGrandTotals.get(a.agent_id) ?? 0,
             })).sort((a, b) => b.total_outcomes - a.total_outcomes);
 
-            return c.json({ agents, window_days: RECOMMENDATION_WINDOW_DAYS, counts_source: source }, 200);
+            return c.json({ agents, window_days: null, counts_source: source }, 200);
         }
     } catch (err: any) {
         console.error('[agent-summary] error:', err.message);
@@ -393,17 +527,12 @@ getRecommendationsRouter.get('/', async (c) => {
         );
     }
 
-    const taskName = rawTask.trim()
-        .toLowerCase()
-        .replace(/[\s\-]+/g, '_')
-        .replace(/[^a-z0-9_]/g, '')
-        .replace(/^_+|_+$/g, '')
-        || rawTask.trim().toLowerCase();
+    const requestedTaskName = rawTask.trim();
 
-    if (taskName.length === 0) {
+    if (requestedTaskName.length === 0) {
         return c.json(
             {
-                error: 'Invalid task parameter - could not normalize to a valid slug',
+                error: 'Invalid task parameter',
                 code: 'INVALID_TASK',
             },
             400
@@ -424,15 +553,21 @@ getRecommendationsRouter.get('/', async (c) => {
             next_threshold: number | null;
             remaining_to_next_bucket: number;
         } | null = null;
+        let taskName = requestedTaskName;
         // Always track the agent-scoped result when an agent_id is provided —
         // used to compute task_total_outcomes so it matches the task list count.
         let agentScopedResult: RecommendationResult | null = null;
 
         if (scopedAgentId) {
-            const [scopedResult, blendedResult] = await Promise.all([
-                getRecommendation(customerId, taskName, scopedAgentId),
-                getRecommendation(customerId, taskName, null),
-            ]);
+            const scopedResolution = await getRecommendationWithTaskFallback(
+                customerId,
+                requestedTaskName,
+                scopedAgentId,
+            );
+            taskName = scopedResolution.taskName;
+
+            const scopedResult = scopedResolution.result;
+            const blendedResult = await getRecommendation(customerId, taskName, null);
             agentScopedResult = scopedResult;
 
             if (strictAgentScope) {
@@ -457,7 +592,13 @@ getRecommendationsRouter.get('/', async (c) => {
                 scopeThresholdProgress = selection.threshold_progress;
             }
         } else {
-            result = await getRecommendation(customerId, taskName, null);
+            const blendedResolution = await getRecommendationWithTaskFallback(
+                customerId,
+                requestedTaskName,
+                null,
+            );
+            taskName = blendedResolution.taskName;
+            result = blendedResolution.result;
         }
 
         const fallbackApplied = requestedScope !== servedScope;
@@ -488,7 +629,7 @@ getRecommendationsRouter.get('/', async (c) => {
         const medianSuccessRate = medianOf(
             result.all_actions.map((action) => Number(action.resolution_rate ?? Number.NaN)),
         );
-        const [cohortCycle, dataSources] = await Promise.all([
+        const [cohortCycle, dataSources, agentTaskPerformance] = await Promise.all([
             upsertRecommendationCohortCycle({
                 customer_id: customerId,
                 task_name: taskName,
@@ -501,6 +642,13 @@ getRecommendationsRouter.get('/', async (c) => {
             }),
             scopedAgentId
                 ? fetchDataSources(customerId, scopedAgentId, taskName)
+                : Promise.resolve(null),
+            scopedAgentId
+                ? fetchAgentTaskActionPerformance({
+                    customerId,
+                    agentId: scopedAgentId,
+                    taskName,
+                })
                 : Promise.resolve(null),
         ]);
         const cohortReliability = computeCohortReliability(result, cohortCycle);
@@ -635,11 +783,9 @@ getRecommendationsRouter.get('/', async (c) => {
                 // uploaded historical outcomes and live SDK outcomes for this agent+task,
                 // so the developer knows what fraction of confidence comes from each source.
                 data_sources: dataSources,
-                // All action-level performance data — used by Action Battle card in dashboard.
-                // Deduplicated by action_name: the MV has one row per (agent_id, action_id, task_name),
-                // so the same action can appear multiple times when blending across agents.
-                // We merge them here: sum total_count, weighted-average resolution_rate.
-                all_actions: (() => {
+                // Always use agent-scoped fact_outcomes rows for action and outcome display
+                // when an agent_id is provided, so the UI reflects exactly what this agent logged.
+                all_actions: agentTaskPerformance?.actions ?? (() => {
                     const byName = new Map<string, {
                         action_id: string;
                         action_name: string;
@@ -662,7 +808,6 @@ getRecommendationsRouter.get('/', async (c) => {
                             const count = Math.max(0, Number(a.total_count ?? 0));
                             existing.total_count += count;
                             existing.resolution_rate_weighted_sum += Number(a.resolution_rate ?? 0) * count;
-                            // keep latest last_seen_at
                             if (a.last_seen_at && (!existing.last_seen_at || a.last_seen_at > existing.last_seen_at)) {
                                 existing.last_seen_at = a.last_seen_at;
                             }
@@ -673,19 +818,20 @@ getRecommendationsRouter.get('/', async (c) => {
                             action_id: a.action_id,
                             action_name: a.action_name,
                             total_count: a.total_count,
+                            effective_sample_count: a.total_count,
                             resolution_rate: a.total_count > 0
                                 ? Number((a.resolution_rate_weighted_sum / a.total_count).toFixed(4))
                                 : 0,
                             last_seen_at: a.last_seen_at,
                         }))
-                        .sort((a, b) => b.resolution_rate - a.resolution_rate);
+                        .sort((a, b) => b.total_count - a.total_count);
                 })(),
-                // Total outcomes for this agent+task — always agent-scoped so it matches
-                // the task list count from /agent-summary. When the engine falls back to
-                // blended scope, we still report the agent-specific count here.
-                task_total_outcomes: (agentScopedResult ?? result).all_actions.reduce(
-                    (sum, a) => sum + Math.max(0, Number(a.total_count ?? 0)), 0,
-                ),
+                // Authoritative task outcomes for gating/display on the dashboard.
+                task_total_outcomes: agentTaskPerformance?.total_outcomes
+                    ?? (agentScopedResult ?? result).all_actions.reduce(
+                        (sum, a) => sum + Math.max(0, Number(a.total_count ?? 0)),
+                        0,
+                    ),
             },
             200
         );

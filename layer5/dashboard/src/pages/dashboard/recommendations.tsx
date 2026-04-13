@@ -42,7 +42,7 @@ interface AgentSummary {
     total_outcomes: number;
     tasks: TaskSummary[];
     window_days?: number;
-    counts_source?: 'mv' | 'fact_fallback';
+    counts_source?: 'mv' | 'fact_fallback' | 'fact_outcomes';
 }
 
 interface ActionPerformance {
@@ -287,8 +287,8 @@ function TaskList({
                         key={task.task_name}
                         onClick={() => onSelect(task.task_name)}
                         className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${active
-                                ? 'bg-[#0f0f18] border-[#b8ff00]/30'
-                                : 'bg-[#0a0a0f] border-[#1a1a24] hover:bg-[#0f0f18]'
+                            ? 'bg-[#0f0f18] border-[#b8ff00]/30'
+                            : 'bg-[#0a0a0f] border-[#1a1a24] hover:bg-[#0f0f18]'
                             }`}
                     >
                         <div className="flex items-center justify-between gap-2">
@@ -323,6 +323,17 @@ function ActionsTable({
     taskConfidence: number;
 }): React.ReactElement {
     const ordered = [...actions].sort((a, b) => b.total_count - a.total_count);
+
+    if (ordered.length === 0) {
+        return (
+            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 space-y-2">
+                <p className="text-xs font-medium text-white">Actions Logged For This Agent And Task</p>
+                <p className="text-xs text-[#52525b]">
+                    No action-level outcomes were found for this agent and task yet.
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-xl overflow-hidden">
@@ -471,6 +482,7 @@ export default function RecommendationsPage(): React.ReactElement {
 
     const refreshRef = useRef<(() => void) | null>(null);
     const latestRecommendationToken = useRef(0);
+    const latestSummaryToken = useRef(0);
 
     useEffect(() => {
         if (!isValid || !apiKey || !API_BASE) return;
@@ -542,6 +554,7 @@ export default function RecommendationsPage(): React.ReactElement {
 
         setSummaryLoading(true);
         const controller = new AbortController();
+        const token = ++latestSummaryToken.current;
 
         void (async () => {
             try {
@@ -553,6 +566,7 @@ export default function RecommendationsPage(): React.ReactElement {
 
                 if (response.ok) {
                     const json = await response.json() as AgentSummary;
+                    if (token !== latestSummaryToken.current) return;
                     setAgentSummary(json);
                     if (json.tasks.length > 0) {
                         setSelectedTask(json.tasks[0]?.task_name ?? null);
@@ -562,7 +576,9 @@ export default function RecommendationsPage(): React.ReactElement {
                 if (error?.name === 'AbortError') return;
                 console.warn('[recommendations] failed to fetch agent summary:', error.message);
             } finally {
-                setSummaryLoading(false);
+                if (token === latestSummaryToken.current) {
+                    setSummaryLoading(false);
+                }
             }
         })();
 
@@ -635,7 +651,8 @@ export default function RecommendationsPage(): React.ReactElement {
     }, [agentSummary, selectedTask]);
 
     const taskOutcomesFromSummary = currentTaskSummary?.total ?? 0;
-    const taskOutcomes = recommendation?.task_total_outcomes ?? taskOutcomesFromSummary;
+    const taskOutcomesFromRecommendation = recommendation?.task_total_outcomes ?? 0;
+    const taskOutcomes = Math.max(taskOutcomesFromSummary, taskOutcomesFromRecommendation);
     const taskConfidence = recommendation?.confidence_meta?.percent ?? 0;
     const minimumOutcomesMissing = Math.max(0, MIN_OUTCOMES_FOR_RECOMMENDATION - taskOutcomes);
     const summaryText = recommendation ? buildTwoSentenceSummary(recommendation) : '';
