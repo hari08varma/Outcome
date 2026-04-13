@@ -509,7 +509,7 @@ function ActionBattleCard({ data }: { data: RecommendationResponse }): React.Rea
             )}
 
             {/* All actions table when we have the data */}
-            {allActions.length > 2 && (
+            {allActions.length > 0 && (
                 <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-xl overflow-hidden mt-1">
                     <div className="px-3 py-2 border-b border-[#1a1a24]">
                         <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">
