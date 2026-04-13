@@ -15,7 +15,7 @@ import {
     chooseScopedOrBlendedCandidate,
 } from '../lib/recommendation/scope-transition.js';
 import { buildRecommendationDataFreshness } from '../lib/recommendation/data-freshness.js';
-import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
+import { fetchAvailableTasks, type ContextFilter } from '../lib/recommendation/task-performance.js';
 import { ZERO_UUID_AGENT_ID } from '../lib/recommendation/task-performance.js';
 import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
 import { computeCohortReliability } from '../lib/recommendation/cohort-reliability.js';
@@ -153,6 +153,67 @@ type QueryError = {
 
 const SUPABASE_PAGE_SIZE = 1000;
 
+// ── Context resolution ────────────────────────────────────────
+// Resolves a ContextFilter from (issue_type, environment, customer_tier) query params.
+// Mirrors the same lookup used by get-scores.ts so context is consistent across endpoints.
+// Returns { resolved: false } when no context params are provided (backward-compatible).
+async function resolveContextFilter(params: {
+    customerId: string;
+    issueType: string | null;
+    environment: string | null;
+    customerTier: string | null;
+}): Promise<ContextFilter> {
+    const { customerId, issueType, environment, customerTier } = params;
+
+    if (!issueType) {
+        return { resolved: false, contextId: null, label: null };
+    }
+
+    const normalizedEnv = (environment ?? 'production').trim().toLowerCase() || 'production';
+
+    try {
+        // Exact match on (customer_id, issue_type, environment)
+        const { data, error } = await supabase
+            .from('dim_contexts')
+            .select('context_id, issue_type, environment, customer_tier')
+            .eq('customer_id', customerId)
+            .eq('issue_type', issueType)
+            .eq('environment', normalizedEnv)
+            .limit(1)
+            .maybeSingle();
+
+        if (!error && data?.context_id) {
+            return {
+                resolved: true,
+                contextId: data.context_id as string,
+                label: `${issueType} / ${normalizedEnv}${customerTier ? ` / ${customerTier}` : ''}`,
+            };
+        }
+
+        // Fallback: match just issue_type for this customer (ignore environment)
+        const { data: fuzzy } = await supabase
+            .from('dim_contexts')
+            .select('context_id, issue_type, environment')
+            .eq('customer_id', customerId)
+            .eq('issue_type', issueType)
+            .limit(1)
+            .maybeSingle();
+
+        if (fuzzy?.context_id) {
+            return {
+                resolved: true,
+                contextId: fuzzy.context_id as string,
+                label: `${issueType} / ${fuzzy.environment ?? 'any'} (env fallback)`,
+            };
+        }
+
+        // Context doesn't exist yet — cold start; signal is globally blended
+        return { resolved: false, contextId: null, label: `${issueType} (cold start)` };
+    } catch {
+        return { resolved: false, contextId: null, label: null };
+    }
+}
+
 function clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
@@ -175,11 +236,12 @@ async function getRecommendationWithTaskFallback(
     customerId: string,
     requestedTaskName: string,
     agentId: string | null,
+    contextFilter?: ContextFilter | null,
 ): Promise<{ taskName: string; result: RecommendationResult }> {
     const primaryTaskName = requestedTaskName.trim();
     const normalizedTaskName = normalizeTaskSlug(primaryTaskName);
 
-    const primaryResult = await getRecommendation(customerId, primaryTaskName, agentId);
+    const primaryResult = await getRecommendation(customerId, primaryTaskName, agentId, contextFilter);
 
     if (
         normalizedTaskName.length === 0
@@ -190,7 +252,7 @@ async function getRecommendationWithTaskFallback(
         return { taskName: primaryTaskName, result: primaryResult };
     }
 
-    const normalizedResult = await getRecommendation(customerId, normalizedTaskName, agentId);
+    const normalizedResult = await getRecommendation(customerId, normalizedTaskName, agentId, contextFilter);
     if (hasRecommendationEvidence(normalizedResult) || normalizedResult.state !== 'no_data') {
         return { taskName: normalizedTaskName, result: normalizedResult };
     }
@@ -537,6 +599,180 @@ getRecommendationsRouter.get('/tasks', async (c) => {
     }
 });
 
+// ── GET /task-analytics ──────────────────────────────────────
+// Computes three signals the main recommendation response doesn't include:
+//   1. Drift trendline — sliding-window linear regression on success rate over
+//      the last N outcomes, giving slope + confidence so the UI can show
+//      "success rate is silently dropping" before it hits the noise gate.
+//   2. Explore/exploit ratio — fraction of outcomes that were exploration events
+//      (cross_event_status != 'none' or is_synthetic) vs exploitation.
+//   3. Trust blocks — how many outcomes were blocked/logged while trust_status
+//      was below threshold (recorded via execution_status='FAILED' + failure_reason_code='TRUST_GATE').
+//
+// All queries are read-only against fact_outcomes.
+// Required query params: task (string), agent_id (UUID)
+// Optional: window (integer, default 50) — outcome count for drift window
+getRecommendationsRouter.get('/task-analytics', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const customerId = c.get('customer_id') as string | undefined;
+    if (!customerId) {
+        return c.json({ error: 'Unauthorized', code: 'MISSING_CUSTOMER_ID' }, 401);
+    }
+
+    const rawTask = c.req.query('task')?.trim() || null;
+    const rawAgentId = c.req.query('agent_id')?.trim() || null;
+    const windowSize = Math.max(20, Math.min(200, parseInt(c.req.query('window') ?? '50', 10) || 50));
+
+    if (!rawTask) {
+        return c.json({ error: 'Missing required query parameter: task', code: 'MISSING_TASK' }, 400);
+    }
+    if (!rawAgentId) {
+        return c.json({ error: 'Missing required query parameter: agent_id', code: 'MISSING_AGENT_ID' }, 400);
+    }
+
+    try {
+        // Fetch the last `windowSize * 2` outcomes for this agent+task ordered by timestamp desc.
+        // We fetch 2x so we have enough for a meaningful trendline even after filtering.
+        const { data: rawRows, error } = await supabase
+            .from('fact_outcomes')
+            .select('success, outcome_score, outcome_score_raw, execution_status, failure_reason_code, cross_event_status, is_synthetic, timestamp, data_quality')
+            .eq('customer_id', customerId)
+            .eq('agent_id', rawAgentId)
+            .eq('task_name', rawTask)
+            .eq('is_deleted', false)
+            .eq('is_synthetic', false)
+            .order('timestamp', { ascending: false })
+            .limit(windowSize * 2);
+
+        if (error) {
+            throw new Error(`[task-analytics] query failed: ${error.message}`);
+        }
+
+        const rows = (rawRows ?? []) as Array<{
+            success: boolean | null;
+            outcome_score: number | null;
+            outcome_score_raw: number | null;
+            execution_status: string | null;
+            failure_reason_code: string | null;
+            cross_event_status: string | null;
+            is_synthetic: boolean | null;
+            timestamp: string | null;
+            data_quality: number | null;
+        }>;
+
+        if (rows.length === 0) {
+            return c.json({
+                drift: { slope: null, confidence: null, window_size: 0, direction: 'unknown', points: [] },
+                explore_exploit: { explore_count: 0, exploit_count: 0, total: 0, explore_ratio: null },
+                trust_blocks: { blocked_count: 0, total: 0 },
+            }, 200);
+        }
+
+        // ── 1. Drift trendline ────────────────────────────────
+        // Reverse to chronological order, take last `windowSize`.
+        // Use a 5-outcome sliding window to compute local success rate at each step,
+        // then run linear regression (OLS) on those rates vs. position index.
+        const chronological = [...rows].reverse().slice(-windowSize);
+        const SLIDING = 5;
+        const points: Array<{ index: number; rate: number; timestamp: string }> = [];
+
+        for (let i = SLIDING - 1; i < chronological.length; i++) {
+            const slice = chronological.slice(i - SLIDING + 1, i + 1);
+            let successSum = 0;
+            let count = 0;
+            for (const r of slice) {
+                const score = typeof r.outcome_score === 'number' ? r.outcome_score
+                    : typeof r.outcome_score_raw === 'number' ? r.outcome_score_raw
+                        : typeof r.success === 'boolean' ? (r.success ? 1 : 0)
+                            : null;
+                if (score !== null) {
+                    successSum += score;
+                    count++;
+                }
+            }
+            if (count > 0) {
+                points.push({
+                    index: i,
+                    rate: Number((successSum / count).toFixed(4)),
+                    timestamp: chronological[i]!.timestamp ?? '',
+                });
+            }
+        }
+
+        let slope: number | null = null;
+        let rSquared: number | null = null;
+
+        if (points.length >= 4) {
+            const n = points.length;
+            const xs = points.map((p) => p.index);
+            const ys = points.map((p) => p.rate);
+            const xMean = xs.reduce((a, b) => a + b, 0) / n;
+            const yMean = ys.reduce((a, b) => a + b, 0) / n;
+            const ssXY = xs.reduce((acc, x, i) => acc + (x - xMean) * (ys[i]! - yMean), 0);
+            const ssXX = xs.reduce((acc, x) => acc + (x - xMean) ** 2, 0);
+            const ssYY = ys.reduce((acc, y) => acc + (y - yMean) ** 2, 0);
+
+            if (ssXX > 0) {
+                slope = Number((ssXY / ssXX).toFixed(6));
+                rSquared = ssYY > 0 ? Number(((ssXY ** 2) / (ssXX * ssYY)).toFixed(4)) : 1;
+            }
+        }
+
+        const direction: 'improving' | 'stable' | 'degrading' | 'unknown' =
+            slope === null ? 'unknown'
+                : slope > 0.002 ? 'improving'
+                    : slope < -0.002 ? 'degrading'
+                        : 'stable';
+
+        // ── 2. Explore / exploit ──────────────────────────────
+        // Exploration = cross_event_status is 'pending_signal' or 'conflict' (engine pushed a test action).
+        // Exploitation = confirmed, resolved, or 'none' (engine used its best known action).
+        let exploreCount = 0;
+        let exploitCount = 0;
+        for (const r of rows) {
+            const status = r.cross_event_status ?? 'none';
+            if (status === 'pending_signal' || status === 'conflict') {
+                exploreCount++;
+            } else {
+                exploitCount++;
+            }
+        }
+        const total = rows.length;
+        const exploreRatio = total > 0 ? Number((exploreCount / total).toFixed(4)) : null;
+
+        // ── 3. Trust blocks ───────────────────────────────────
+        // A trust block is an outcome that was logged with failure_reason_code = 'TRUST_GATE'
+        // OR execution_status = 'FAILED' while failure_reason_code contains 'TRUST'.
+        const blockedCount = rows.filter((r) => {
+            const code = (r.failure_reason_code ?? '').toUpperCase();
+            return code.includes('TRUST') || code === 'TRUST_GATE';
+        }).length;
+
+        return c.json({
+            drift: {
+                slope,
+                confidence: rSquared,
+                window_size: chronological.length,
+                direction,
+                points: points.slice(-30), // cap response size — last 30 points enough for a sparkline
+            },
+            explore_exploit: {
+                explore_count: exploreCount,
+                exploit_count: exploitCount,
+                total,
+                explore_ratio: exploreRatio,
+            },
+            trust_blocks: {
+                blocked_count: blockedCount,
+                total,
+            },
+        }, 200);
+    } catch (err: any) {
+        console.error('[task-analytics] unexpected error:', err.message);
+        return c.json({ error: 'Internal server error', code: 'INTERNAL_ERROR', details: err.message }, 500);
+    }
+});
+
 getRecommendationsRouter.get('/', async (c) => {
     c.header('Cache-Control', 'no-store');
     const customerId = c.get('customer_id') as string | undefined;
@@ -556,6 +792,11 @@ getRecommendationsRouter.get('/', async (c) => {
     const strictAgentScope = ['1', 'true', 'yes', 'on'].includes(
         (c.req.query('strict_agent_scope') ?? '').trim().toLowerCase(),
     );
+    // Optional context filter — narrows performance signal to a specific (issue_type, environment, customer_tier)
+    // combination, using blended signal as prior when context-specific sample count is low
+    const rawIssueType = c.req.query('issue_type')?.trim() || null;
+    const rawEnvironment = c.req.query('environment')?.trim() || null;
+    const rawCustomerTier = c.req.query('customer_tier')?.trim() || null;
 
     if (!rawTask || rawTask.trim() === '') {
         return c.json(
@@ -585,6 +826,14 @@ getRecommendationsRouter.get('/', async (c) => {
             ? 'agent_scoped'
             : 'customer_blended';
 
+        // Resolve context filter once — shared across all recommendation calls in this request
+        const contextFilter = await resolveContextFilter({
+            customerId,
+            issueType: rawIssueType,
+            environment: rawEnvironment,
+            customerTier: rawCustomerTier,
+        });
+
         let result: RecommendationResult;
         let servedScope: RecommendationScope = requestedScope;
         let scopeReason: string | null = null;
@@ -604,11 +853,12 @@ getRecommendationsRouter.get('/', async (c) => {
                 customerId,
                 requestedTaskName,
                 scopedAgentId,
+                contextFilter,
             );
             taskName = scopedResolution.taskName;
 
             const scopedResult = scopedResolution.result;
-            const blendedResult = await getRecommendation(customerId, taskName, null);
+            const blendedResult = await getRecommendation(customerId, taskName, null, contextFilter);
             agentScopedResult = scopedResult;
 
             if (strictAgentScope) {
@@ -637,6 +887,7 @@ getRecommendationsRouter.get('/', async (c) => {
                 customerId,
                 requestedTaskName,
                 null,
+                contextFilter,
             );
             taskName = blendedResolution.taskName;
             result = blendedResolution.result;
@@ -801,6 +1052,22 @@ getRecommendationsRouter.get('/', async (c) => {
                 cohort_history: cohortHistory,
                 cohort_reliability: cohortReliability,
                 customer_id: customerId,
+                // Context filter applied to this recommendation — null when no context params provided
+                context_filter: contextFilter.resolved
+                    ? {
+                        context_id: contextFilter.contextId,
+                        label: contextFilter.label,
+                        issue_type: rawIssueType,
+                        environment: rawEnvironment,
+                        customer_tier: rawCustomerTier,
+                    }
+                    : {
+                        context_id: null,
+                        label: contextFilter.label,
+                        issue_type: rawIssueType,
+                        environment: rawEnvironment,
+                        customer_tier: rawCustomerTier,
+                    },
                 noise_gate: result._noise_gate ?? null,
                 simulation_guardrail: result._simulation_guardrail ?? null,
                 confidence_source: confidenceSource,

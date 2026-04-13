@@ -1,12 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     AlertTriangle,
+    ArrowDown,
+    ArrowRight,
+    ArrowUp,
     Bot,
     ChevronDown,
     Database,
+    Minus,
     RefreshCw,
     Shield,
-    Target,
+    TrendingDown,
     TrendingUp,
     Zap,
 } from 'lucide-react';
@@ -15,9 +19,15 @@ import { API_BASE } from '../../lib/config';
 import { useAgentApiKey } from '../../hooks/useAgentApiKey';
 import { supabase } from '../../supabaseClient';
 
-type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const MIN_OUTCOMES_FOR_RECOMMENDATION = 30;
+const ACCENT = '#b8ff00';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
+type TrendDirection = 'improving' | 'stable' | 'degrading' | 'unknown';
 
 interface AgentListItem {
     agent_id: string;
@@ -41,8 +51,6 @@ interface AgentSummary {
     trust_status: string | null;
     total_outcomes: number;
     tasks: TaskSummary[];
-    window_days?: number;
-    counts_source?: 'mv' | 'fact_fallback' | 'fact_outcomes';
 }
 
 interface ActionPerformance {
@@ -51,6 +59,8 @@ interface ActionPerformance {
     total_count: number;
     effective_sample_count?: number;
     resolution_rate: number;
+    ml_score?: number | null;
+    semantic_cluster_convergence?: number;
     last_seen_at: string | null;
 }
 
@@ -58,21 +68,12 @@ interface RecommendationResponse {
     task: string;
     state: string;
     confidence: number;
-    confidence_meta: {
-        value: number;
-        percent: number;
-        label: ConfidenceLabel;
-    };
-    decision: {
-        type: 'collect_more_data' | 'monitor' | 'replace';
-        action_required: boolean;
-    };
+    confidence_meta: { value: number; percent: number; label: ConfidenceLabel };
+    confidence_source?: string;
+    confidence_source_reason?: string;
+    decision: { type: 'collect_more_data' | 'monitor' | 'replace'; action_required: boolean };
     message: string;
-    reason: {
-        summary: string;
-        evidence: string;
-        confidence_note: string;
-    };
+    reason: { summary: string; evidence: string; confidence_note: string };
     insight: {
         best_action: string | null;
         best_rate: number | null;
@@ -83,207 +84,226 @@ interface RecommendationResponse {
     };
     llm_narrative?: {
         headline: string | null;
+        summary: string | null;
         narrative: string | null;
+        evidence: string | null;
+        confidence_note: string | null;
+        next_steps: string[] | null;
+        risk_factors: string[] | null;
+        trend_direction: TrendDirection | null;
         generated: boolean;
         model: string | null;
     };
     all_actions?: ActionPerformance[];
     task_total_outcomes?: number;
     agent_scope: 'agent_scoped' | 'customer_blended';
+    scope_transition?: {
+        fallback_applied: boolean;
+        reason: string | null;
+        threshold_bucket: string | null;
+        current_samples: number | null;
+        next_threshold: number | null;
+        remaining_samples_to_next_bucket: number | null;
+    };
     generated_at: string;
-    data_window?: {
-        last_seen_at: string | null;
+    data_window?: { last_seen_at: string | null } | null;
+    data_freshness?: { is_stale: boolean; age_hours: number | null; label: string };
+    cohort_reliability?: { band: 'stable' | 'watch' | 'anomalous' | null; reasons: string[] };
+    data_sources?: {
+        uploaded_outcomes: number;
+        sdk_outcomes: number;
+        total: number;
+        upload_share: number;
+        quality_score: number | null;
     } | null;
+    context_filter?: {
+        context_id: string | null;
+        label: string | null;
+        issue_type: string | null;
+        environment: string | null;
+        customer_tier: string | null;
+    } | null;
+    noise_gate?: { is_noisy_task: boolean; task_noise_score: number } | null;
+    _silent_failure_warning?: boolean;
 }
 
-function pct(value: number | null, decimals = 1): string {
-    if (value === null || !Number.isFinite(value)) return '-';
+interface TaskAnalytics {
+    drift: {
+        slope: number | null;
+        confidence: number | null;
+        window_size: number;
+        direction: TrendDirection;
+        points: Array<{ index: number; rate: number; timestamp: string }>;
+    };
+    explore_exploit: {
+        explore_count: number;
+        exploit_count: number;
+        total: number;
+        explore_ratio: number | null;
+    };
+    trust_blocks: { blocked_count: number; total: number };
+}
+
+// ─── Formatters ───────────────────────────────────────────────────────────────
+
+function pct(value: number | null | undefined, decimals = 1): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
     return `${(value * 100).toFixed(decimals)}%`;
 }
 
-function relativeTime(iso: string | null): string {
-    if (!iso) return '-';
-
+function relTime(iso: string | null | undefined): string {
+    if (!iso) return '—';
     const deltaMs = Date.now() - new Date(iso).getTime();
-    const hours = Math.floor(deltaMs / 3600000);
-
+    const hours = Math.floor(deltaMs / 3_600_000);
     if (hours < 1) return 'just now';
     if (hours < 24) return `${hours}h ago`;
-
     const days = Math.floor(hours / 24);
     if (days < 30) return `${days}d ago`;
-
-    const months = Math.floor(days / 30);
-    return `${months}mo ago`;
+    return `${Math.floor(days / 30)}mo ago`;
 }
 
-function splitSentences(input: string): string[] {
-    return input
-        .trim()
-        .split(/(?<=[.!?])\s+/)
-        .map((part) => part.trim())
-        .filter((part) => part.length > 0);
+function confidenceLabel(label: ConfidenceLabel): { text: string; cls: string } {
+    if (label === 'very_high') return { text: 'Very high', cls: `bg-[${ACCENT}]/10 text-[${ACCENT}] border-[${ACCENT}]/30` };
+    if (label === 'high') return { text: 'High', cls: `bg-[${ACCENT}]/10 text-[${ACCENT}] border-[${ACCENT}]/30` };
+    if (label === 'medium') return { text: 'Medium', cls: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' };
+    if (label === 'low') return { text: 'Low', cls: 'bg-red-500/10 text-red-400 border-red-500/30' };
+    return { text: 'None', cls: 'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]' };
 }
 
-function buildTwoSentenceSummary(data: RecommendationResponse): string {
-    const narrative = data.llm_narrative?.narrative?.trim() ?? '';
-    const summary = data.reason.summary?.trim() ?? '';
-    const evidence = data.reason.evidence?.trim() ?? '';
-    const confidenceNote = data.reason.confidence_note?.trim() ?? '';
-
-    const primaryText = narrative.length > 0
-        ? narrative
-        : `${summary} ${evidence}`.trim();
-
-    const primarySentences = splitSentences(primaryText);
-    if (primarySentences.length >= 2) {
-        return `${primarySentences[0]} ${primarySentences[1]}`;
-    }
-
-    if (primarySentences.length === 1) {
-        const backupSentences = splitSentences(confidenceNote);
-        if (backupSentences.length > 0) {
-            return `${primarySentences[0]} ${backupSentences[0]}`;
-        }
-        return primarySentences[0];
-    }
-
-    const fallback = splitSentences(`${summary} ${evidence} ${confidenceNote}`.trim());
-    if (fallback.length >= 2) {
-        return `${fallback[0]} ${fallback[1]}`;
-    }
-
-    if (fallback.length === 1) {
-        return fallback[0];
-    }
-
-    return 'Recommendation is being computed from your latest outcomes.';
+function confidenceTier(effectiveSamples: number): { label: string; cls: string } {
+    if (effectiveSamples >= 100) return { label: 'Tier 1 — Stable', cls: 'text-[#b8ff00]' };
+    if (effectiveSamples >= 50) return { label: 'Tier 2 — Warming', cls: 'text-yellow-400' };
+    if (effectiveSamples >= 10) return { label: 'Tier 3 — Early', cls: 'text-orange-400' };
+    return { label: 'Cold Start', cls: 'text-[#52525b]' };
 }
 
-function deriveAgentMode(agent: AgentSummary | null): 'recommend' | 'assist' | 'auto' {
-    if (!agent) return 'recommend';
-    if (agent.trust_status === 'suspended') return 'recommend';
-    if (agent.total_outcomes >= 100) return 'auto';
-    if (agent.total_outcomes >= 50) return 'assist';
-    return 'recommend';
-}
+// ─── Micro sparkline ─────────────────────────────────────────────────────────
 
-function modeDescription(mode: 'recommend' | 'assist' | 'auto'): string {
-    if (mode === 'auto') {
-        return 'Auto mode: highest-confidence action can execute automatically.';
-    }
-    if (mode === 'assist') {
-        return 'Assist mode: recommendation is shown, developer confirms execution.';
-    }
-    return 'Recommend mode: collect outcomes and review recommendations manually.';
-}
+function Sparkline({ points, direction }: { points: Array<{ rate: number }>; direction: TrendDirection }): React.ReactElement | null {
+    if (points.length < 2) return null;
 
-function actionConfidencePercent(actionOutcomes: number, taskOutcomes: number, taskConfidence: number): number {
-    if (taskOutcomes <= 0) return 0;
+    const W = 120;
+    const H = 36;
+    const pad = 4;
+    const rates = points.map((p) => p.rate);
+    const min = Math.min(...rates);
+    const max = Math.max(...rates);
+    const range = max - min || 0.01;
 
-    const coverage = Math.sqrt(Math.min(1, Math.max(0, actionOutcomes / taskOutcomes)));
-    const confidence = Math.round(Math.max(0, Math.min(100, taskConfidence * coverage)));
+    const toX = (i: number) => pad + (i / (points.length - 1)) * (W - pad * 2);
+    const toY = (r: number) => H - pad - ((r - min) / range) * (H - pad * 2);
 
-    return confidence;
-}
+    const d = rates.map((r, i) => `${i === 0 ? 'M' : 'L'} ${toX(i).toFixed(1)} ${toY(r).toFixed(1)}`).join(' ');
 
-function deriveTaskConfidenceFromActions(actions: ActionPerformance[], taskOutcomes: number): number {
-    if (!Array.isArray(actions) || actions.length === 0 || taskOutcomes <= 0) {
-        return 0;
-    }
-
-    const ranked = [...actions]
-        .filter((action) => Number.isFinite(action.total_count) && action.total_count > 0)
-        .sort((a, b) => b.resolution_rate - a.resolution_rate);
-
-    if (ranked.length === 0) return 0;
-
-    const best = ranked[0]!;
-    const worst = ranked[ranked.length - 1]!;
-
-    const minArm = ranked.length >= 2
-        ? Math.min(best.total_count, worst.total_count)
-        : best.total_count;
-
-    const sampleStrength = Math.min(1, minArm / 30);
-    const outcomeStrength = Math.min(1, taskOutcomes / 100);
-    const separation = ranked.length >= 2
-        ? Math.min(1, Math.max(0, (best.resolution_rate - worst.resolution_rate) / 0.25))
-        : 0.25;
-
-    const blended = sampleStrength * 0.55 + outcomeStrength * 0.25 + separation * 0.20;
-    return Math.round(Math.max(0, Math.min(95, blended * 100)));
-}
-
-function confidenceChipClass(label: ConfidenceLabel): string {
-    if (label === 'very_high' || label === 'high') {
-        return 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30';
-    }
-    if (label === 'medium') {
-        return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
-    }
-    if (label === 'low') {
-        return 'bg-red-500/10 text-red-400 border-red-500/30';
-    }
-    return 'bg-[#1a1a24] text-[#a1a1aa] border-[#1a1a24]';
-}
-
-function stateChipClass(state: string): string {
-    if (state === 'stable') {
-        return 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30';
-    }
-    if (state === 'early_signal') {
-        return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
-    }
-    return 'bg-[#1a1a24] text-[#a1a1aa] border-[#1a1a24]';
-}
-
-function AgentMetricsCard({ agent }: { agent: AgentSummary }): React.ReactElement {
-    const mode = deriveAgentMode(agent);
+    const stroke =
+        direction === 'improving' ? ACCENT :
+        direction === 'degrading' ? '#f87171' :
+        '#52525b';
 
     return (
-        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#1a1a24] border border-[#252530] flex items-center justify-center shrink-0">
-                        <Bot size={16} className="text-[#a1a1aa]" />
-                    </div>
-                    <div className="min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{agent.agent_name}</p>
-                        <p className="text-[10px] text-[#52525b] font-mono truncate">{agent.agent_id}</p>
-                    </div>
+        <svg width={W} height={H} className="overflow-visible">
+            <path d={d} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+    );
+}
+
+// ─── Agent picker ─────────────────────────────────────────────────────────────
+
+function AgentPicker({
+    agents,
+    selectedId,
+    loading,
+    onChange,
+}: {
+    agents: AgentListItem[];
+    selectedId: string | null;
+    loading: boolean;
+    onChange: (id: string) => void;
+}): React.ReactElement {
+    return (
+        <div className="relative">
+            <select
+                value={selectedId ?? ''}
+                onChange={(e) => e.target.value && onChange(e.target.value)}
+                disabled={loading}
+                className="appearance-none w-full bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#b8ff00]/40 cursor-pointer pr-9 transition-colors min-w-[260px]"
+            >
+                {agents.length === 0 && <option value="">No agents</option>}
+                {agents.map((a) => (
+                    <option key={a.agent_id} value={a.agent_id}>
+                        {a.agent_name} · {a.total_outcomes.toLocaleString()} outcomes
+                    </option>
+                ))}
+            </select>
+            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#52525b] pointer-events-none" />
+        </div>
+    );
+}
+
+// ─── Agent overview card ──────────────────────────────────────────────────────
+
+function AgentOverviewCard({ agent }: { agent: AgentSummary }): React.ReactElement {
+    const trustCls =
+        agent.trust_status === 'active' ? 'text-[#b8ff00]' :
+        agent.trust_status === 'suspended' ? 'text-red-400' :
+        'text-[#52525b]';
+
+    return (
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#1a1a24] border border-[#252530] flex items-center justify-center shrink-0">
+                    <Bot size={16} className="text-[#a1a1aa]" />
                 </div>
-                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs bg-[#0d0d14] border-[#1a1a24] text-[#a1a1aa] shrink-0">
-                    <Shield size={11} />
-                    {agent.trust_status ?? 'unknown'}
-                </span>
+                <div className="min-w-0">
+                    <p className="text-sm font-semibold text-white truncate">{agent.agent_name}</p>
+                    <p className="text-[10px] text-[#52525b] font-mono truncate">{agent.agent_id}</p>
+                </div>
             </div>
 
+            {/* Stats grid */}
             <div className="grid grid-cols-3 gap-2">
-                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2.5">
-                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Outcomes</p>
-                    <p className="text-lg font-bold text-[#b8ff00] font-mono">{agent.total_outcomes.toLocaleString()}</p>
-                </div>
-                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2.5">
-                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Tasks</p>
-                    <p className="text-lg font-bold text-white font-mono">{agent.tasks.length}</p>
-                </div>
-                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2.5">
-                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Mode</p>
-                    <p className="text-lg font-bold text-white capitalize">{mode}</p>
-                </div>
+                <Stat label="Outcomes" value={agent.total_outcomes.toLocaleString()} accent />
+                <Stat label="Tasks" value={String(agent.tasks.length)} />
+                <Stat label="Trust" value={agent.trust_score !== null ? `${Math.round((agent.trust_score ?? 0) * 100)}%` : '—'} />
             </div>
 
-            <p className="text-[11px] text-[#52525b]">{modeDescription(mode)}</p>
+            {/* Trust badge */}
+            <div className="flex items-center gap-2">
+                <Shield size={11} className={trustCls} />
+                <span className={`text-xs capitalize ${trustCls}`}>{agent.trust_status ?? 'unknown'}</span>
+                {agent.llm_model && (
+                    <span className="ml-auto text-[10px] text-[#3f3f46] font-mono">{agent.llm_model}</span>
+                )}
+            </div>
 
-            <div className="text-[10px] text-[#3f3f46] flex flex-wrap gap-3">
-                {agent.llm_model && <span className="font-mono">model: {agent.llm_model}</span>}
-                {agent.window_days && <span>window: {agent.window_days}d</span>}
-                {agent.counts_source && <span>source: {agent.counts_source}</span>}
+            {/* All outcomes bar */}
+            <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-[#52525b]">
+                    <span>Total outcomes logged</span>
+                    <span className="font-mono">{agent.total_outcomes.toLocaleString()}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-[#1a1a24] overflow-hidden">
+                    <div
+                        className="h-full rounded-full bg-[#b8ff00]"
+                        style={{ width: `${Math.min(100, (agent.total_outcomes / 500) * 100)}%` }}
+                    />
+                </div>
             </div>
         </div>
     );
 }
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }): React.ReactElement {
+    return (
+        <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2.5">
+            <p className="text-[10px] text-[#52525b] uppercase tracking-wider">{label}</p>
+            <p className={`text-lg font-bold font-mono ${accent ? 'text-[#b8ff00]' : 'text-white'}`}>{value}</p>
+        </div>
+    );
+}
+
+// ─── Task list (left sidebar) ─────────────────────────────────────────────────
 
 function TaskList({
     tasks,
@@ -292,108 +312,40 @@ function TaskList({
 }: {
     tasks: TaskSummary[];
     selectedTask: string | null;
-    onSelect: (taskName: string) => void;
+    onSelect: (name: string) => void;
 }): React.ReactElement {
     if (tasks.length === 0) {
         return (
-            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 text-center space-y-2">
+            <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-6 text-center space-y-2">
                 <Database size={18} className="mx-auto text-[#3f3f46]" />
-                <p className="text-xs text-[#52525b]">No tasks logged for this agent yet.</p>
+                <p className="text-xs text-[#52525b]">No tasks logged yet.</p>
             </div>
         );
     }
 
     return (
-        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-3 space-y-1.5">
-            <p className="px-1 text-[10px] uppercase tracking-wider text-[#52525b]">Tasks</p>
-            {tasks.map((task) => {
-                const active = selectedTask === task.task_name;
-                const ready = task.total >= MIN_OUTCOMES_FOR_RECOMMENDATION;
-
-                return (
-                    <button
-                        key={task.task_name}
-                        onClick={() => onSelect(task.task_name)}
-                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${active
-                            ? 'bg-[#0f0f18] border-[#b8ff00]/30'
-                            : 'bg-[#0a0a0f] border-[#1a1a24] hover:bg-[#0f0f18]'
-                            }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <p className="text-xs text-white font-mono truncate">{task.task_name}</p>
-                            <span className="text-[10px] text-[#52525b] font-mono shrink-0">{task.total.toLocaleString()}</span>
-                        </div>
-                        <div className="mt-1 flex items-center gap-2">
-                            <div className="flex-1 h-1 rounded-full bg-[#1a1a24] overflow-hidden">
-                                <div
-                                    className={`h-full rounded-full ${ready ? 'bg-[#b8ff00]' : 'bg-yellow-400'}`}
-                                    style={{ width: `${Math.min(100, (task.total / 100) * 100)}%` }}
-                                />
-                            </div>
-                            <span className={`text-[10px] ${ready ? 'text-[#b8ff00]' : 'text-yellow-400'}`}>
-                                {ready ? 'ready' : `${Math.max(0, MIN_OUTCOMES_FOR_RECOMMENDATION - task.total)} to go`}
-                            </span>
-                        </div>
-                    </button>
-                );
-            })}
-        </div>
-    );
-}
-
-function ActionsTable({
-    actions,
-    taskOutcomes,
-    taskConfidence,
-}: {
-    actions: ActionPerformance[];
-    taskOutcomes: number;
-    taskConfidence: number;
-}): React.ReactElement {
-    const ordered = [...actions].sort((a, b) => b.total_count - a.total_count);
-
-    if (ordered.length === 0) {
-        return (
-            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 space-y-2">
-                <p className="text-xs font-medium text-white">Actions Logged For This Agent And Task</p>
-                <p className="text-xs text-[#52525b]">
-                    No action-level outcomes were found for this agent and task yet.
-                </p>
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-[#1a1a24]">
+                <p className="text-[10px] uppercase tracking-wider text-[#52525b]">Tasks · {tasks.length}</p>
             </div>
-        );
-    }
-
-    return (
-        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between gap-2 flex-wrap">
-                <p className="text-xs font-medium text-white">Actions Logged For This Agent And Task</p>
-                <span className="text-[10px] text-[#52525b]">Agent-scoped database data only</span>
-            </div>
-
-            <div className="divide-y divide-[#1a1a24]">
-                {ordered.map((action) => {
-                    const confidence = actionConfidencePercent(action.total_count, taskOutcomes, taskConfidence);
+            <div className="divide-y divide-[#1a1a24] max-h-[calc(100vh-420px)] overflow-y-auto">
+                {tasks.map((t) => {
+                    const active = t.task_name === selectedTask;
                     return (
-                        <div key={action.action_id} className="px-4 py-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <p className="text-xs font-mono text-white truncate">{action.action_name}</p>
-                                <span className="text-xs text-[#a1a1aa] font-mono shrink-0">{action.total_count.toLocaleString()} outcomes</span>
+                        <button
+                            key={t.task_name}
+                            onClick={() => onSelect(t.task_name)}
+                            className={`w-full text-left px-4 py-3 transition-colors ${active ? 'bg-[#0f1a00]' : 'hover:bg-[#0f0f18]'}`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <p className={`text-xs font-mono truncate ${active ? 'text-[#b8ff00]' : 'text-white'}`}>
+                                    {t.task_name}
+                                </p>
+                                <span className="text-[10px] text-[#52525b] font-mono shrink-0">
+                                    {t.total.toLocaleString()}
+                                </span>
                             </div>
-                            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-                                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-lg px-2.5 py-1.5">
-                                    <span className="text-[#52525b]">Resolution score</span>
-                                    <p className="text-white font-mono">{pct(action.resolution_rate)}</p>
-                                </div>
-                                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-lg px-2.5 py-1.5">
-                                    <span className="text-[#52525b]">Action confidence</span>
-                                    <p className="text-white font-mono">{confidence}%</p>
-                                </div>
-                                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-lg px-2.5 py-1.5">
-                                    <span className="text-[#52525b]">Last outcome</span>
-                                    <p className="text-white font-mono">{relativeTime(action.last_seen_at)}</p>
-                                </div>
-                            </div>
-                        </div>
+                        </button>
                     );
                 })}
             </div>
@@ -401,129 +353,548 @@ function ActionsTable({
     );
 }
 
-function TaskConfidenceCard({
-    confidencePercent,
-    outcomes,
+// ─── Task health header ───────────────────────────────────────────────────────
+
+function TaskHealthHeader({
+    taskName,
+    totalOutcomes,
+    rec,
+    analytics,
 }: {
-    confidencePercent: number;
-    outcomes: number;
+    taskName: string;
+    totalOutcomes: number;
+    rec: RecommendationResponse | null;
+    analytics: TaskAnalytics | null;
 }): React.ReactElement {
-    return (
-        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 space-y-3">
-            <p className="text-xs font-medium text-white">Task Confidence</p>
-            <div className="flex items-center justify-between">
-                <p className="text-2xl font-bold text-[#b8ff00] font-mono">{confidencePercent}%</p>
-                <p className="text-xs text-[#52525b]">{outcomes.toLocaleString()} outcomes</p>
-            </div>
-            <div className="h-2 rounded-full bg-[#1a1a24] overflow-hidden">
-                <div className="h-full rounded-full bg-[#b8ff00]" style={{ width: `${Math.max(0, Math.min(100, confidencePercent))}%` }} />
-            </div>
-            <p className="text-[11px] text-[#52525b]">
-                Confidence is computed from database outcomes and action score signals for this task.
-            </p>
-        </div>
-    );
-}
-
-function RecommendationCard({
-    recommendation,
-    summary,
-    taskOutcomes,
-    displayConfidence,
-}: {
-    recommendation: RecommendationResponse;
-    summary: string;
-    taskOutcomes: number;
-    displayConfidence: number;
-}): React.ReactElement {
-    const rankedActions = [...(recommendation.all_actions ?? [])]
-        .filter((action) => action.total_count > 0)
-        .sort((a, b) => b.resolution_rate - a.resolution_rate);
-
-    const fallbackBest = rankedActions[0] ?? null;
-    const fallbackWorst = rankedActions.length > 1 ? rankedActions[rankedActions.length - 1] : null;
-    const canShowFallbackRecommendation = recommendation.state === 'no_data'
-        && taskOutcomes >= MIN_OUTCOMES_FOR_RECOMMENDATION
-        && !!fallbackBest
-        && !!fallbackWorst
-        && fallbackBest.action_name !== fallbackWorst.action_name;
-
-    const fallbackDelta = canShowFallbackRecommendation
-        ? (fallbackBest!.resolution_rate - fallbackWorst!.resolution_rate)
-        : null;
+    const hasSufficient = totalOutcomes >= MIN_OUTCOMES_FOR_RECOMMENDATION;
+    const confidenceMeta = rec?.confidence_meta;
+    const cl = confidenceMeta ? confidenceLabel(confidenceMeta.label) : null;
+    const drift = analytics?.drift ?? null;
 
     return (
-        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 space-y-3">
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
+            {/* Task name + badges */}
             <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                    <Zap size={14} className="text-[#b8ff00]" />
-                    <p className="text-xs font-medium text-white">Recommendation</p>
+                <div>
+                    <p className="text-base font-bold text-white font-mono">{taskName}</p>
+                    <p className="text-xs text-[#52525b] mt-0.5">
+                        {totalOutcomes.toLocaleString()} outcomes logged for this task by this agent
+                    </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`px-2 py-0.5 rounded-full border text-[11px] capitalize ${stateChipClass(recommendation.state)}`}>
-                        {recommendation.state}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full border text-[11px] ${confidenceChipClass(recommendation.confidence_meta.label)}`}>
-                        {displayConfidence}% confidence
-                    </span>
+                    {rec?.state && (
+                        <span className="px-2.5 py-1 rounded-full border text-xs capitalize bg-[#1a1a24] border-[#252530] text-[#a1a1aa]">
+                            {rec.state.replace('_', ' ')}
+                        </span>
+                    )}
+                    {cl && (
+                        <span className={`px-2.5 py-1 rounded-full border text-xs ${cl.cls}`}>
+                            {cl.text} confidence
+                        </span>
+                    )}
+                    {drift && drift.direction !== 'unknown' && (
+                        <span className={`px-2.5 py-1 rounded-full border text-xs flex items-center gap-1 ${
+                            drift.direction === 'degrading' ? 'bg-red-500/10 text-red-400 border-red-500/30' :
+                            drift.direction === 'improving' ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30' :
+                            'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]'
+                        }`}>
+                            {drift.direction === 'degrading' ? <TrendingDown size={10} /> :
+                             drift.direction === 'improving' ? <TrendingUp size={10} /> :
+                             <Minus size={10} />}
+                            {drift.direction}
+                        </span>
+                    )}
                 </div>
             </div>
 
-            {recommendation.llm_narrative?.headline && (
-                <p className="text-sm font-semibold text-white">{recommendation.llm_narrative.headline}</p>
-            )}
-
-            <p className="text-sm text-[#a1a1aa] leading-relaxed">{summary}</p>
-
-            {recommendation.insight.best_action && (
-                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-lg px-3 py-2.5 space-y-1">
-                    <p className="text-[11px] text-[#52525b]">Best action</p>
-                    <p className="text-sm text-white font-mono">{recommendation.insight.best_action}</p>
-                    <p className="text-[11px] text-[#a1a1aa]">
-                        Score: {pct(recommendation.insight.best_rate)}
-                        {recommendation.insight.delta !== null && recommendation.insight.delta > 0 && (
-                            <span className="text-[#b8ff00] ml-2">(+{(recommendation.insight.delta * 100).toFixed(1)}pp vs baseline)</span>
-                        )}
-                    </p>
-                </div>
-            )}
-
-            {canShowFallbackRecommendation && (
-                <div className="bg-[#0d0d14] border border-[#b8ff00]/20 rounded-lg px-3 py-2.5 space-y-1">
-                    <p className="text-[11px] text-[#52525b]">Observed best action from this agent's outcomes</p>
-                    <p className="text-sm text-white font-mono">{fallbackBest!.action_name}</p>
-                    <p className="text-[11px] text-[#a1a1aa]">
-                        {pct(fallbackBest!.resolution_rate)} vs {pct(fallbackWorst!.resolution_rate)}
-                        {fallbackDelta !== null && (
-                            <span className="text-[#b8ff00] ml-2">(+{(fallbackDelta * 100).toFixed(1)}pp)</span>
-                        )}
-                    </p>
-                </div>
-            )}
-
-            <div className="text-[11px] text-[#52525b] space-y-1">
-                <p>{recommendation.reason.evidence}</p>
-                <p>{recommendation.reason.confidence_note}</p>
+            {/* KPI row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <KpiCell
+                    label="Total Attempts"
+                    value={totalOutcomes.toLocaleString()}
+                    sub={hasSufficient ? 'Recommendation ready' : `${Math.max(0, MIN_OUTCOMES_FOR_RECOMMENDATION - totalOutcomes)} more needed`}
+                    accent={hasSufficient}
+                />
+                <KpiCell
+                    label="Best Win Rate"
+                    value={rec?.insight?.best_rate != null ? pct(rec.insight.best_rate) : '—'}
+                    sub={rec?.insight?.best_action ?? 'no data'}
+                />
+                <KpiCell
+                    label="Confidence"
+                    value={rec?.confidence_meta?.percent != null ? `${rec.confidence_meta.percent}%` : '—'}
+                    sub={rec?.confidence_source?.replace('_', ' ') ?? '—'}
+                />
+                <KpiCell
+                    label="Drift Slope"
+                    value={drift?.slope != null ? (drift.slope > 0 ? `+${(drift.slope * 100).toFixed(2)}pp` : `${(drift.slope * 100).toFixed(2)}pp`) : '—'}
+                    sub={`per outcome (${drift?.window_size ?? 0} sampled)`}
+                    danger={drift?.direction === 'degrading'}
+                    good={drift?.direction === 'improving'}
+                />
             </div>
 
-            <p className="text-xs text-white">{recommendation.message}</p>
-
-            {recommendation.agent_scope !== 'agent_scoped' && (
-                <div className="flex items-start gap-2 text-[11px] text-blue-300/80 bg-blue-500/8 border border-blue-500/20 rounded-lg px-3 py-2">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                    Strict agent scope was requested, but response scope is blended. Verify API fallback settings.
+            {/* Insufficient data gate */}
+            {!hasSufficient && (
+                <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-4">
+                    <AlertTriangle size={14} className="text-yellow-400 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-sm font-medium text-yellow-400">Not enough outcomes for a recommendation</p>
+                        <p className="text-xs text-yellow-200/70 mt-1">
+                            Log at least {MIN_OUTCOMES_FOR_RECOMMENDATION} outcomes for this task. Currently at {totalOutcomes}.
+                            Each <code className="font-mono bg-yellow-500/10 px-1 rounded">log_outcome</code> call with{' '}
+                            <code className="font-mono bg-yellow-500/10 px-1 rounded">task=&quot;{taskName}&quot;</code> counts toward this threshold.
+                        </p>
+                    </div>
                 </div>
             )}
-
-            <p className="text-[10px] text-[#3f3f46]">
-                Generated {relativeTime(recommendation.generated_at)}
-                {recommendation.llm_narrative?.generated && recommendation.llm_narrative.model
-                    ? ` by ${recommendation.llm_narrative.model}`
-                    : ''}
-            </p>
         </div>
     );
 }
+
+function KpiCell({ label, value, sub, accent, danger, good }: {
+    label: string;
+    value: string;
+    sub?: string;
+    accent?: boolean;
+    danger?: boolean;
+    good?: boolean;
+}): React.ReactElement {
+    const valueColor = danger ? 'text-red-400' : good ? 'text-[#b8ff00]' : accent ? 'text-[#b8ff00]' : 'text-white';
+    return (
+        <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-3">
+            <p className="text-[10px] text-[#52525b] uppercase tracking-wider">{label}</p>
+            <p className={`text-xl font-bold font-mono mt-1 ${valueColor}`}>{value}</p>
+            {sub && <p className="text-[10px] text-[#3f3f46] mt-1 truncate">{sub}</p>}
+        </div>
+    );
+}
+
+// ─── Drift alert ──────────────────────────────────────────────────────────────
+
+function DriftAlert({ analytics }: { analytics: TaskAnalytics }): React.ReactElement | null {
+    const { drift } = analytics;
+    if (drift.direction !== 'degrading' || drift.slope === null) return null;
+
+    const dropPp = Math.abs(drift.slope * 100).toFixed(2);
+
+    return (
+        <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/20 rounded-2xl p-4">
+            <TrendingDown size={16} className="text-red-400 mt-0.5 shrink-0" />
+            <div className="space-y-1 flex-1">
+                <p className="text-sm font-semibold text-red-400">Context drift detected — early warning</p>
+                <p className="text-xs text-[#a1a1aa]">
+                    The success rate for this task is dropping <strong className="text-red-300">{dropPp}pp per outcome</strong> over the
+                    last {drift.window_size} executions
+                    {drift.confidence !== null ? ` (R² = ${drift.confidence.toFixed(2)})` : ''}.
+                    The engine is about to pivot. If your agent is hard-coded to use one action, it may stop matching the
+                    recommendation before you notice.
+                </p>
+                {drift.points.length >= 2 && (
+                    <div className="pt-2">
+                        <Sparkline points={drift.points} direction="degrading" />
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ─── LLM Insight panel ────────────────────────────────────────────────────────
+
+function LLMInsightPanel({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
+    const n = rec.llm_narrative;
+    if (!n?.generated) {
+        // Static fallback
+        const headline = rec.reason.summary;
+        if (!headline) return null;
+        return (
+            <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                    <Zap size={14} className="text-[#b8ff00]" />
+                    <p className="text-xs font-semibold text-white uppercase tracking-wider">Engine Insight</p>
+                </div>
+                <p className="text-sm text-[#a1a1aa]">{headline}</p>
+                {rec.reason.evidence && <p className="text-xs text-[#52525b]">{rec.reason.evidence}</p>}
+                {rec.message && (
+                    <div className="flex items-start gap-2 pt-2 border-t border-[#1a1a24]">
+                        <ArrowRight size={13} className="text-[#b8ff00] mt-0.5 shrink-0" />
+                        <p className="text-xs text-white">{rec.message}</p>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2">
+                    <Zap size={14} className="text-[#b8ff00]" />
+                    <p className="text-xs font-semibold text-white uppercase tracking-wider">AI Analysis</p>
+                    <span className="text-[10px] text-[#3f3f46] font-mono">{n.model ?? 'gpt-4o-mini'}</span>
+                </div>
+                {n.trend_direction && n.trend_direction !== 'unknown' && (
+                    <span className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${
+                        n.trend_direction === 'improving' ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30' :
+                        n.trend_direction === 'degrading' ? 'bg-red-500/10 text-red-400 border-red-500/30' :
+                        'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]'
+                    }`}>
+                        {n.trend_direction === 'improving' ? <ArrowUp size={9} /> :
+                         n.trend_direction === 'degrading' ? <ArrowDown size={9} /> :
+                         <Minus size={9} />}
+                        {n.trend_direction}
+                    </span>
+                )}
+            </div>
+
+            {/* Headline */}
+            {n.headline && (
+                <p className="text-sm font-semibold text-white leading-snug">{n.headline}</p>
+            )}
+
+            {/* Narrative */}
+            {n.narrative && (
+                <p className="text-sm text-[#a1a1aa] leading-relaxed">{n.narrative}</p>
+            )}
+
+            {/* Evidence */}
+            {n.evidence && (
+                <p className="text-xs text-[#52525b] border-l-2 border-[#1a1a24] pl-3">{n.evidence}</p>
+            )}
+
+            {/* Next steps */}
+            {n.next_steps && n.next_steps.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-[#1a1a24]">
+                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">What to do</p>
+                    {n.next_steps.map((step, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                            <ArrowRight size={12} className="text-[#b8ff00] mt-0.5 shrink-0" />
+                            <p className="text-xs text-white">{step}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Risk factors */}
+            {n.risk_factors && n.risk_factors.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-[#1a1a24]">
+                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Risk factors</p>
+                    {n.risk_factors.map((r, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                            <AlertTriangle size={11} className="text-yellow-400 mt-0.5 shrink-0" />
+                            <p className="text-xs text-yellow-200/80">{r}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Confidence note */}
+            {n.confidence_note && (
+                <p className="text-[10px] text-[#3f3f46] pt-2 border-t border-[#1a1a24]">{n.confidence_note}</p>
+            )}
+        </div>
+    );
+}
+
+// ─── Action leaderboard ───────────────────────────────────────────────────────
+
+function ActionLeaderboard({
+    actions,
+    bestActionName,
+    totalOutcomes,
+}: {
+    actions: ActionPerformance[];
+    bestActionName: string | null;
+    totalOutcomes: number;
+}): React.ReactElement {
+    const sorted = [...actions].sort((a, b) => b.resolution_rate - a.resolution_rate);
+
+    if (sorted.length === 0) {
+        return (
+            <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-2">
+                <p className="text-xs font-semibold text-white">Action Leaderboard</p>
+                <p className="text-xs text-[#52525b]">No action-level outcomes logged for this task yet.</p>
+            </div>
+        );
+    }
+
+    const best = sorted[0]!;
+    const worst = sorted[sorted.length - 1]!;
+    const delta = sorted.length >= 2 ? best.resolution_rate - worst.resolution_rate : null;
+
+    return (
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#1a1a24] space-y-1">
+                <p className="text-xs font-semibold text-white">Action Leaderboard — What Works</p>
+                <p className="text-[10px] text-[#52525b]">
+                    Ranked by resolution rate (weighted outcome score). Confidence tier shows statistical reliability of each score.
+                </p>
+                {delta !== null && (
+                    <p className="text-[10px] text-[#a1a1aa]">
+                        Performance gap: <span className="text-[#b8ff00] font-mono">{pct(delta)}</span> between best and worst action.
+                        {delta >= 0.1 && ' Switching to the top action can meaningfully improve resolution.'}
+                    </p>
+                )}
+            </div>
+
+            <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                    <thead>
+                        <tr className="border-b border-[#1a1a24] text-[#52525b] text-[10px] uppercase tracking-wider">
+                            <th className="text-left px-5 py-2.5 font-medium">Action</th>
+                            <th className="text-right px-4 py-2.5 font-medium">Win Rate</th>
+                            <th className="text-right px-4 py-2.5 font-medium">Attempts</th>
+                            <th className="text-right px-4 py-2.5 font-medium">ML Score</th>
+                            <th className="text-right px-4 py-2.5 font-medium">Convergence</th>
+                            <th className="text-right px-4 py-2.5 font-medium">Confidence Tier</th>
+                            <th className="text-right px-5 py-2.5 font-medium">Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1a1a24]">
+                        {sorted.map((action, rank) => {
+                            const isRecommended = action.action_name === bestActionName;
+                            const tier = confidenceTier(action.effective_sample_count ?? action.total_count);
+                            const share = totalOutcomes > 0 ? action.total_count / totalOutcomes : 0;
+                            const conv = action.semantic_cluster_convergence ?? null;
+
+                            return (
+                                <tr
+                                    key={action.action_id}
+                                    className={`transition-colors ${isRecommended ? 'bg-[#0f1a00]' : 'hover:bg-[#0f0f18]'}`}
+                                >
+                                    {/* Action name */}
+                                    <td className="px-5 py-3">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-[#3f3f46] font-mono w-4 shrink-0">
+                                                #{rank + 1}
+                                            </span>
+                                            <span className={`font-mono font-medium truncate max-w-[160px] ${isRecommended ? 'text-[#b8ff00]' : 'text-white'}`}>
+                                                {action.action_name}
+                                            </span>
+                                            {isRecommended && (
+                                                <span className="text-[9px] px-1.5 py-0.5 bg-[#b8ff00]/15 text-[#b8ff00] border border-[#b8ff00]/30 rounded-full shrink-0">
+                                                    BEST
+                                                </span>
+                                            )}
+                                        </div>
+                                        {/* Share bar */}
+                                        <div className="mt-1.5 ml-6 h-1 rounded-full bg-[#1a1a24] overflow-hidden w-32">
+                                            <div
+                                                className={`h-full rounded-full ${isRecommended ? 'bg-[#b8ff00]' : 'bg-[#3f3f46]'}`}
+                                                style={{ width: `${(share * 100).toFixed(1)}%` }}
+                                            />
+                                        </div>
+                                    </td>
+
+                                    {/* Win rate */}
+                                    <td className="px-4 py-3 text-right">
+                                        <span className={`font-mono font-semibold ${isRecommended ? 'text-[#b8ff00]' : 'text-white'}`}>
+                                            {pct(action.resolution_rate)}
+                                        </span>
+                                    </td>
+
+                                    {/* Attempts */}
+                                    <td className="px-4 py-3 text-right text-[#a1a1aa] font-mono">
+                                        {action.total_count.toLocaleString()}
+                                    </td>
+
+                                    {/* ML score */}
+                                    <td className="px-4 py-3 text-right">
+                                        {action.ml_score != null ? (
+                                            <span className="font-mono text-[#a1a1aa]">
+                                                {(action.ml_score * 100).toFixed(1)}%
+                                            </span>
+                                        ) : (
+                                            <span className="text-[#3f3f46]">—</span>
+                                        )}
+                                    </td>
+
+                                    {/* Semantic convergence */}
+                                    <td className="px-4 py-3 text-right">
+                                        {conv !== null ? (
+                                            <span className={`font-mono text-xs ${conv >= 0.7 ? 'text-[#b8ff00]' : conv >= 0.5 ? 'text-yellow-400' : 'text-[#52525b]'}`}>
+                                                {pct(conv, 0)}
+                                            </span>
+                                        ) : (
+                                            <span className="text-[#3f3f46]">—</span>
+                                        )}
+                                    </td>
+
+                                    {/* Confidence tier */}
+                                    <td className="px-4 py-3 text-right">
+                                        <span className={`text-[10px] ${tier.cls}`}>{tier.label}</span>
+                                    </td>
+
+                                    {/* Last seen */}
+                                    <td className="px-5 py-3 text-right text-[10px] text-[#52525b]">
+                                        {relTime(action.last_seen_at)}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+// ─── Engine interventions ─────────────────────────────────────────────────────
+
+function EngineInterventions({
+    analytics,
+    rec,
+}: {
+    analytics: TaskAnalytics;
+    rec: RecommendationResponse;
+}): React.ReactElement {
+    const { explore_exploit, trust_blocks } = analytics;
+    const exploreRatio = explore_exploit.explore_ratio;
+    const trustBlockRate = trust_blocks.total > 0 ? trust_blocks.blocked_count / trust_blocks.total : 0;
+
+    const noiseGate = rec.noise_gate;
+    const silentWarning = rec._silent_failure_warning ?? false;
+    const cohortBand = rec.cohort_reliability?.band ?? null;
+    const bandCls = cohortBand === 'stable' ? 'text-[#b8ff00]' : cohortBand === 'anomalous' ? 'text-red-400' : 'text-yellow-400';
+
+    return (
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
+            <p className="text-xs font-semibold text-white">Engine Interventions & Policy Map</p>
+            <p className="text-[10px] text-[#52525b]">
+                Visibility into when Layerinfinite overrode your agent, tested new actions, or blocked execution.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {/* Explore ratio */}
+                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-3 space-y-1">
+                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Exploration Rate</p>
+                    <p className={`text-lg font-bold font-mono ${
+                        exploreRatio === null ? 'text-[#3f3f46]' :
+                        exploreRatio > 0.25 ? 'text-yellow-400' : 'text-white'
+                    }`}>
+                        {exploreRatio !== null ? pct(exploreRatio) : '—'}
+                    </p>
+                    <p className="text-[10px] text-[#3f3f46]">
+                        {explore_exploit.explore_count} explore / {explore_exploit.exploit_count} exploit
+                    </p>
+                </div>
+
+                {/* Trust blocks */}
+                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-3 space-y-1">
+                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Trust Blocks</p>
+                    <p className={`text-lg font-bold font-mono ${trust_blocks.blocked_count > 0 ? 'text-red-400' : 'text-[#3f3f46]'}`}>
+                        {trust_blocks.blocked_count}
+                    </p>
+                    <p className="text-[10px] text-[#3f3f46]">
+                        {trust_blocks.total > 0 ? `${(trustBlockRate * 100).toFixed(1)}% of outcomes` : 'no blocks'}
+                    </p>
+                </div>
+
+                {/* Signal reliability */}
+                <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-3 space-y-1">
+                    <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Signal Reliability</p>
+                    <p className={`text-lg font-bold capitalize ${bandCls}`}>
+                        {cohortBand ?? '—'}
+                    </p>
+                    {rec.cohort_reliability?.reasons?.slice(0, 1).map((r, i) => (
+                        <p key={i} className="text-[10px] text-[#3f3f46] truncate">{r}</p>
+                    ))}
+                </div>
+            </div>
+
+            {/* Warnings */}
+            <div className="space-y-2">
+                {silentWarning && (
+                    <div className="flex items-start gap-2 text-xs text-yellow-300/80 bg-yellow-500/5 border border-yellow-500/15 rounded-lg px-3 py-2">
+                        <AlertTriangle size={12} className="shrink-0 mt-0.5 text-yellow-400" />
+                        <span>
+                            Silent failure warning: some outcomes were marked <code className="font-mono">success=true</code> but
+                            had low outcome scores. The engine has discounted these — your success signals may be over-reporting.
+                        </span>
+                    </div>
+                )}
+                {noiseGate?.is_noisy_task && (
+                    <div className="flex items-start gap-2 text-xs text-[#a1a1aa] bg-[#1a1a24] border border-[#252530] rounded-lg px-3 py-2">
+                        <Shield size={12} className="shrink-0 mt-0.5 text-[#52525b]" />
+                        <span>
+                            Noise gate active: this task has high variance (noise score {(noiseGate.task_noise_score * 100).toFixed(0)}%).
+                            The engine requires more samples before acting on a performance gap.
+                        </span>
+                    </div>
+                )}
+                {exploreRatio !== null && exploreRatio > 0.3 && (
+                    <div className="flex items-start gap-2 text-xs text-[#a1a1aa] bg-[#1a1a24] border border-[#252530] rounded-lg px-3 py-2">
+                        <Zap size={12} className="shrink-0 mt-0.5 text-[#b8ff00]" />
+                        <span>
+                            High exploration rate ({pct(exploreRatio)}). The engine is still testing alternative actions.
+                            Win rates will stabilise as exploitation increases.
+                        </span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ─── Data sources panel ───────────────────────────────────────────────────────
+
+function DataSourcesPanel({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
+    const ds = rec.data_sources;
+    const freshness = rec.data_freshness;
+    const scope = rec.scope_transition;
+
+    if (!ds && !freshness && !scope) return null;
+
+    return (
+        <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-3">
+            <p className="text-xs font-semibold text-white">Data Sources & Scope</p>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+                {ds && (
+                    <>
+                        <div className="space-y-1">
+                            <p className="text-[10px] text-[#52525b] uppercase tracking-wider">SDK Outcomes</p>
+                            <p className="text-sm font-mono text-white">{ds.sdk_outcomes.toLocaleString()}</p>
+                        </div>
+                        <div className="space-y-1">
+                            <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Imported</p>
+                            <p className="text-sm font-mono text-white">{ds.uploaded_outcomes.toLocaleString()}</p>
+                        </div>
+                        {ds.quality_score !== null && (
+                            <div className="space-y-1">
+                                <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Data Quality</p>
+                                <p className={`text-sm font-mono ${ds.quality_score >= 0.7 ? 'text-[#b8ff00]' : ds.quality_score >= 0.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                    {(ds.quality_score * 100).toFixed(0)}%
+                                </p>
+                            </div>
+                        )}
+                    </>
+                )}
+                {freshness && (
+                    <div className="space-y-1">
+                        <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Data Freshness</p>
+                        <p className={`text-sm font-mono ${freshness.is_stale ? 'text-red-400' : 'text-[#b8ff00]'}`}>
+                            {freshness.label}
+                        </p>
+                    </div>
+                )}
+            </div>
+
+            {scope?.fallback_applied && (
+                <div className="text-[10px] text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/15 rounded-lg px-3 py-2">
+                    Scope fallback active: agent-specific evidence is insufficient. Using blended cohort signal.
+                    {scope.remaining_samples_to_next_bucket !== null && (
+                        <> {scope.remaining_samples_to_next_bucket} more outcomes needed to switch to agent-scoped.</>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function RecommendationsPage(): React.ReactElement {
     const { apiKey, isValid, error: keyError, handleAuthFailure } = useAgentApiKey();
@@ -537,79 +908,71 @@ export default function RecommendationsPage(): React.ReactElement {
 
     const [selectedTask, setSelectedTask] = useState<string | null>(null);
 
-    const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
-    const [recommendationLoading, setRecommendationLoading] = useState(false);
-    const [recommendationError, setRecommendationError] = useState<string | null>(null);
+    const [rec, setRec] = useState<RecommendationResponse | null>(null);
+    const [recLoading, setRecLoading] = useState(false);
+    const [recError, setRecError] = useState<string | null>(null);
+
+    const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
+    const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
     const refreshRef = useRef<(() => void) | null>(null);
-    const latestRecommendationToken = useRef(0);
-    const latestSummaryToken = useRef(0);
+    const recToken = useRef(0);
+    const summaryToken = useRef(0);
 
+    // ── Load agent list ──────────────────────────────────────
     useEffect(() => {
         if (!isValid || !apiKey || !API_BASE) return;
-
         setAgentsLoading(true);
-        const controller = new AbortController();
+        const ctrl = new AbortController();
 
         void (async () => {
             try {
-                const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const response = await agentFetch(
-                    `${API_BASE}/v1/recommendations/agent-summary?t=${Date.now()}`,
-                    { signal: controller.signal, cache: 'no-store' },
-                );
-
-                if (response.ok) {
-                    const json = await response.json() as { agents: AgentListItem[] };
+                const fetch_ = createAgentFetch(apiKey, handleAuthFailure);
+                const res = await fetch_(`${API_BASE}/v1/recommendations/agent-summary?t=${Date.now()}`, {
+                    signal: ctrl.signal,
+                    cache: 'no-store',
+                });
+                if (res.ok) {
+                    const json = await res.json() as { agents: AgentListItem[] };
                     const list = json.agents ?? [];
                     setAgents(list);
-
-                    setSelectedAgentId((current) => {
-                        if (current && list.some((agent) => agent.agent_id === current)) return current;
-                        return list[0]?.agent_id ?? null;
-                    });
-
+                    setSelectedAgentId((cur) => (cur && list.some((a) => a.agent_id === cur) ? cur : list[0]?.agent_id ?? null));
                     return;
                 }
-            } catch (error: any) {
-                if (error?.name === 'AbortError') return;
-                console.warn('[recommendations] failed to fetch agents list:', error.message);
+            } catch (e: any) {
+                if (e?.name === 'AbortError') return;
             } finally {
                 setAgentsLoading(false);
             }
 
+            // Supabase fallback
             try {
                 const { data } = await supabase
                     .from('dim_agents')
                     .select('agent_id, agent_name, agent_type, llm_model')
                     .order('agent_name');
-
-                const fallback = (data ?? []).map((row) => ({
-                    agent_id: row.agent_id,
-                    agent_name: row.agent_name,
-                    agent_type: row.agent_type ?? null,
-                    llm_model: row.llm_model ?? null,
+                const list = (data ?? []).map((r) => ({
+                    agent_id: r.agent_id,
+                    agent_name: r.agent_name,
+                    agent_type: r.agent_type ?? null,
+                    llm_model: r.llm_model ?? null,
                     total_outcomes: 0,
                 }));
-
-                setAgents(fallback);
-                setSelectedAgentId((current) => {
-                    if (current && fallback.some((agent) => agent.agent_id === current)) return current;
-                    return fallback[0]?.agent_id ?? null;
-                });
-            } catch (error: any) {
-                console.warn('[recommendations] supabase fallback failed:', error.message);
-            }
+                setAgents(list);
+                setSelectedAgentId((cur) => (cur && list.some((a) => a.agent_id === cur) ? cur : list[0]?.agent_id ?? null));
+            } catch { /* ignore */ }
         })();
 
-        return () => controller.abort();
+        return () => ctrl.abort();
     }, [isValid, apiKey, handleAuthFailure]);
 
+    // ── Load agent summary (tasks list) when agent changes ───
     useEffect(() => {
         setAgentSummary(null);
         setSelectedTask(null);
-        setRecommendation(null);
-        setRecommendationError(null);
+        setRec(null);
+        setRecError(null);
+        setAnalytics(null);
 
         if (!isValid || !apiKey || !API_BASE || !selectedAgentId) {
             setSummaryLoading(false);
@@ -617,118 +980,122 @@ export default function RecommendationsPage(): React.ReactElement {
         }
 
         setSummaryLoading(true);
-        const controller = new AbortController();
-        const token = ++latestSummaryToken.current;
+        const ctrl = new AbortController();
+        const tok = ++summaryToken.current;
 
         void (async () => {
             try {
-                const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const response = await agentFetch(
+                const fetch_ = createAgentFetch(apiKey, handleAuthFailure);
+                const res = await fetch_(
                     `${API_BASE}/v1/recommendations/agent-summary?agent_id=${encodeURIComponent(selectedAgentId)}&t=${Date.now()}`,
-                    { signal: controller.signal, cache: 'no-store' },
+                    { signal: ctrl.signal, cache: 'no-store' },
                 );
-
-                if (response.ok) {
-                    const json = await response.json() as AgentSummary;
-                    if (token !== latestSummaryToken.current) return;
-                    if (json.agent_id !== selectedAgentId) {
-                        throw new Error('Agent summary response mismatch; ignoring stale response.');
-                    }
+                if (res.ok) {
+                    const json = await res.json() as AgentSummary;
+                    if (tok !== summaryToken.current) return;
                     setAgentSummary(json);
-                    if (json.tasks.length > 0) {
-                        setSelectedTask(json.tasks[0]?.task_name ?? null);
-                    }
+                    if (json.tasks.length > 0) setSelectedTask(json.tasks[0]?.task_name ?? null);
                 }
-            } catch (error: any) {
-                if (error?.name === 'AbortError') return;
-                console.warn('[recommendations] failed to fetch agent summary:', error.message);
+            } catch (e: any) {
+                if (e?.name === 'AbortError') return;
             } finally {
-                if (token === latestSummaryToken.current) {
-                    setSummaryLoading(false);
-                }
+                if (tok === summaryToken.current) setSummaryLoading(false);
             }
         })();
 
-        return () => controller.abort();
+        return () => ctrl.abort();
     }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
 
-    const fetchRecommendation = useCallback(async (taskName: string, showLoading = true) => {
+    // ── Fetch recommendation + analytics when task changes ───
+    const fetchData = useCallback(async (taskName: string, showLoading: boolean) => {
         if (!isValid || !apiKey || !API_BASE || !selectedAgentId) return;
 
-        const token = ++latestRecommendationToken.current;
-        if (showLoading) setRecommendationLoading(true);
-        setRecommendationError(null);
+        const tok = ++recToken.current;
+        if (showLoading) {
+            setRecLoading(true);
+            setAnalyticsLoading(true);
+        }
+        setRecError(null);
 
-        try {
-            const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-            const response = await agentFetch(
+        const fetch_ = createAgentFetch(apiKey, handleAuthFailure);
+
+        // Fetch recommendation and analytics in parallel
+        const [recRes, analyticsRes] = await Promise.allSettled([
+            fetch_(
                 `${API_BASE}/v1/recommendations?task=${encodeURIComponent(taskName)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=1&t=${Date.now()}`,
                 { cache: 'no-store' },
-            );
+            ),
+            fetch_(
+                `${API_BASE}/v1/recommendations/task-analytics?task=${encodeURIComponent(taskName)}&agent_id=${encodeURIComponent(selectedAgentId)}&t=${Date.now()}`,
+                { cache: 'no-store' },
+            ),
+        ]);
 
-            if (!response.ok) {
-                const body = await response.json().catch(() => ({}));
-                throw new Error((body as any)?.error ?? `HTTP ${response.status}`);
+        if (tok !== recToken.current) return;
+
+        // Recommendation
+        if (recRes.status === 'fulfilled' && recRes.value.ok) {
+            try {
+                const json = await recRes.value.json() as RecommendationResponse;
+                if (tok !== recToken.current) return;
+                setRec(json);
+            } catch {
+                setRec(null);
+                setRecError('Failed to parse recommendation response.');
             }
-
-            const json = await response.json() as RecommendationResponse;
-            if (token !== latestRecommendationToken.current) return;
-
-            setRecommendation(json);
-        } catch (error: any) {
-            if (token !== latestRecommendationToken.current) return;
-            setRecommendation(null);
-            setRecommendationError(error.message ?? 'Failed to load recommendation.');
-        } finally {
-            if (token === latestRecommendationToken.current) {
-                setRecommendationLoading(false);
+        } else {
+            setRec(null);
+            if (recRes.status === 'fulfilled') {
+                const body = await recRes.value.json().catch(() => ({})) as Record<string, unknown>;
+                setRecError((body['error'] as string) ?? `HTTP ${recRes.value.status}`);
+            } else {
+                setRecError(recRes.reason?.message ?? 'Network error');
             }
+        }
+
+        // Analytics (non-fatal — page still works without it)
+        if (analyticsRes.status === 'fulfilled' && analyticsRes.value.ok) {
+            try {
+                const json = await analyticsRes.value.json() as TaskAnalytics;
+                if (tok === recToken.current) setAnalytics(json);
+            } catch { /* ignore */ }
+        }
+
+        if (tok === recToken.current) {
+            setRecLoading(false);
+            setAnalyticsLoading(false);
         }
     }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
 
     useEffect(() => {
         if (!selectedTask) {
-            setRecommendation(null);
-            setRecommendationError(null);
+            setRec(null);
+            setRecError(null);
+            setAnalytics(null);
             refreshRef.current = null;
             return;
         }
 
-        setRecommendation(null);
-        setRecommendationError(null);
+        setRec(null);
+        setRecError(null);
+        setAnalytics(null);
 
-        refreshRef.current = () => {
-            void fetchRecommendation(selectedTask, false);
-        };
+        refreshRef.current = () => void fetchData(selectedTask, false);
+        void fetchData(selectedTask, true);
 
-        void fetchRecommendation(selectedTask, true);
-
-        const interval = window.setInterval(() => {
-            void fetchRecommendation(selectedTask, false);
-        }, 30000);
-
+        const interval = window.setInterval(() => void fetchData(selectedTask, false), 30_000);
         return () => {
             window.clearInterval(interval);
             refreshRef.current = null;
         };
-    }, [selectedTask, fetchRecommendation]);
+    }, [selectedTask, fetchData]);
 
-    const currentTaskSummary = useMemo(() => {
-        if (!agentSummary || !selectedTask) return null;
-        return agentSummary.tasks.find((task) => task.task_name === selectedTask) ?? null;
-    }, [agentSummary, selectedTask]);
+    const taskOutcomes = Math.max(
+        agentSummary?.tasks.find((t) => t.task_name === selectedTask)?.total ?? 0,
+        rec?.task_total_outcomes ?? 0,
+    );
 
-    const taskOutcomesFromSummary = currentTaskSummary?.total ?? 0;
-    const taskOutcomesFromRecommendation = recommendation?.task_total_outcomes ?? 0;
-    const taskOutcomes = Math.max(taskOutcomesFromSummary, taskOutcomesFromRecommendation);
-    const taskConfidence = recommendation
-        ? (recommendation.confidence_meta?.percent ?? 0) > 0
-            ? (recommendation.confidence_meta?.percent ?? 0)
-            : deriveTaskConfidenceFromActions(recommendation.all_actions ?? [], taskOutcomes)
-        : 0;
-    const minimumOutcomesMissing = Math.max(0, MIN_OUTCOMES_FOR_RECOMMENDATION - taskOutcomes);
-    const summaryText = recommendation ? buildTwoSentenceSummary(recommendation) : '';
-
+    // ── Auth gate ────────────────────────────────────────────
     if (!isValid) {
         return (
             <div className="space-y-6">
@@ -739,9 +1106,8 @@ export default function RecommendationsPage(): React.ReactElement {
                     </h1>
                     <p className="text-[#a1a1aa] text-sm mt-1">Agent-scoped recommendation intelligence</p>
                 </div>
-
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-10 text-center space-y-3">
-                    <Target size={28} className="mx-auto text-[#3f3f46]" />
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-12 text-center space-y-3">
+                    <Database size={28} className="mx-auto text-[#3f3f46]" />
                     <p className="text-white font-medium">API key required</p>
                     <p className="text-[#a1a1aa] text-sm max-w-md mx-auto">
                         {keyError ?? 'Configure your agent API key in Settings to view recommendations.'}
@@ -759,65 +1125,58 @@ export default function RecommendationsPage(): React.ReactElement {
 
     return (
         <div className="space-y-5">
+            {/* ── Top bar ── */}
             <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
                     <h1 className="text-2xl font-bold text-white flex items-center gap-2">
                         <TrendingUp size={20} className="text-[#b8ff00]" />
                         Recommendations
                     </h1>
-                    <p className="text-[#a1a1aa] text-sm mt-1">Agent-scoped outcomes, actions, and recommendation confidence.</p>
+                    <p className="text-[#a1a1aa] text-sm mt-1">
+                        Which action your agent should take — and why — backed by outcome evidence.
+                    </p>
                 </div>
-
                 <div className="flex items-center gap-3 flex-wrap">
-                    <div className="relative min-w-[260px]">
-                        <select
-                            value={selectedAgentId ?? ''}
-                            onChange={(event) => setSelectedAgentId(event.target.value || null)}
-                            className="w-full appearance-none bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#b8ff00]/40 cursor-pointer pr-9 transition-colors"
-                            disabled={agentsLoading}
-                        >
-                            {agents.length === 0 && <option value="">No agents</option>}
-                            {agents.map((agent) => (
-                                <option key={agent.agent_id} value={agent.agent_id}>
-                                    {agent.agent_name} · {agent.total_outcomes.toLocaleString()} outcomes
-                                </option>
-                            ))}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#52525b] pointer-events-none" />
-                    </div>
-
+                    <AgentPicker
+                        agents={agents}
+                        selectedId={selectedAgentId}
+                        loading={agentsLoading}
+                        onChange={setSelectedAgentId}
+                    />
                     <button
-                        className="inline-flex items-center gap-2 text-xs border border-[#1a1a24] rounded-lg px-3 py-2 text-[#a1a1aa] hover:text-white transition-colors"
                         onClick={() => refreshRef.current?.()}
-                        disabled={recommendationLoading || !selectedTask}
+                        disabled={recLoading || !selectedTask}
+                        className="inline-flex items-center gap-2 text-xs border border-[#1a1a24] rounded-lg px-3 py-2.5 text-[#a1a1aa] hover:text-white transition-colors disabled:opacity-40"
                     >
-                        <RefreshCw size={13} className={recommendationLoading ? 'animate-spin' : ''} />
+                        <RefreshCw size={13} className={recLoading ? 'animate-spin' : ''} />
                         Refresh
                     </button>
                 </div>
             </div>
 
+            {/* ── No agents ── */}
             {!agentsLoading && agents.length === 0 && (
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-12 text-center space-y-3">
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl px-4 py-14 text-center space-y-3">
                     <Bot size={28} className="mx-auto text-[#3f3f46]" />
                     <p className="text-sm text-white">No agents found</p>
                     <p className="text-xs text-[#52525b] max-w-sm mx-auto">
-                        Install the SDK and log outcomes to register your first agent.
+                        Install the SDK and log your first outcome to register an agent.
                     </p>
                 </div>
             )}
 
             {selectedAgentId && (
                 <div className="grid grid-cols-12 gap-5 items-start">
+                    {/* ── Left sidebar ── */}
                     <div className="col-span-12 lg:col-span-4 space-y-4">
                         {summaryLoading || !agentSummary ? (
                             <div className="space-y-3 animate-pulse">
-                                <div className="h-40 bg-[#111118] border border-[#1a1a24] rounded-xl" />
-                                <div className="h-64 bg-[#111118] border border-[#1a1a24] rounded-xl" />
+                                <div className="h-44 bg-[#111118] border border-[#1a1a24] rounded-2xl" />
+                                <div className="h-64 bg-[#111118] border border-[#1a1a24] rounded-2xl" />
                             </div>
                         ) : (
                             <>
-                                <AgentMetricsCard agent={agentSummary} />
+                                <AgentOverviewCard agent={agentSummary} />
                                 <TaskList
                                     tasks={agentSummary.tasks}
                                     selectedTask={selectedTask}
@@ -827,94 +1186,72 @@ export default function RecommendationsPage(): React.ReactElement {
                         )}
                     </div>
 
+                    {/* ── Right panel ── */}
                     <div className="col-span-12 lg:col-span-8 space-y-4">
                         {!selectedTask && (
-                            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-16 text-center space-y-3">
+                            <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl px-4 py-16 text-center space-y-3">
                                 <Database size={24} className="mx-auto text-[#52525b]" />
-                                <p className="text-sm text-[#52525b]">Select a task to view actions and recommendation details.</p>
+                                <p className="text-sm text-[#52525b]">Select a task from the left to see its recommendation.</p>
                             </div>
                         )}
 
                         {selectedTask && (
                             <>
-                                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4">
-                                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                                        <div>
-                                            <p className="text-sm font-semibold text-white font-mono">{selectedTask}</p>
-                                            <p className="text-xs text-[#52525b] mt-1">
-                                                {taskOutcomes.toLocaleString()} outcomes logged for this task by this agent.
-                                            </p>
-                                        </div>
-                                        {recommendation && (
-                                            <div className="flex items-center gap-2">
-                                                <span className={`px-2 py-0.5 rounded-full border text-xs capitalize ${stateChipClass(recommendation.state)}`}>
-                                                    {recommendation.state}
-                                                </span>
-                                                <span className={`px-2 py-0.5 rounded-full border text-xs ${confidenceChipClass(recommendation.confidence_meta.label)}`}>
-                                                    {recommendation.confidence_meta.percent}% confidence
-                                                </span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                {/* Task health header — always show */}
+                                <TaskHealthHeader
+                                    taskName={selectedTask}
+                                    totalOutcomes={taskOutcomes}
+                                    rec={rec}
+                                    analytics={analyticsLoading ? null : analytics}
+                                />
 
-                                {recommendationError && (
-                                    <div className="bg-red-500/8 border border-red-500/25 rounded-xl px-4 py-3 flex items-center gap-2 text-xs text-red-400">
+                                {/* Drift alert */}
+                                {analytics?.drift?.direction === 'degrading' && (
+                                    <DriftAlert analytics={analytics} />
+                                )}
+
+                                {/* Error */}
+                                {recError && (
+                                    <div className="flex items-center gap-2 bg-red-500/8 border border-red-500/20 rounded-xl px-4 py-3 text-xs text-red-400">
                                         <AlertTriangle size={13} />
-                                        {recommendationError}
+                                        {recError}
                                     </div>
                                 )}
 
-                                {recommendationLoading && !recommendation && (
-                                    <div className="space-y-3 animate-pulse">
-                                        <div className="h-40 bg-[#111118] border border-[#1a1a24] rounded-xl" />
-                                        <div className="h-24 bg-[#111118] border border-[#1a1a24] rounded-xl" />
-                                        <div className="h-44 bg-[#111118] border border-[#1a1a24] rounded-xl" />
+                                {/* Loading skeleton */}
+                                {recLoading && !rec && (
+                                    <div className="space-y-4 animate-pulse">
+                                        <div className="h-36 bg-[#111118] border border-[#1a1a24] rounded-2xl" />
+                                        <div className="h-56 bg-[#111118] border border-[#1a1a24] rounded-2xl" />
+                                        <div className="h-44 bg-[#111118] border border-[#1a1a24] rounded-2xl" />
                                     </div>
                                 )}
 
-                                {recommendation && (
+                                {rec && (
                                     <>
-                                        <ActionsTable
-                                            actions={recommendation.all_actions ?? []}
-                                            taskOutcomes={Math.max(1, taskOutcomes)}
-                                            taskConfidence={taskConfidence}
+                                        {/* LLM insight */}
+                                        <LLMInsightPanel rec={rec} />
+
+                                        {/* Action leaderboard */}
+                                        <ActionLeaderboard
+                                            actions={rec.all_actions ?? []}
+                                            bestActionName={rec.insight.best_action}
+                                            totalOutcomes={taskOutcomes}
                                         />
 
-                                        {taskOutcomes < MIN_OUTCOMES_FOR_RECOMMENDATION && (
-                                            <div className="bg-yellow-500/8 border border-yellow-500/25 rounded-xl p-4 flex items-start gap-2.5">
-                                                <AlertTriangle size={14} className="text-yellow-400 mt-0.5 shrink-0" />
-                                                <div className="space-y-1">
-                                                    <p className="text-sm font-medium text-yellow-400">Minimum outcomes required</p>
-                                                    <p className="text-xs text-yellow-200/80">
-                                                        To get the recommendation agent should log at least 30 outcomes.
-                                                    </p>
-                                                    <p className="text-[11px] text-yellow-300/80">
-                                                        {minimumOutcomesMissing.toLocaleString()} more outcomes needed for this task.
-                                                    </p>
-                                                </div>
-                                            </div>
+                                        {/* Engine interventions */}
+                                        {analytics && !analyticsLoading && (
+                                            <EngineInterventions analytics={analytics} rec={rec} />
                                         )}
 
-                                        <TaskConfidenceCard
-                                            confidencePercent={taskConfidence}
-                                            outcomes={taskOutcomes}
-                                        />
+                                        {/* Data sources */}
+                                        <DataSourcesPanel rec={rec} />
 
-                                        <RecommendationCard
-                                            recommendation={recommendation}
-                                            summary={summaryText}
-                                            taskOutcomes={taskOutcomes}
-                                            displayConfidence={taskConfidence}
-                                        />
-
-                                        <div className="text-[11px] text-[#52525b] flex items-center justify-between flex-wrap gap-2">
-                                            <span>
-                                                Last outcome: {relativeTime(recommendation.data_window?.last_seen_at ?? null)}
-                                            </span>
-                                            <span>
-                                                Scope: {recommendation.agent_scope === 'agent_scoped' ? 'agent only' : 'blended'}
-                                            </span>
+                                        {/* Footer meta */}
+                                        <div className="text-[11px] text-[#3f3f46] flex items-center justify-between flex-wrap gap-2 pb-2">
+                                            <span>Last outcome: {relTime(rec.data_window?.last_seen_at)}</span>
+                                            <span>Scope: {rec.agent_scope === 'agent_scoped' ? 'agent only' : 'blended'}</span>
+                                            <span>Generated: {relTime(rec.generated_at)}</span>
                                         </div>
                                     </>
                                 )}

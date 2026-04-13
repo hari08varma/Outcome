@@ -82,11 +82,28 @@ interface TaskResolutionStats {
     semanticClusterConvergence: number;
 }
 
+// Minimum number of context-specific outcomes required before we trust
+// the context-specific signal over the global aggregate.
+// Below this threshold we linearly blend toward the global rate to prevent
+// cold-start noise from dominating the recommendation.
+const CONTEXT_MIN_SAMPLES_FULL_TRUST = 30;
+
+export interface ContextFilter {
+    /** Resolved context_id from dim_contexts (preferred) */
+    contextId?: string | null;
+    /** Human-readable label for the resolved context (issue_type + environment) */
+    label?: string | null;
+    /** Whether the context was resolved from dim_contexts (true) or is a cold-start (false) */
+    resolved: boolean;
+}
+
 interface FetchTaskPerformanceParams {
     customerId: string;
     taskName: string;
     agentId?: string | null;
     windowStart?: string;
+    /** When set, resolution stats are filtered to this context and blended with global */
+    contextFilter?: ContextFilter | null;
 }
 
 function isMissingMvError(error: QueryError): boolean {
@@ -272,34 +289,20 @@ function scoreFromExecutionStatus(value: unknown): number | null {
     return null;
 }
 
-async function getTaskResolutionStatsByAction(
-    params: FetchTaskPerformanceParams,
-): Promise<Map<string, TaskResolutionStats>> {
-    let query = supabase
-        .from('fact_outcomes')
-        // Include data_quality so the scoring engine can down-weight low-quality events.
-        // Pre-migration rows will have data_quality=NULL — treated as 1.0 (no penalty).
-        .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, data_quality, ingestion_source, is_inconsistent, outcome_class, semantic_cluster_key, semantic_cluster_confidence')
-        .eq('customer_id', params.customerId)
-        .eq('is_deleted', false)
-        .eq('is_synthetic', false)
-        .eq('task_name', params.taskName);
-
-    if (params.windowStart) {
-        query = query.gte('timestamp', params.windowStart);
-    }
-
-    if (params.agentId) {
-        query = query.eq('agent_id', params.agentId);
-    } else {
-        query = query.neq('agent_id', ZERO_UUID_AGENT_ID);
-    }
-
-    const { data, error } = await query;
-    if (error || !data) {
-        return new Map<string, TaskResolutionStats>();
-    }
-
+// Core aggregation logic shared by global and context-scoped queries.
+// Processes a flat array of fact_outcomes rows into per-action resolution stats.
+function aggregateResolutionRows(
+    data: Array<Record<string, unknown>>,
+): Map<string, {
+    total: number;
+    score_sum: number;
+    weighted_score_sum: number;
+    weight_total: number;
+    cluster_counts: Map<string, number>;
+    cluster_samples: number;
+    cluster_confidence_sum: number;
+    cluster_confidence_count: number;
+}> {
     const grouped = new Map<string, {
         total: number;
         score_sum: number;
@@ -311,13 +314,10 @@ async function getTaskResolutionStatsByAction(
         cluster_confidence_count: number;
     }>();
 
-    for (const row of data as Array<Record<string, unknown>>) {
+    for (const row of data) {
         const actionId = typeof row.action_id === 'string' ? row.action_id : null;
         if (!actionId) continue;
 
-        // Prefer outcome_score_raw (exact developer signal) over the potentially
-        // inferred outcome_score. Falls back to execution_status polarity, then
-        // legacy success if status is unavailable.
         const rawScore = parseBoundedScore(row.outcome_score_raw);
         const explicitScore = rawScore ?? parseBoundedScore(row.outcome_score);
         const statusScore = scoreFromExecutionStatus(row.execution_status);
@@ -339,33 +339,24 @@ async function getTaskResolutionStatsByAction(
 
         const timestamp = typeof row.timestamp === 'string' ? row.timestamp : null;
         const recencyWeight = computeOutcomeEffectiveWeightForScore(score, timestamp);
-
-        // data_quality: NULL on pre-migration rows → default to 1.0 (no penalty).
-        // This ensures existing data is not retroactively penalised.
         const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
-        const qualityMultiplier = rawQuality !== null
-            ? Math.max(0, Math.min(1, rawQuality))
-            : 1.0;
+        const qualityMultiplier = rawQuality !== null ? Math.max(0, Math.min(1, rawQuality)) : 1.0;
         const sourceMultiplier = sourceSignalWeight(row.ingestion_source);
         const reliabilityMultiplier = reliabilitySignalWeight({
             isInconsistent: row.is_inconsistent,
             outcomeClass: row.outcome_class,
         });
-
         const effectiveWeight = recencyWeight * qualityMultiplier * sourceMultiplier * reliabilityMultiplier;
         if (effectiveWeight > 0) {
             current.weight_total += effectiveWeight;
             current.weighted_score_sum += score * effectiveWeight;
         }
 
-        const clusterKey = typeof row.semantic_cluster_key === 'string'
-            ? row.semantic_cluster_key.trim()
-            : '';
+        const clusterKey = typeof row.semantic_cluster_key === 'string' ? row.semantic_cluster_key.trim() : '';
         if (clusterKey.length > 0) {
             current.cluster_counts.set(clusterKey, (current.cluster_counts.get(clusterKey) ?? 0) + 1);
             current.cluster_samples += 1;
         }
-
         if (typeof row.semantic_cluster_confidence === 'number') {
             current.cluster_confidence_sum += clamp01(row.semantic_cluster_confidence);
             current.cluster_confidence_count += 1;
@@ -374,18 +365,32 @@ async function getTaskResolutionStatsByAction(
         grouped.set(actionId, current);
     }
 
-    const statsByAction = new Map<string, TaskResolutionStats>();
+    return grouped;
+}
+
+function groupedToStats(
+    grouped: Map<string, {
+        total: number;
+        score_sum: number;
+        weighted_score_sum: number;
+        weight_total: number;
+        cluster_counts: Map<string, number>;
+        cluster_samples: number;
+        cluster_confidence_sum: number;
+        cluster_confidence_count: number;
+    }>,
+): Map<string, TaskResolutionStats & { effectiveSampleCount: number }> {
+    const out = new Map<string, TaskResolutionStats & { effectiveSampleCount: number }>();
     for (const [actionId, stats] of grouped.entries()) {
         if (stats.total <= 0) continue;
         const weightedRate = stats.weight_total > 0
             ? stats.weighted_score_sum / stats.weight_total
             : stats.score_sum / stats.total;
-        const effectiveSamples = stats.weight_total > 0
-            ? stats.weight_total
-            : stats.total;
-        statsByAction.set(actionId, {
+        const effectiveSamples = stats.weight_total > 0 ? stats.weight_total : stats.total;
+        out.set(actionId, {
             resolutionRate: Number(weightedRate.toFixed(4)),
             effectiveSamples: Number(effectiveSamples.toFixed(4)),
+            effectiveSampleCount: stats.total,
             semanticClusterConvergence: computeSemanticClusterConvergence({
                 clusterCounts: stats.cluster_counts,
                 clusterSamples: stats.cluster_samples,
@@ -394,8 +399,105 @@ async function getTaskResolutionStatsByAction(
             }),
         });
     }
+    return out;
+}
 
-    return statsByAction;
+async function queryResolutionRows(
+    params: FetchTaskPerformanceParams,
+    contextId?: string | null,
+): Promise<Array<Record<string, unknown>>> {
+    let query = supabase
+        .from('fact_outcomes')
+        .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, data_quality, ingestion_source, is_inconsistent, outcome_class, semantic_cluster_key, semantic_cluster_confidence')
+        .eq('customer_id', params.customerId)
+        .eq('is_deleted', false)
+        .eq('is_synthetic', false)
+        .eq('task_name', params.taskName);
+
+    if (params.windowStart) {
+        query = query.gte('timestamp', params.windowStart);
+    }
+    if (params.agentId) {
+        query = query.eq('agent_id', params.agentId);
+    } else {
+        query = query.neq('agent_id', ZERO_UUID_AGENT_ID);
+    }
+    if (contextId) {
+        query = query.eq('context_id', contextId);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return data as Array<Record<string, unknown>>;
+}
+
+async function getTaskResolutionStatsByAction(
+    params: FetchTaskPerformanceParams,
+): Promise<Map<string, TaskResolutionStats>> {
+    const contextId = params.contextFilter?.resolved
+        ? (params.contextFilter.contextId ?? null)
+        : null;
+
+    // Always fetch global stats — used as fallback / blend base
+    const globalData = await queryResolutionRows(params, null);
+    if (globalData.length === 0) {
+        return new Map<string, TaskResolutionStats>();
+    }
+
+    const globalGrouped = aggregateResolutionRows(globalData);
+    const globalStats = groupedToStats(globalGrouped);
+
+    // No context filter — return global stats directly
+    if (!contextId) {
+        const out = new Map<string, TaskResolutionStats>();
+        for (const [actionId, s] of globalStats.entries()) {
+            out.set(actionId, {
+                resolutionRate: s.resolutionRate,
+                effectiveSamples: s.effectiveSamples,
+                semanticClusterConvergence: s.semanticClusterConvergence,
+            });
+        }
+        return out;
+    }
+
+    // Fetch context-specific stats
+    const contextData = await queryResolutionRows(params, contextId);
+    const contextGrouped = aggregateResolutionRows(contextData);
+    const contextStats = groupedToStats(contextGrouped);
+
+    // Blend: interpolate between context-specific and global using sample-weighted alpha.
+    // When context has >= CONTEXT_MIN_SAMPLES_FULL_TRUST outcomes → full context trust (alpha=1).
+    // When context has 0 outcomes → full global trust (alpha=0).
+    // Linear ramp between 0 and CONTEXT_MIN_SAMPLES_FULL_TRUST.
+    const out = new Map<string, TaskResolutionStats>();
+    for (const [actionId, global] of globalStats.entries()) {
+        const ctx = contextStats.get(actionId);
+        if (!ctx || ctx.effectiveSampleCount <= 0) {
+            // No context-specific data for this action — use global
+            out.set(actionId, {
+                resolutionRate: global.resolutionRate,
+                effectiveSamples: global.effectiveSamples,
+                semanticClusterConvergence: global.semanticClusterConvergence,
+            });
+            continue;
+        }
+
+        // Sample-weighted blend: alpha ramps from 0→1 as context samples grow
+        const alpha = Math.min(1, ctx.effectiveSampleCount / CONTEXT_MIN_SAMPLES_FULL_TRUST);
+        const blendedRate = clamp01(alpha * ctx.resolutionRate + (1 - alpha) * global.resolutionRate);
+        // Effective samples = context-specific weighted count (what the engine will use for confidence)
+        const blendedSamples = alpha * ctx.effectiveSamples + (1 - alpha) * global.effectiveSamples;
+        // Cluster convergence: prefer context-specific if mature, else global
+        const blendedConvergence = alpha * ctx.semanticClusterConvergence + (1 - alpha) * global.semanticClusterConvergence;
+
+        out.set(actionId, {
+            resolutionRate: Number(blendedRate.toFixed(4)),
+            effectiveSamples: Number(blendedSamples.toFixed(4)),
+            semanticClusterConvergence: Number(blendedConvergence.toFixed(4)),
+        });
+    }
+
+    return out;
 }
 
 async function queryTaskPerformanceFromFacts(

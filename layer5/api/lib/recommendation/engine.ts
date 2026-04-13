@@ -5,7 +5,7 @@ import {
     MIN_SAMPLES_STABLE,
 } from './constants.js';
 import { getRecommendationRolloutConfig } from './rollout-flags.js';
-import { fetchTaskActionPerformance } from './task-performance.js';
+import { fetchTaskActionPerformance, type ContextFilter } from './task-performance.js';
 
 export {
     MIN_SAMPLES,
@@ -88,6 +88,8 @@ export interface RecommendationResult {
     } | null;
     min_sample_count: number;
     all_actions: ActionPerformance[];
+    /** Context filter applied to this recommendation, if any */
+    context_filter?: ContextFilter | null;
     _qualification_context?: {
         qualified_count: number;
         unqualified_count: number;
@@ -606,6 +608,7 @@ export async function getRecommendation(
     customerId: string,
     taskName: string,
     agentId?: string | null,
+    contextFilter?: ContextFilter | null,
 ): Promise<RecommendationResult> {
     const generatedAt = new Date().toISOString();
     const registeredActions = await getRegisteredActions(customerId);
@@ -711,6 +714,7 @@ export async function getRecommendation(
             generated_at: generatedAt,
             registered_actions: registeredActions,
             action_mismatch: false,
+            context_filter: contextFilter ?? null,
         };
     }
 
@@ -726,6 +730,7 @@ export async function getRecommendation(
             taskName,
             agentId: agentId ?? null,
             windowStart,
+            contextFilter: contextFilter ?? null,
         });
 
         const actions: ActionPerformance[] = rows.map((row) => {
