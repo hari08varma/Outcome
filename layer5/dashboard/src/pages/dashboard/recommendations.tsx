@@ -187,6 +187,34 @@ function actionConfidencePercent(actionOutcomes: number, taskOutcomes: number, t
     return confidence;
 }
 
+function deriveTaskConfidenceFromActions(actions: ActionPerformance[], taskOutcomes: number): number {
+    if (!Array.isArray(actions) || actions.length === 0 || taskOutcomes <= 0) {
+        return 0;
+    }
+
+    const ranked = [...actions]
+        .filter((action) => Number.isFinite(action.total_count) && action.total_count > 0)
+        .sort((a, b) => b.resolution_rate - a.resolution_rate);
+
+    if (ranked.length === 0) return 0;
+
+    const best = ranked[0]!;
+    const worst = ranked[ranked.length - 1]!;
+
+    const minArm = ranked.length >= 2
+        ? Math.min(best.total_count, worst.total_count)
+        : best.total_count;
+
+    const sampleStrength = Math.min(1, minArm / 30);
+    const outcomeStrength = Math.min(1, taskOutcomes / 100);
+    const separation = ranked.length >= 2
+        ? Math.min(1, Math.max(0, (best.resolution_rate - worst.resolution_rate) / 0.25))
+        : 0.25;
+
+    const blended = sampleStrength * 0.55 + outcomeStrength * 0.25 + separation * 0.20;
+    return Math.round(Math.max(0, Math.min(95, blended * 100)));
+}
+
 function confidenceChipClass(label: ConfidenceLabel): string {
     if (label === 'very_high' || label === 'high') {
         return 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30';
@@ -400,10 +428,30 @@ function TaskConfidenceCard({
 function RecommendationCard({
     recommendation,
     summary,
+    taskOutcomes,
+    displayConfidence,
 }: {
     recommendation: RecommendationResponse;
     summary: string;
+    taskOutcomes: number;
+    displayConfidence: number;
 }): React.ReactElement {
+    const rankedActions = [...(recommendation.all_actions ?? [])]
+        .filter((action) => action.total_count > 0)
+        .sort((a, b) => b.resolution_rate - a.resolution_rate);
+
+    const fallbackBest = rankedActions[0] ?? null;
+    const fallbackWorst = rankedActions.length > 1 ? rankedActions[rankedActions.length - 1] : null;
+    const canShowFallbackRecommendation = recommendation.state === 'no_data'
+        && taskOutcomes >= MIN_OUTCOMES_FOR_RECOMMENDATION
+        && !!fallbackBest
+        && !!fallbackWorst
+        && fallbackBest.action_name !== fallbackWorst.action_name;
+
+    const fallbackDelta = canShowFallbackRecommendation
+        ? (fallbackBest!.resolution_rate - fallbackWorst!.resolution_rate)
+        : null;
+
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 space-y-3">
             <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -416,7 +464,7 @@ function RecommendationCard({
                         {recommendation.state}
                     </span>
                     <span className={`px-2 py-0.5 rounded-full border text-[11px] ${confidenceChipClass(recommendation.confidence_meta.label)}`}>
-                        {recommendation.confidence_meta.percent}% confidence
+                        {displayConfidence}% confidence
                     </span>
                 </div>
             </div>
@@ -435,6 +483,19 @@ function RecommendationCard({
                         Score: {pct(recommendation.insight.best_rate)}
                         {recommendation.insight.delta !== null && recommendation.insight.delta > 0 && (
                             <span className="text-[#b8ff00] ml-2">(+{(recommendation.insight.delta * 100).toFixed(1)}pp vs baseline)</span>
+                        )}
+                    </p>
+                </div>
+            )}
+
+            {canShowFallbackRecommendation && (
+                <div className="bg-[#0d0d14] border border-[#b8ff00]/20 rounded-lg px-3 py-2.5 space-y-1">
+                    <p className="text-[11px] text-[#52525b]">Observed best action from this agent's outcomes</p>
+                    <p className="text-sm text-white font-mono">{fallbackBest!.action_name}</p>
+                    <p className="text-[11px] text-[#a1a1aa]">
+                        {pct(fallbackBest!.resolution_rate)} vs {pct(fallbackWorst!.resolution_rate)}
+                        {fallbackDelta !== null && (
+                            <span className="text-[#b8ff00] ml-2">(+{(fallbackDelta * 100).toFixed(1)}pp)</span>
                         )}
                     </p>
                 </div>
@@ -653,7 +714,11 @@ export default function RecommendationsPage(): React.ReactElement {
     const taskOutcomesFromSummary = currentTaskSummary?.total ?? 0;
     const taskOutcomesFromRecommendation = recommendation?.task_total_outcomes ?? 0;
     const taskOutcomes = Math.max(taskOutcomesFromSummary, taskOutcomesFromRecommendation);
-    const taskConfidence = recommendation?.confidence_meta?.percent ?? 0;
+    const taskConfidence = recommendation
+        ? (recommendation.confidence_meta?.percent ?? 0) > 0
+            ? (recommendation.confidence_meta?.percent ?? 0)
+            : deriveTaskConfidenceFromActions(recommendation.all_actions ?? [], taskOutcomes)
+        : 0;
     const minimumOutcomesMissing = Math.max(0, MIN_OUTCOMES_FOR_RECOMMENDATION - taskOutcomes);
     const summaryText = recommendation ? buildTwoSentenceSummary(recommendation) : '';
 
@@ -832,6 +897,8 @@ export default function RecommendationsPage(): React.ReactElement {
                                         <RecommendationCard
                                             recommendation={recommendation}
                                             summary={summaryText}
+                                            taskOutcomes={taskOutcomes}
+                                            displayConfidence={taskConfidence}
                                         />
 
                                         <div className="text-[11px] text-[#52525b] flex items-center justify-between flex-wrap gap-2">
