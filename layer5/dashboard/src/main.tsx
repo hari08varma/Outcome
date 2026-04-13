@@ -1,6 +1,5 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import * as Sentry from '@sentry/react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import './index.css';
 import AuthPage from './pages/Auth';
@@ -27,15 +26,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 import NavBar from './components/NavBar';
 import { ToastContainer, ToastContext } from './components/Toast';
 import { useToast } from './hooks/useToast';
-
-if (import.meta.env.VITE_SENTRY_DSN) {
-  Sentry.init({
-    dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.MODE,
-    tracesSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
-  });
-}
 
 function DashboardLayout({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
@@ -105,47 +95,8 @@ function App(): React.ReactElement {
   );
 }
 
-function ErrorFallback(): React.ReactElement {
-  return (
-    <div
-      style={{
-        padding: '2rem',
-        color: '#f0f4ff',
-        background: '#080b12',
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column',
-        gap: '1rem',
-        fontFamily: "'Inter', sans-serif",
-      }}
-    >
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Something went wrong</h1>
-      <p style={{ color: '#888888', fontSize: '0.9rem' }}>The error has been reported. Try refreshing the page.</p>
-      <button
-        onClick={() => window.location.reload()}
-        style={{
-          background: '#00FF85',
-          color: '#000000',
-          border: 'none',
-          padding: '0.6rem 1.5rem',
-          borderRadius: '6px',
-          fontWeight: 600,
-          cursor: 'pointer',
-          marginTop: '1rem',
-        }}
-      >
-        Refresh
-      </button>
-    </div>
-  );
-}
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
-      <App />
-    </Sentry.ErrorBoundary>
+    <App />
   </React.StrictMode>,
 );

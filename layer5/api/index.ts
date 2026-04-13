@@ -12,7 +12,6 @@
  * ══════════════════════════════════════════════════════════════
  */
 
-import './instrument.js';
 import 'dotenv/config';
 
 import { Hono } from 'hono';
@@ -21,7 +20,6 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import { prettyJSON } from 'hono/pretty-json';
 import { serve } from '@hono/node-server';
-import * as Sentry from '@sentry/node';
 
 const REQUIRED_ENV_VARS = [
     'SUPABASE_URL',
@@ -100,26 +98,6 @@ if (process.env.NODE_ENV === 'production' &&
 // ── Create app ────────────────────────────────────────────────
 const app = new Hono();
 
-// Explicit request-level tracing for Hono to guarantee performance traces.
-app.use('*', async (c, next) => {
-    await Sentry.startSpan(
-        {
-            op: 'http.server',
-            name: `${c.req.method} ${c.req.path}`,
-            forceTransaction: true,
-            attributes: {
-                'http.method': c.req.method,
-                'http.route': c.req.path,
-                'http.target': c.req.path,
-            },
-        },
-        async (span) => {
-            await next();
-            span.setAttribute('http.status_code', c.res.status);
-        },
-    );
-});
-
 // ── CORS: env-driven origins ──────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
@@ -183,24 +161,6 @@ app.use('*', async (c, next) => {
     } catch (e: any) {
         if (e?.message === 'TIMEOUT') {
             const elapsed = Date.now() - start;
-            // Manual handled-exception capture so timeout paths are visible in Sentry.
-            if (Sentry.getClient()) {
-                Sentry.captureException(
-                    new Error(`Request timeout after ${elapsed}ms on ${c.req.method} ${c.req.path}`),
-                    {
-                        level: 'warning',
-                        tags: {
-                            kind: 'request-timeout',
-                        },
-                        extra: {
-                            path: c.req.path,
-                            method: c.req.method,
-                            elapsed_ms: elapsed,
-                            timeout_ms: REQUEST_TIMEOUT_MS,
-                        },
-                    },
-                );
-            }
             console.warn(
                 `[layerinfinite] Request timeout on ${c.req.path} ` +
                 `after ${elapsed}ms`
@@ -463,30 +423,6 @@ app.post('/internal/refresh-score-cache', async (c) => {
     return c.json({ ok: true, message: 'Score cache cleared' });
 });
 
-// ── Internal: Sentry handled-exception verification ──────────
-app.post('/internal/sentry-test', async (c) => {
-    const auth = c.req.header('Authorization');
-    const internalSecret = process.env.LAYERINFINITE_INTERNAL_SECRET;
-    if (!internalSecret || auth !== `Bearer ${internalSecret}`) {
-        return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    try {
-        throw new Error('Sentry manual verification event from /internal/sentry-test');
-    } catch (e) {
-        const eventId = Sentry.captureException(e, {
-            tags: {
-                kind: 'manual-verification',
-            },
-            extra: {
-                path: c.req.path,
-                method: c.req.method,
-            },
-        });
-        return c.json({ ok: true, event_id: eventId });
-    }
-});
-
 // ── v1 API ────────────────────────────────────────────────────
 const v1 = new Hono();
 
@@ -563,15 +499,6 @@ app.notFound((c) => c.json(
 
 // ── Global error handler ──────────────────────────────────────
 app.onError((err, c) => {
-    if (Sentry.getClient()) {
-        Sentry.captureException(err, {
-            extra: {
-                path: c.req.path,
-                method: c.req.method,
-            },
-        });
-    }
-
     console.error('[layerinfinite] Unhandled error:', err.message);
     return c.json(
         { error: 'Internal server error', code: 'INTERNAL_ERROR', message: err.message },

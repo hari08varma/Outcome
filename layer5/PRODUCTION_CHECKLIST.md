@@ -39,8 +39,6 @@ Set on Railway: Settings → Variables
 - [ ] `VITE_LAYERINFINITE_API_URL` (Dashboard)
 
 **OPTIONAL / RECOMMENDED**
-- [ ] `SENTRY_DSN` (API)
-- [ ] `VITE_SENTRY_DSN` (Dashboard)
 - [ ] `RESEND_API_KEY` (API + Edge Functions)
 - [ ] `ALERT_FROM_EMAIL` (API + Edge Functions)
 - [ ] `API_PORT` (API)

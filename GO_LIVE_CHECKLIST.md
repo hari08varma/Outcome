@@ -25,7 +25,6 @@ Important: This checklist is evidence-based. Do not mark an item complete withou
 - [ ] Monitoring is in place for failover events, DNS failures, timeout spikes, and 5xx bursts
 - [ ] Alerts are configured for all critical thresholds (email, Slack, PagerDuty, etc.)
 - [ ] Real-time dashboard is available for system health
-- [ ] Sentry alert rules configured with threshold and routing (error-rate, 5xx burst, timeout spike)
 - [ ] External uptime polling is active on `/health` (UptimeRobot or equivalent) with on-call alert routing
 
 ## Failover Drills
@@ -59,7 +58,6 @@ Important: This checklist is evidence-based. Do not mark an item complete withou
 ## Required Evidence Links
 - [ ] Latest CI run URL: ______________________________
 - [ ] Latest production-readiness run URL: _____________
-- [ ] Sentry alerts dashboard URL: _____________________
 - [ ] Uptime monitor/status page URL: _________________
 - [ ] Release summary URL: ____________________________
 

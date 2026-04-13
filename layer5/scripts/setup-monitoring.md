@@ -112,9 +112,7 @@ The production-readiness workflow now runs this monitor automatically when
 | API down > 5 min | SMS (UptimeRobot paid) |
 | Response time > 2s | Email (warning) |
 
-## Sentry alerts (required)
-
-Sentry instrumentation exists in `api/index.ts`, but alert rules must be configured in Sentry UI.
+## Incident alerts (required)
 
 Create alert rules for:
 
