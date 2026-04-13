@@ -22,12 +22,17 @@ import { prettyJSON } from 'hono/pretty-json';
 import { serve } from '@hono/node-server';
 import * as Sentry from '@sentry/node';
 
-// Initialize BEFORE creating the Hono app
-if (process.env.SENTRY_DSN) {
+// Initialize BEFORE creating the Hono app.
+// Uses env override first, then the DSN provided for this deployment.
+const SENTRY_DSN = process.env.SENTRY_DSN
+    ?? 'https://1ba87dc92c1174a7f6df7d9ffe1a7b3d@o4511049840328704.ingest.us.sentry.io/4511049847275520';
+
+if (SENTRY_DSN) {
     Sentry.init({
-        dsn: process.env.SENTRY_DSN,
+        dsn: SENTRY_DSN,
         environment: process.env.NODE_ENV || 'production',
-        tracesSampleRate: 0.1,  // 10% of requests traced
+        tracesSampleRate: 1.0,
+        sendDefaultPii: true,
     });
 }
 
@@ -509,7 +514,7 @@ app.notFound((c) => c.json(
 
 // ── Global error handler ──────────────────────────────────────
 app.onError((err, c) => {
-    if (process.env.SENTRY_DSN) {
+    if (SENTRY_DSN) {
         Sentry.captureException(err, {
             extra: {
                 path: c.req.path,
