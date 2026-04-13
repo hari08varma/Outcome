@@ -28,6 +28,7 @@ import type { TaskInferResult, TaskMappingTier } from './recommendation/task-inf
 import { inferSemanticActionCluster } from './recommendation/semantic-action-cluster.js';
 import type { SemanticActionClusterResult } from './recommendation/semantic-action-cluster.js';
 import { sanitizeContext, sanitizeString } from './sanitize.js';
+import * as contextEmbed from './context-embed.js';
 import {
     inferOutcomeScore,
     fetchActionBaseline,
@@ -827,6 +828,21 @@ export async function ingestOutcome(
             row.environment,
             row.customer_tier,
         );
+
+    // Best-effort context vector upkeep. Never blocks ingestion.
+    const ensureEmbedding = contextEmbed.ensureContextEmbedding?.({
+        contextId,
+        customerId,
+        issueType: row.issue_type,
+        customerTier: row.customer_tier ?? null,
+        environment: row.environment ?? null,
+        rawContext: row.raw_context ?? null,
+    });
+    if (ensureEmbedding) {
+        ensureEmbedding.catch((err: any) => {
+            console.warn('[ingest-core] ensureContextEmbedding failed:', err?.message ?? err);
+        });
+    }
 
     // 6. Semantic cluster
     const semanticCluster: SemanticActionClusterResult = inferSemanticActionCluster({

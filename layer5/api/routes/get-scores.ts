@@ -366,10 +366,33 @@ getScoresRouter.get('/', async (c) => {
     const agentId = c.get('agent_id') as string | undefined;
 
     // ── Query params ──────────────────────────────────────────
-    const issueType = c.req.query('issue_type');
+    const issueType = (() => {
+        const raw = c.req.query('issue_type');
+        if (!raw) return raw;
+        // Canonicalize to match log-outcome and import normalization:
+        // lowercase, spaces/hyphens → underscores, strip non-alphanumeric.
+        return raw.trim().toLowerCase()
+            .replace(/[\s\-]+/g, '_')
+            .replace(/[^a-z0-9_]/g, '')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '') || raw.trim();
+    })();
     const contextId = c.req.query('context_id');
     const forceRefresh = c.req.query('force_refresh') === 'true' || c.req.query('refresh') === 'true';
     const requestedEnvironment = normalizeEnvironment(c.req.query('environment'));
+    const customerTier = c.req.query('customer_tier')?.trim() || undefined;
+    const rawContextPayload = c.req.query('raw_context');
+    let rawContext: Record<string, unknown> | undefined;
+    if (rawContextPayload) {
+        try {
+            const parsed = JSON.parse(rawContextPayload);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                rawContext = parsed as Record<string, unknown>;
+            }
+        } catch {
+            // Ignore malformed raw_context query payloads
+        }
+    }
     const _topNRaw = parseInt(c.req.query('top_n') ?? '10', 10);
     const topN = Number.isFinite(_topNRaw) && _topNRaw > 0
         ? Math.min(_topNRaw, 50)
@@ -439,7 +462,12 @@ getScoresRouter.get('/', async (c) => {
         } else {
             // Step 2: Try embedding similarity (graceful fallback)
             try {
-                const contextText = buildContextText(issueType, undefined, requestedEnvironment);
+                const contextText = buildContextText(
+                    issueType,
+                    customerTier,
+                    requestedEnvironment,
+                    rawContext,
+                );
                 const embedding = await generateEmbedding(contextText);
 
                 if (embedding) {
@@ -696,7 +724,7 @@ getScoresRouter.get('/', async (c) => {
                         .from('mv_step_performance')
                         .select('step_success_rate')
                         .eq('customer_id', customerId);
-                    
+
                     const epAvg = allSteps && allSteps.length > 0
                         ? allSteps.reduce((acc: number, row: any) => acc + Number(row.step_success_rate ?? 0), 0) / allSteps.length
                         : topActionForResponse.composite_score;

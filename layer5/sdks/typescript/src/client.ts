@@ -702,8 +702,8 @@ export class Layerinfinite {
      * Fetch raw ranked action scores for a task.
      * Available in ALL modes.
      */
-    async scores(task: string): Promise<GetScoresResponse> {
-        const result = await this.fetchScores(task);
+    async scores(task: string, rawContext?: Record<string, unknown>): Promise<GetScoresResponse> {
+        const result = await this.fetchScores(task, rawContext);
         return result ?? { ranked_actions: [], top_action: null, policy: 'explore', cold_start: true, outcomes_needed: 50, context_id: '', agent_id: this.agentId, served_from_cache: false };
     }
 
@@ -1191,12 +1191,15 @@ export class Layerinfinite {
      * Returns null if cold start (no scores available yet).
      * NOTE: Do NOT send agent_id as query param — backend resolves via X-API-Key.
      */
-    private async fetchScores(task: string): Promise<GetScoresResponse | null> {
+    private async fetchScores(task: string, rawContext?: Record<string, unknown>): Promise<GetScoresResponse | null> {
         try {
             const qs = new URLSearchParams({
                 issue_type: task,
                 environment: 'production',
             });
+            if (rawContext && Object.keys(rawContext).length > 0) {
+                qs.set('raw_context', JSON.stringify(rawContext).slice(0, 2000));
+            }
             const response = await this.fetchWithRetry(
                 `/v1/get-scores?${qs.toString()}`,
                 {

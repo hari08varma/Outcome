@@ -173,6 +173,13 @@ async function resolveContextFilter(params: {
         return { resolved: false, contextId: null, label: null };
     }
 
+    // Canonicalize issue_type to match log-outcome and import normalization.
+    const normalizedIssueType = issueType.trim().toLowerCase()
+        .replace(/[\s\-]+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '') || issueType.trim();
+
     const normalizedEnv = (environment ?? 'production').trim().toLowerCase() || 'production';
 
     try {
@@ -181,7 +188,7 @@ async function resolveContextFilter(params: {
             .from('dim_contexts')
             .select('context_id, issue_type, environment, customer_tier')
             .eq('customer_id', customerId)
-            .eq('issue_type', issueType)
+            .eq('issue_type', normalizedIssueType)
             .eq('environment', normalizedEnv)
             .limit(1)
             .maybeSingle();
@@ -190,7 +197,7 @@ async function resolveContextFilter(params: {
             return {
                 resolved: true,
                 contextId: data.context_id as string,
-                label: `${issueType} / ${normalizedEnv}${customerTier ? ` / ${customerTier}` : ''}`,
+                label: `${normalizedIssueType} / ${normalizedEnv}${customerTier ? ` / ${customerTier}` : ''}`,
             };
         }
 
@@ -199,7 +206,7 @@ async function resolveContextFilter(params: {
             .from('dim_contexts')
             .select('context_id, issue_type, environment')
             .eq('customer_id', customerId)
-            .eq('issue_type', issueType)
+            .eq('issue_type', normalizedIssueType)
             .limit(1)
             .maybeSingle();
 
@@ -207,12 +214,12 @@ async function resolveContextFilter(params: {
             return {
                 resolved: true,
                 contextId: fuzzy.context_id as string,
-                label: `${issueType} / ${fuzzy.environment ?? 'any'} (env fallback)`,
+                label: `${normalizedIssueType} / ${fuzzy.environment ?? 'any'} (env fallback)`,
             };
         }
 
         // Context doesn't exist yet — cold start; signal is globally blended
-        return { resolved: false, contextId: null, label: `${issueType} (cold start)` };
+        return { resolved: false, contextId: null, label: `${normalizedIssueType} (cold start)` };
     } catch {
         return { resolved: false, contextId: null, label: null };
     }
@@ -495,7 +502,9 @@ getRecommendationsRouter.get('/task-analytics', async (c) => {
                 .eq('agent_id', rawAgentId)
                 .eq('task_name', rawTask)
                 .eq('is_deleted', false)
-                .eq('is_synthetic', false),
+                .eq('is_synthetic', false)
+                .order('timestamp', { ascending: false })
+                .limit(5000),
         ]);
 
         if (driftResult.error) {
@@ -806,9 +815,14 @@ getRecommendationsRouter.get('/', async (c) => {
         let scopedEvidenceSource: 'engine' | 'task_performance_mv' | 'task_performance_fact_fallback' = 'engine';
         let evidenceTaskName = taskName;
 
-        // Keep decision policy gates (trust/no-data) independent from evidence rendering.
-        // Even when recommendation state is blocked, still return scoped per-task action evidence.
-        if (scopedAgentId && (result._trust_gate_blocked || scopedEvidenceActions.length === 0)) {
+        // Always fetch agent-scoped action evidence when an agent_id is provided.
+        // The engine may have served customer_blended results (scope fallback) whose
+        // all_actions contain cross-agent totals — those numbers must NOT appear in
+        // the per-agent leaderboard. Force a per-agent evidence fetch in three cases:
+        //   1. Trust gate blocked (engine returns [])
+        //   2. Scope fell back to customer_blended (actions are cross-agent)
+        //   3. Engine returned no actions at all
+        if (scopedAgentId && (result._trust_gate_blocked || servedScope === 'customer_blended' || scopedEvidenceActions.length === 0)) {
             const taskCandidates = toUniqueTaskCandidates([
                 taskName,
                 requestedTaskName,

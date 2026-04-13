@@ -88,6 +88,17 @@ interface TaskResolutionStats {
 // cold-start noise from dominating the recommendation.
 const CONTEXT_MIN_SAMPLES_FULL_TRUST = 30;
 
+function applySupabasePagination<T>(query: T, offset: number): T {
+    const q = query as any;
+    if (typeof q.range === 'function') {
+        return q.range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+    }
+    if (typeof q.limit === 'function') {
+        return q.limit(SUPABASE_PAGE_SIZE);
+    }
+    return query;
+}
+
 export interface ContextFilter {
     /** Resolved context_id from dim_contexts (preferred) */
     contextId?: string | null;
@@ -200,20 +211,58 @@ async function queryTaskPerformanceFromMV(
         return { rows: [], error: error as QueryError };
     }
 
-    const rows: TaskPerformanceRow[] = (data ?? []).map((row: any) => ({
-        action_id: String(row.action_id),
-        action_name: String(row.action_name ?? row.action_id),
-        total_count: Number(row.total_count ?? 0),
-        effective_sample_count: Number(row.total_count ?? 0),
-        success_count: Number(row.success_count ?? 0),
-        success_rate: Number(row.success_rate ?? 0),
-        resolution_rate: Number(row.success_rate ?? 0),
-        semantic_cluster_convergence: 0.5,
-        ml_score: row.ml_score === null || row.ml_score === undefined
-            ? null
-            : Number(row.ml_score),
-        last_seen_at: typeof row.last_seen_at === 'string' ? row.last_seen_at : null,
-    }));
+    // The MV groups by (customer_id, agent_id, task_name, action_id).
+    // When no agentId filter is applied (customer_blended scope), we get one row
+    // per (agent_id, action_id) — the same action appears N times for N agents.
+    // Deduplicate by action_id: sum total_count/success_count, average success_rate,
+    // keep latest last_seen_at, take the first non-null ml_score.
+    const actionMap = new Map<string, {
+        action_id: string; action_name: string;
+        total_count: number; success_count: number;
+        ml_score: number | null; last_seen_at: string | null;
+    }>();
+    for (const row of (data ?? []) as any[]) {
+        const id = String(row.action_id);
+        const existing = actionMap.get(id);
+        if (existing) {
+            existing.total_count += Number(row.total_count ?? 0);
+            existing.success_count += Number(row.success_count ?? 0);
+            if (existing.ml_score === null && row.ml_score != null) {
+                existing.ml_score = Number(row.ml_score);
+            }
+            const ts = typeof row.last_seen_at === 'string' ? row.last_seen_at : null;
+            if (ts && (!existing.last_seen_at || ts > existing.last_seen_at)) {
+                existing.last_seen_at = ts;
+            }
+        } else {
+            actionMap.set(id, {
+                action_id: id,
+                action_name: String(row.action_name ?? row.action_id),
+                total_count: Number(row.total_count ?? 0),
+                success_count: Number(row.success_count ?? 0),
+                ml_score: row.ml_score != null ? Number(row.ml_score) : null,
+                last_seen_at: typeof row.last_seen_at === 'string' ? row.last_seen_at : null,
+            });
+        }
+    }
+
+    const rows: TaskPerformanceRow[] = Array.from(actionMap.values()).map((agg) => {
+        const successRate = agg.total_count > 0
+            ? Number((agg.success_count / agg.total_count).toFixed(4))
+            : 0;
+        return {
+            action_id: agg.action_id,
+            action_name: agg.action_name,
+            total_count: agg.total_count,
+            effective_sample_count: agg.total_count,
+            success_count: agg.success_count,
+            success_rate: successRate,
+            resolution_rate: successRate,
+            semantic_cluster_convergence: 0.5,
+            ml_score: agg.ml_score,
+            last_seen_at: agg.last_seen_at,
+        };
+    });
 
     // Derive task-specific resolution quality from fact_outcomes.outcome_score
     // so recommendations track incident resolution semantics (not just binary success).
@@ -558,7 +607,10 @@ async function queryTaskPerformanceFromFacts(
             }
         }
 
-        const key = `${actionId}::${actionName}`;
+        // Key by action_id only — action_name can vary across dim_actions rows
+        // due to normalization lag. Using a composite key would create duplicate
+        // entries for the same action appearing under slightly different names.
+        const key = actionId;
         const existing = grouped.get(key) ?? {
             action_id: actionId,
             action_name: actionName,
@@ -697,8 +749,9 @@ export async function fetchAvailableTasks(
             .from(TASK_PERFORMANCE_MV)
             .select('task_name')
             .eq('customer_id', customerId)
-            .neq('agent_id', ZERO_UUID_AGENT_ID)
-            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+            .neq('agent_id', ZERO_UUID_AGENT_ID);
+
+        mvQuery = applySupabasePagination(mvQuery, offset);
 
         if (scopedAgentId) {
             mvQuery = mvQuery.eq('agent_id', scopedAgentId);
@@ -746,8 +799,9 @@ export async function fetchAvailableTasks(
             .eq('is_synthetic', false)
             .not('task_name', 'is', null)
             .neq('agent_id', ZERO_UUID_AGENT_ID)
-            .gte('timestamp', windowStart)
-            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+            .gte('timestamp', windowStart);
+
+        fallbackQuery = applySupabasePagination(fallbackQuery, offset);
 
         if (scopedAgentId) {
             fallbackQuery = fallbackQuery.eq('agent_id', scopedAgentId);

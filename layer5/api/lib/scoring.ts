@@ -52,6 +52,9 @@ const CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
 // a full LRU linked list implementation.
 const MAX_CACHE_ENTRIES = 1000;
 const IPS_DECISION_CHUNK_SIZE = 50;
+const CLUSTER_PRIOR_MAX_BLEND = 0.15;
+const CLUSTER_PRIOR_LOW_SAMPLE_THRESHOLD = 10;
+const CLUSTER_PRIOR_STRONG_SIGNAL_MIN_SAMPLES = 50;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
     return Promise.race([
@@ -168,6 +171,11 @@ interface IPSBatchRow {
     counterfactual_est: number | null;
     ips_weight: number | null;
     created_at: string | null;
+}
+
+interface ClusterPrior {
+    successRate: number;
+    totalAttempts: number;
 }
 
 function percentile(sortedValues: number[], q: number): number | null {
@@ -399,6 +407,99 @@ async function fetchScoresFromDB(
     return { scores: (data ?? []) as ActionScore[], view_refreshed_at: refreshedAt };
 }
 
+async function fetchClusterPriors(
+    customerId: string,
+    actionIds: string[],
+): Promise<Map<string, ClusterPrior>> {
+    const priors = new Map<string, ClusterPrior>();
+    if (actionIds.length === 0) return priors;
+
+    const { data: outcomeRows, error: outcomeError } = await supabase
+        .from('fact_outcomes')
+        .select('action_id, semantic_cluster_key, timestamp')
+        .eq('customer_id', customerId)
+        .in('action_id', actionIds)
+        .not('semantic_cluster_key', 'is', null)
+        .neq('semantic_cluster_key', '')
+        .order('timestamp', { ascending: false })
+        .limit(Math.max(actionIds.length * 25, 250));
+
+    if (outcomeError || !outcomeRows || outcomeRows.length === 0) {
+        return priors;
+    }
+
+    const latestClusterByAction = new Map<string, string>();
+    for (const row of outcomeRows as Array<{ action_id: string; semantic_cluster_key: string | null }>) {
+        if (!row.semantic_cluster_key) continue;
+        if (!latestClusterByAction.has(row.action_id)) {
+            latestClusterByAction.set(row.action_id, row.semantic_cluster_key);
+        }
+    }
+
+    const uniqueClusters = Array.from(new Set(latestClusterByAction.values()));
+    if (uniqueClusters.length === 0) return priors;
+
+    const { data: clusterRows, error: clusterError } = await supabase
+        .from('mv_cluster_scores')
+        .select('semantic_cluster_key, cluster_success_rate, cluster_total_attempts')
+        .eq('customer_id', customerId)
+        .in('semantic_cluster_key', uniqueClusters);
+
+    if (clusterError || !clusterRows || clusterRows.length === 0) {
+        return priors;
+    }
+
+    const clusterStats = new Map<string, ClusterPrior>();
+    for (const row of clusterRows as Array<{
+        semantic_cluster_key: string;
+        cluster_success_rate: number | null;
+        cluster_total_attempts: number | null;
+    }>) {
+        const successRate = Math.max(0, Math.min(1, Number(row.cluster_success_rate ?? 0)));
+        const totalAttempts = Math.max(0, Number(row.cluster_total_attempts ?? 0));
+        clusterStats.set(row.semantic_cluster_key, {
+            successRate,
+            totalAttempts,
+        });
+    }
+
+    for (const [actionId, clusterKey] of latestClusterByAction.entries()) {
+        const stats = clusterStats.get(clusterKey);
+        if (stats) {
+            priors.set(actionId, stats);
+        }
+    }
+
+    return priors;
+}
+
+function blendWithClusterPrior(
+    baseScore: number,
+    row: ActionScore,
+    clusterPrior: ClusterPrior | undefined,
+): number {
+    if (!clusterPrior) return baseScore;
+
+    const sampleCount = Number(row.total_attempts ?? 0);
+    if (sampleCount >= CLUSTER_PRIOR_LOW_SAMPLE_THRESHOLD) {
+        return baseScore;
+    }
+
+    const deficitWeight = (CLUSTER_PRIOR_LOW_SAMPLE_THRESHOLD - sampleCount)
+        / CLUSTER_PRIOR_LOW_SAMPLE_THRESHOLD;
+    const priorStrength = Math.min(
+        1,
+        clusterPrior.totalAttempts / CLUSTER_PRIOR_STRONG_SIGNAL_MIN_SAMPLES,
+    );
+    const blendWeight = Math.min(
+        CLUSTER_PRIOR_MAX_BLEND,
+        deficitWeight * priorStrength * CLUSTER_PRIOR_MAX_BLEND,
+    );
+
+    const blended = (baseScore * (1 - blendWeight)) + (clusterPrior.successRate * blendWeight);
+    return Math.max(0, Math.min(1, blended));
+}
+
 // ── Institutional knowledge fallback ─────────────────────────
 async function fetchInstitutionalFallback(
     contextType: string
@@ -528,6 +629,11 @@ export async function getScores(
             ) ?? new Map<string, number>()
             : new Map<string, number>();
 
+        const clusterPriors = await withTimeout(
+            fetchClusterPriors(customerId, rawScores.map((row) => row.action_id)),
+            2000,
+        ) ?? new Map<string, ClusterPrior>();
+
         scoredActions = rawScores.map((row): ScoredAction => {
             const score = computeCompositeScore(
                 row,
@@ -535,18 +641,23 @@ export async function getScores(
                 ipsMap.get(row.action_id) ?? null,
                 contextLatencyP75,
             );
+            const blendedScore = blendWithClusterPrior(
+                score,
+                row,
+                clusterPriors.get(row.action_id),
+            );
             return {
                 action_id: row.action_id,
                 action_name: row.action_name,
                 action_category: row.action_category,
-                composite_score: Math.round(score * 10000) / 10000,
+                composite_score: Math.round(blendedScore * 10000) / 10000,
                 confidence: row.total_attempts < 3 ? Math.min(row.confidence, 0.25) : row.confidence,
                 trend_delta: row.trend_delta,
                 trend: trendLabel(row.trend_delta),
                 total_attempts: row.total_attempts,
                 is_cold_start: false,
                 is_low_sample: row.total_attempts < 3,
-                recommendation: toRecommendation(score, false),
+                recommendation: toRecommendation(blendedScore, false),
             };
         }).sort((a, b) => b.composite_score - a.composite_score);
     }

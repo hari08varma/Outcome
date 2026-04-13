@@ -36,6 +36,7 @@ vi.mock('../../api/lib/scoring.js', async (importOriginal) => {
 // Mock context-embed (used by scoring imports)
 vi.mock('../../api/lib/context-embed.js', () => ({
     embedContext: vi.fn().mockResolvedValue([0.1, 0.2]),
+    ensureContextEmbedding: vi.fn().mockResolvedValue(true),
 }));
 
 // Mock policy engine (used by log-outcome)
@@ -171,7 +172,8 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
             })
         );
 
-        expect(res.status).toBe(201);
+        const payload = await res.json() as any;
+        expect(res.status, JSON.stringify(payload)).toBe(201);
 
         // Verify insert was called with outcome_score
         const insertCall = insertChain.insert.mock.calls[0];
@@ -207,7 +209,8 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
             })
         );
 
-        expect(res.status).toBe(201);
+        const payload = await res.json() as any;
+        expect(res.status, JSON.stringify(payload)).toBe(201);
 
         // Raw score is null and inferred outcome_score uses 1.0.
         const insertCall = insertChain.insert.mock.calls[0];
@@ -243,7 +246,8 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
             })
         );
 
-        expect(res.status).toBe(201);
+        const payload = await res.json() as any;
+        expect(res.status, JSON.stringify(payload)).toBe(201);
 
         const insertCall = insertChain.insert.mock.calls[0];
         expect(insertCall).toBeDefined();

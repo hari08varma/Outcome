@@ -65,6 +65,7 @@ export interface LogOutcomeRequest {
     context_id?: string;
     issue_type: string;
     success: boolean;
+    raw_context?: Record<string, unknown>;
     /** Optional: when omitted, backend infers score from binary + soft signals. */
     outcome_score?: number;
     business_outcome?: string;

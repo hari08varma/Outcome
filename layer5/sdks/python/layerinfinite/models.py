@@ -63,6 +63,7 @@ class LogOutcomeRequest(BaseModel):
     decision_id: str | None = None
     episode_id: str | None = None
     response_ms: int | None = None
+    raw_context: Dict[str, Any] | None = None
     # API accepts any string; known values: immediate | delayed | none
     # Unknown values normalize to "none" (no clear feedback signal).
     feedback_signal: str = "immediate"

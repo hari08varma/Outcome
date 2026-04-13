@@ -11,6 +11,7 @@ import type { AgentTrustScore, CustomerPolicyConfig } from '../lib/policy-engine
 import { sanitizeContext, sanitizeString } from '../lib/sanitize.js';
 import { resolveVerifiedSuccess } from '../lib/verifier.js';
 import { orchestrateOutcome } from '../lib/outcome-orchestrator.js';
+import * as contextEmbed from '../lib/context-embed.js';
 import { inferTask, isGenericTaskName, validateTaskName, TASK_MAPPING_CONFIDENCE } from '../lib/recommendation/task-infer.js';
 import type { TaskInferResult } from '../lib/recommendation/task-infer.js';
 import {
@@ -273,7 +274,19 @@ const LogOutcomeBody = z.object({
         .string()
         .min(1)
         .max(255)
-        .transform(val => sanitizeString(val, 255).trim())
+        .transform(val => {
+            // Canonicalize to match the import route's canonicalizeIssueType():
+            // lowercase, spaces/hyphens → underscores, strip non-alphanumeric.
+            // Ensures "Payment_Failed" from import and "payment_failed" from SDK
+            // resolve to the same context_id and task_name bucket.
+            const sanitized = sanitizeString(val, 255).trim();
+            return sanitized
+                .toLowerCase()
+                .replace(/[\s\-]+/g, '_')
+                .replace(/[^a-z0-9_]/g, '')
+                .replace(/_+/g, '_')
+                .replace(/^_+|_+$/g, '');
+        })
         .refine(val => val.length > 0, { message: 'issue_type cannot be blank' }),
     success: z.preprocess(
         (val) => {
@@ -858,6 +871,8 @@ async function insertCoreOutcome(
         // ── Inference Engine (migration 102) ─────────────────
         inference_confidence: inferenceConfidence,
         outcome_class: outcomeClass,
+        ...(body.resource_cost_units != null ? { resource_cost_units: body.resource_cost_units } : {}),
+        ...(body.resource_cost_type ? { resource_cost_type: body.resource_cost_type } : {}),
     });
 
     return {
@@ -1181,6 +1196,21 @@ logOutcomeRouter.post('/', async (c) => {
             resolveContextId(body, customerId),
             resolveRetryChainState(customerId, body),
         ]);
+
+        // Best-effort context vector upkeep. This never blocks outcome ingestion.
+        const ensureEmbedding = contextEmbed.ensureContextEmbedding?.({
+            contextId,
+            customerId,
+            issueType: body.issue_type,
+            customerTier: body.customer_tier ?? null,
+            environment: body.environment ?? null,
+            rawContext: body.raw_context ?? null,
+        });
+        if (ensureEmbedding) {
+            ensureEmbedding.catch((err: any) => {
+                console.warn('[log-outcome] ensureContextEmbedding failed:', err?.message ?? err);
+            });
+        }
 
         const semanticCluster = inferSemanticActionCluster({
             actionName: body.action_name ?? 'unknown_action',

@@ -18,6 +18,9 @@ import { supabase } from './supabase.js';
 
 const EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER ?? 'supabase';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
+const EXPECTED_CONTEXT_VECTOR_DIMENSION = Number(
+    process.env.CONTEXT_VECTOR_DIMENSION ?? '384',
+);
 // SIMILARITY_THRESHOLD: cosine similarity floor for context matching.
 // Below this value, findClosestContext returns null ->
 // scoring treats as exact match (1.0 penalty applied).
@@ -38,19 +41,36 @@ const CURRENT_EMBEDDING_MODEL = EMBEDDING_PROVIDER === 'openai'
     : 'gte-small';
 const CURRENT_EMBEDDING_VERSION = process.env.EMBEDDING_VERSION ?? '2024-01-01';
 const CURRENT_EMBEDDING_SCHEMA_VERSION = 2;
+const CONTEXT_EMBEDDING_CACHE_TTL_MS = 10 * 60 * 1000;
+const MAX_RAW_CONTEXT_EMBED_FIELDS = 20;
+const MAX_RAW_CONTEXT_EMBED_CHARS = 512;
+
+const contextEmbeddingReadyUntil = new Map<string, number>();
+const contextEmbeddingInFlight = new Map<string, Promise<boolean>>();
 
 // ── Generate embedding ───────────────────────────────────────
 /**
- * Generates a 1536-dimension vector from context text.
+ * Generates a provider vector from context text.
  * contextText = "payment_failed enterprise production"
  * Returns null on failure (never throws).
  */
 export async function generateEmbedding(contextText: string): Promise<number[] | null> {
     try {
-        if (EMBEDDING_PROVIDER === 'openai') {
-            return await generateOpenAIEmbedding(contextText);
+        const embedding = EMBEDDING_PROVIDER === 'openai'
+            ? await generateOpenAIEmbedding(contextText)
+            : await generateSupabaseEmbedding(contextText);
+
+        if (!embedding) return null;
+
+        if (embedding.length !== EXPECTED_CONTEXT_VECTOR_DIMENSION) {
+            console.warn(
+                `[context-embed] Embedding dimension mismatch: got=${embedding.length}, ` +
+                `expected=${EXPECTED_CONTEXT_VECTOR_DIMENSION}. Dropping vector.`
+            );
+            return null;
         }
-        return await generateSupabaseEmbedding(contextText);
+
+        return embedding;
     } catch (err: any) {
         console.warn(`[context-embed] Embedding unavailable — using exact match fallback. Error: ${err.message}`);
         return null;
@@ -199,6 +219,14 @@ export async function findClosestContext(
     customerId: string,
     options: { environment?: string | null } = {}
 ): Promise<{ context_id: string; similarity: number } | null> {
+    if (embedding.length !== EXPECTED_CONTEXT_VECTOR_DIMENSION && process.env.NODE_ENV !== 'test') {
+        console.warn(
+            `[context-embed] findClosestContext skipped due to dimension mismatch: ` +
+            `query=${embedding.length}, expected=${EXPECTED_CONTEXT_VECTOR_DIMENSION}`
+        );
+        return null;
+    }
+
     const environmentFilter = typeof options.environment === 'string'
         ? options.environment.trim().toLowerCase()
         : '';
@@ -341,13 +369,142 @@ function parseVector(v: string): number[] | null {
     }
 }
 
+function flattenRawContextForEmbedding(rawContext?: Record<string, unknown>): string {
+    if (!rawContext || typeof rawContext !== 'object') return '';
+
+    const parts: string[] = [];
+    const entries = Object.entries(rawContext)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, MAX_RAW_CONTEXT_EMBED_FIELDS);
+
+    for (const [key, value] of entries) {
+        if (value === null || value === undefined) continue;
+
+        let normalized = '';
+        if (typeof value === 'string') {
+            normalized = value.trim();
+        } else if (typeof value === 'number' || typeof value === 'boolean') {
+            normalized = String(value);
+        } else {
+            try {
+                normalized = JSON.stringify(value);
+            } catch {
+                normalized = '';
+            }
+        }
+
+        if (!normalized) continue;
+        parts.push(`${key}:${normalized}`);
+    }
+
+    return parts.join(' ').slice(0, MAX_RAW_CONTEXT_EMBED_CHARS);
+}
+
 /**
  * Build context text from components for embedding.
  */
 export function buildContextText(
     issueType: string,
     customerTier?: string,
-    environment?: string
+    environment?: string,
+    rawContext?: Record<string, unknown>
 ): string {
-    return [issueType, customerTier, environment].filter(Boolean).join(' ');
+    const rawContextText = flattenRawContextForEmbedding(rawContext);
+    return [issueType, customerTier, environment, rawContextText]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+}
+
+/**
+ * Ensures a context row has a vector + embedding metadata.
+ * Safe to call on every ingestion path; fast-path exits when vector already exists.
+ */
+export async function ensureContextEmbedding(params: {
+    contextId: string;
+    customerId: string;
+    issueType: string;
+    customerTier?: string | null;
+    environment?: string | null;
+    rawContext?: Record<string, unknown> | null;
+}): Promise<boolean> {
+    const readyUntil = contextEmbeddingReadyUntil.get(params.contextId);
+    if (readyUntil && readyUntil > Date.now()) {
+        return true;
+    }
+
+    const existingInFlight = contextEmbeddingInFlight.get(params.contextId);
+    if (existingInFlight) {
+        return existingInFlight;
+    }
+
+    const task = (async () => {
+        const { data: existing, error: existingError } = await supabase
+            .from('dim_contexts')
+            .select('context_vector, issue_type, customer_tier, environment')
+            .eq('context_id', params.contextId)
+            .eq('customer_id', params.customerId)
+            .maybeSingle();
+
+        if (existingError || !existing) {
+            if (existingError) {
+                console.warn('[context-embed] ensureContextEmbedding lookup failed:', existingError.message);
+            }
+            return false;
+        }
+
+        if ((existing as any).context_vector) {
+            contextEmbeddingReadyUntil.set(
+                params.contextId,
+                Date.now() + CONTEXT_EMBEDDING_CACHE_TTL_MS,
+            );
+            return true;
+        }
+
+        const sourceText = buildContextText(
+            params.issueType || String((existing as any).issue_type ?? ''),
+            params.customerTier ?? String((existing as any).customer_tier ?? ''),
+            params.environment ?? String((existing as any).environment ?? ''),
+            params.rawContext ?? undefined,
+        );
+
+        if (!sourceText) {
+            return false;
+        }
+
+        const embedding = await generateEmbedding(sourceText);
+        if (!embedding) {
+            return false;
+        }
+
+        const metadata = embeddingVersionMeta(embedding, sourceText);
+        const { error: updateError } = await supabase
+            .from('dim_contexts')
+            .update({
+                context_vector: embedding,
+                ...metadata,
+            })
+            .eq('context_id', params.contextId)
+            .eq('customer_id', params.customerId)
+            .is('context_vector', null);
+
+        if (updateError) {
+            console.warn('[context-embed] ensureContextEmbedding update failed:', updateError.message);
+            return false;
+        }
+
+        contextEmbeddingReadyUntil.set(
+            params.contextId,
+            Date.now() + CONTEXT_EMBEDDING_CACHE_TTL_MS,
+        );
+        return true;
+    })();
+
+    contextEmbeddingInFlight.set(params.contextId, task);
+
+    try {
+        return await task;
+    } finally {
+        contextEmbeddingInFlight.delete(params.contextId);
+    }
 }

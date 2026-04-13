@@ -639,7 +639,27 @@ function ActionLeaderboard({
     bestActionName: string | null;
     totalOutcomes: number;
 }): React.ReactElement {
-    const sorted = [...actions].sort((a, b) => b.resolution_rate - a.resolution_rate);
+    // Deduplicate by action_id (server already deduplicates, this is a safety net).
+    // If two entries share the same action_name but different IDs (normalization lag),
+    // keep the one with the higher total_count as it has more evidence.
+    const seenIds = new Set<string>();
+    const seenNames = new Map<string, ActionPerformance>();
+    const deduped: ActionPerformance[] = [];
+    for (const a of actions) {
+        if (seenIds.has(a.action_id)) continue;
+        seenIds.add(a.action_id);
+        const existing = seenNames.get(a.action_name);
+        if (existing) {
+            if (a.total_count > existing.total_count) {
+                deduped.splice(deduped.indexOf(existing), 1, a);
+                seenNames.set(a.action_name, a);
+            }
+        } else {
+            seenNames.set(a.action_name, a);
+            deduped.push(a);
+        }
+    }
+    const sorted = deduped.sort((a, b) => b.resolution_rate - a.resolution_rate);
 
     if (sorted.length === 0) {
         return (
@@ -974,6 +994,10 @@ export default function RecommendationsPage(): React.ReactElement {
     const [analytics, setAnalytics] = useState<TaskAnalytics | null>(null);
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
+    // Context filter — narrows recommendations to a specific issue_type + environment
+    const [ctxIssueType, setCtxIssueType] = useState<string>('');
+    const [ctxEnvironment, setCtxEnvironment] = useState<string>('');
+
     const refreshRef = useRef<(() => void) | null>(null);
     const recToken = useRef(0);
     const summaryToken = useRef(0);
@@ -1078,10 +1102,15 @@ export default function RecommendationsPage(): React.ReactElement {
 
         const fetch_ = createAgentFetch(apiKey, handleAuthFailure);
 
+        // Build context params when issue_type is set
+        const ctxParams = ctxIssueType.trim()
+            ? `&issue_type=${encodeURIComponent(ctxIssueType.trim())}${ctxEnvironment.trim() ? `&environment=${encodeURIComponent(ctxEnvironment.trim())}` : ''}`
+            : '';
+
         // Fetch recommendation and analytics in parallel
         const [recRes, analyticsRes] = await Promise.allSettled([
             fetch_(
-                `${API_BASE}/v1/recommendations?task=${encodeURIComponent(taskName)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=1&t=${Date.now()}`,
+                `${API_BASE}/v1/recommendations?task=${encodeURIComponent(taskName)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=1${ctxParams}&t=${Date.now()}`,
                 { cache: 'no-store' },
             ),
             fetch_(
@@ -1130,7 +1159,7 @@ export default function RecommendationsPage(): React.ReactElement {
             setRecLoading(false);
             setAnalyticsLoading(false);
         }
-    }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
+    }, [isValid, apiKey, handleAuthFailure, selectedAgentId, ctxIssueType, ctxEnvironment]);
 
     useEffect(() => {
         if (!selectedTask) {
@@ -1155,10 +1184,11 @@ export default function RecommendationsPage(): React.ReactElement {
         };
     }, [selectedTask, fetchData]);
 
-    const taskOutcomes = Math.max(
-        agentSummary?.tasks.find((t) => t.task_name === selectedTask)?.total ?? 0,
-        rec?.task_total_outcomes ?? 0,
-    );
+    // Prefer the sidebar count (always agent-scoped from fact_outcomes) over
+    // rec.task_total_outcomes which may be derived from a blended scope fallback
+    // containing cross-agent totals. Fall back to rec value only when sidebar has 0.
+    const sidebarTaskTotal = agentSummary?.tasks.find((t) => t.task_name === selectedTask)?.total ?? 0;
+    const taskOutcomes = sidebarTaskTotal > 0 ? sidebarTaskTotal : (rec?.task_total_outcomes ?? 0);
 
     // ── Auth gate ────────────────────────────────────────────
     if (!isValid) {
@@ -1208,6 +1238,27 @@ export default function RecommendationsPage(): React.ReactElement {
                         loading={agentsLoading}
                         onChange={setSelectedAgentId}
                     />
+                    {/* Context filter controls */}
+                    <input
+                        type="text"
+                        placeholder="Issue type (e.g. payment_failed)"
+                        value={ctxIssueType}
+                        onChange={(e) => setCtxIssueType(e.target.value)}
+                        className="bg-[#111118] border border-[#1a1a24] rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-[#3f3f46] focus:outline-none focus:border-[#b8ff00]/40 transition-colors w-52"
+                    />
+                    <div className="relative">
+                        <select
+                            value={ctxEnvironment}
+                            onChange={(e) => setCtxEnvironment(e.target.value)}
+                            className="appearance-none bg-[#111118] border border-[#1a1a24] rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[#b8ff00]/40 cursor-pointer pr-7 transition-colors"
+                        >
+                            <option value="">All environments</option>
+                            <option value="production">Production</option>
+                            <option value="staging">Staging</option>
+                            <option value="development">Development</option>
+                        </select>
+                        <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#52525b] pointer-events-none" />
+                    </div>
                     <button
                         onClick={() => refreshRef.current?.()}
                         disabled={recLoading || !selectedTask}
@@ -1294,6 +1345,22 @@ export default function RecommendationsPage(): React.ReactElement {
 
                                 {rec && (
                                     <>
+                                        {/* Context-aware badge — shown when a context filter is active */}
+                                        {rec.context_filter?.issue_type && (
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border"
+                                                    style={{ background: `${ACCENT}10`, color: ACCENT, borderColor: `${ACCENT}30` }}>
+                                                    <Zap size={10} />
+                                                    Context: {rec.context_filter.label ?? rec.context_filter.issue_type}
+                                                </span>
+                                                {!rec.context_filter.context_id && (
+                                                    <span className="text-[10px] text-[#52525b]">
+                                                        No context data yet — showing global signal
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+
                                         <TrustGateBanner rec={rec} />
 
                                         <ScopeDebugStrip rec={rec} />

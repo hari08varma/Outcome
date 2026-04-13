@@ -553,10 +553,24 @@ describe('inferSchemaAndMap — end-to-end with mock LLM', () => {
     });
 
     it('returns error when no LLM provider and no env vars', async () => {
+        const prevSchemaKey = process.env.SCHEMA_INFERRER_API_KEY;
+        const prevOpenAiKey = process.env.OPENAI_API_KEY;
+        const prevGoogleKey = process.env.GOOGLE_API_KEY;
+        delete process.env.SCHEMA_INFERRER_API_KEY;
+        delete process.env.OPENAI_API_KEY;
+        delete process.env.GOOGLE_API_KEY;
+
         const { result, error } = await inferSchemaAndMap(AUTOGPT_RECORDS, null);
 
         expect(result).toBeNull();
         expect(error).toContain('No LLM API key');
+
+        if (prevSchemaKey === undefined) delete process.env.SCHEMA_INFERRER_API_KEY;
+        else process.env.SCHEMA_INFERRER_API_KEY = prevSchemaKey;
+        if (prevOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+        else process.env.OPENAI_API_KEY = prevOpenAiKey;
+        if (prevGoogleKey === undefined) delete process.env.GOOGLE_API_KEY;
+        else process.env.GOOGLE_API_KEY = prevGoogleKey;
     });
 
     it('handles empty records array', async () => {

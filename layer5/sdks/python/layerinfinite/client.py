@@ -134,6 +134,14 @@ class Layerinfinite:
         self._log_async = log_async
         self._auto_register = auto_register
 
+        # Auto-capture environment from LI_ENVIRONMENT env var.
+        # Falls back to "production" when unset — same default the API uses.
+        # This ensures context_id is correctly scoped per environment so
+        # staging outcomes don't bleed into production recommendations.
+        _env_raw = os.getenv("LI_ENVIRONMENT", "").strip().lower()
+        _env_aliases = {"prod": "production", "stg": "staging", "dev": "development", "qa": "staging"}
+        self._environment: str = _env_aliases.get(_env_raw, _env_raw) if _env_raw else "production"
+
         # Fix 1: Exploration floor — track per-(task, action) observation counts.
         # min_observations_per_action=0 means disabled (backward-compatible).
         self._min_observations_per_action = max(0, int(min_observations_per_action))
@@ -957,18 +965,20 @@ class Layerinfinite:
 
         return rec
 
-    def scores(self, task: str) -> GetScoresResponse:
+    def scores(self, task: str, raw_context: Dict[str, Any] | None = None) -> GetScoresResponse:
         """
         Fetch raw ranked action scores for a task. Available in ALL modes.
         Power users and dashboards.
 
         Args:
             task: Task name / issue_type.
+            raw_context: Optional per-request context dictionary used for
+                semantic context matching on the scoring endpoint.
 
         Returns:
             GetScoresResponse with ranked_actions, top_action, policy.
         """
-        scores_resp = self._fetch_scores(task)
+        scores_resp = self._fetch_scores(task, raw_context=raw_context)
         if scores_resp is None:
             return GetScoresResponse(ranked_actions=[], cold_start=True, outcomes_needed=50)
         if scores_resp.cold_start and scores_resp.outcomes_needed > 0:
@@ -1398,6 +1408,10 @@ class Layerinfinite:
             "session_id": session_id,
             "response_ms": latency_ms,  # backend alias: response_ms → response_time_ms
             "idempotency_key": str(uuid.uuid4()),
+            # Auto-captured from LI_ENVIRONMENT env var (default: "production").
+            # Ensures the API creates a context_id scoped to the right environment,
+            # so staging outcomes don't pollute production recommendations.
+            "environment": self._environment,
         }
         if outcome_score is not None:
             payload["outcome_score"] = outcome_score
@@ -1539,17 +1553,25 @@ class Layerinfinite:
                 action_name,
             )
 
-    def _fetch_scores(self, task: str) -> GetScoresResponse | None:
+    def _fetch_scores(self, task: str, raw_context: Dict[str, Any] | None = None) -> GetScoresResponse | None:
         """
         GET /v1/get-scores?issue_type={task}
         Returns None if cold start (no scores available).
         Fix 3: Emits a cold-start progress indicator when outcomes_needed > 0.
         """
         try:
+            params: Dict[str, Any] = {
+                "issue_type": task,
+                "environment": self._environment,
+            }
+            if raw_context:
+                # Keep query payload bounded. API defensively ignores invalid JSON.
+                params["raw_context"] = json.dumps(raw_context, default=str)[:2000]
+
             resp = self._request(
                 "GET",
                 "/v1/get-scores",
-                params={"issue_type": task, "environment": "production"},
+                params=params,
             )
             scores = GetScoresResponse.model_validate(resp.json())
 
