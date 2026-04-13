@@ -483,10 +483,7 @@ getRecommendationsRouter.get('/', async (c) => {
                         resolution_rate_weighted_sum: number;
                         last_seen_at: string | null;
                     }>();
-                    // Use agent-scoped actions for counts so the table matches the task list.
-                    // When the engine uses blended scope for confidence, we still show only
-                    // this agent's per-action outcomes — not totals from all agents.
-                    for (const a of (agentScopedResult ?? result).all_actions) {
+                    for (const a of result.all_actions) {
                         const name = a.action_name;
                         const existing = byName.get(name);
                         if (!existing) {
