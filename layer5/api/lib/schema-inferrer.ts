@@ -413,8 +413,13 @@ export function createDefaultLLMProvider(): LLMProvider | null {
     const apiKey = process.env.SCHEMA_INFERRER_API_KEY
         || process.env.OPENAI_API_KEY
         || process.env.GOOGLE_API_KEY;
-    const apiUrl = process.env.SCHEMA_INFERRER_API_URL
-        || 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+
+    let defaultUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+    if (apiKey && apiKey.trim().startsWith('sk-')) {
+        defaultUrl = 'https://api.openai.com/v1/chat/completions';
+    }
+
+    const apiUrl = process.env.SCHEMA_INFERRER_API_URL || defaultUrl;
 
     if (!apiKey) return null;
 

@@ -50,6 +50,7 @@ interface AgentSummary {
     trust_score: number | null;
     trust_status: string | null;
     total_outcomes: number;
+    win_rate?: number | null;
     tasks: TaskSummary[];
 }
 
@@ -211,6 +212,7 @@ function Sparkline({ points, direction }: { points: Array<{ rate: number }>; dir
     const toY = (r: number) => H - pad - ((r - min) / range) * (H - pad * 2);
 
     const d = rates.map((r, i) => `${i === 0 ? 'M' : 'L'} ${toX(i).toFixed(1)} ${toY(r).toFixed(1)}`).join(' ');
+    const fillD = `${d} L ${toX(rates.length - 1).toFixed(1)} ${H} L ${toX(0).toFixed(1)} ${H} Z`;
 
     const stroke =
         direction === 'improving' ? ACCENT :
@@ -219,6 +221,16 @@ function Sparkline({ points, direction }: { points: Array<{ rate: number }>; dir
 
     return (
         <svg width={W} height={H} className="overflow-visible">
+            <defs>
+                <linearGradient id="grad-degrade" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f87171" stopOpacity="0.25" />
+                    <stop offset="100%" stopColor="#f87171" stopOpacity="0" />
+                </linearGradient>
+            </defs>
+            {direction === 'degrading' && (
+                <path d={fillD} fill="url(#grad-degrade)" stroke="none" />
+            )}
+            <line x1={0} y1={H} x2={W} y2={H} stroke="#52525b" strokeWidth="1" strokeDasharray="3 3" opacity={0.5} />
             <path d={d} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
     );
@@ -279,10 +291,11 @@ function AgentOverviewCard({ agent }: { agent: AgentSummary }): React.ReactEleme
             </div>
 
             {/* Stats grid */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
                 <Stat label="Outcomes" value={agent.total_outcomes.toLocaleString()} accent />
                 <Stat label="Tasks" value={String(agent.tasks.length)} />
                 <Stat label="Trust" value={agent.trust_score !== null ? `${Math.round((agent.trust_score ?? 0) * 100)}%` : '—'} />
+                <Stat label="Win Rate" value={agent.win_rate !== null && agent.win_rate !== undefined ? `${(agent.win_rate * 100).toFixed(1)}%` : '—'} />
             </div>
 
             {/* Trust badge */}
@@ -294,19 +307,29 @@ function AgentOverviewCard({ agent }: { agent: AgentSummary }): React.ReactEleme
                 )}
             </div>
 
-            {/* All outcomes bar */}
-            <div className="space-y-1">
-                <div className="flex items-center justify-between text-[10px] text-[#52525b]">
-                    <span>Total outcomes logged</span>
-                    <span className="font-mono">{agent.total_outcomes.toLocaleString()}</span>
+            {/* Performance split bar */}
+            {agent.win_rate !== null && agent.win_rate !== undefined ? (
+                <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-[#52525b]">Agent Performance</span>
+                        <span className="font-mono text-white/80">
+                            {((1 - agent.win_rate) * 100).toFixed(1)}% failure
+                        </span>
+                    </div>
+                    <div className="flex h-1.5 rounded-full overflow-hidden">
+                        <div
+                            className="h-full bg-[#b8ff00] transition-all"
+                            style={{ width: `${agent.win_rate * 100}%` }}
+                            title={`Success Rate: ${(agent.win_rate * 100).toFixed(1)}%`}
+                        />
+                        <div
+                            className="h-full bg-red-500/80 transition-all"
+                            style={{ width: `${(1 - agent.win_rate) * 100}%` }}
+                            title={`Failure Rate: ${((1 - agent.win_rate) * 100).toFixed(1)}%`}
+                        />
+                    </div>
                 </div>
-                <div className="h-1.5 rounded-full bg-[#1a1a24] overflow-hidden">
-                    <div
-                        className="h-full rounded-full bg-[#b8ff00]"
-                        style={{ width: `${Math.min(100, (agent.total_outcomes / 500) * 100)}%` }}
-                    />
-                </div>
-            </div>
+            ) : null}
         </div>
     );
 }
@@ -403,6 +426,14 @@ function TaskHealthHeader({
         ? `trust: ${rec.policy_gate.trust_status ?? 'blocked'}`
         : rec?.confidence_source?.replace('_', ' ') ?? '—';
 
+    // Calculate Suboptimal Usage
+    const actionsByUsage = [...(rec?.all_actions || [])].sort((a, b) => b.total_count - a.total_count);
+    const mostUsedAction = actionsByUsage.length > 0 ? actionsByUsage[0] : null;
+    const isMostUsedSuboptimal = mostUsedAction 
+        && fallbackBest 
+        && mostUsedAction.action_id !== fallbackBest.action_id
+        && mostUsedAction.resolution_rate < fallbackBest.resolution_rate;
+
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
             {/* Task name + badges */}
@@ -414,7 +445,11 @@ function TaskHealthHeader({
                     </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                    {rec?.state && (
+                    {rec?.policy_gate?.trust_blocked ? (
+                        <span className="px-2.5 py-1 rounded-full border text-xs capitalize bg-orange-500/10 border-orange-500/30 text-orange-400">
+                            Trust Suspended
+                        </span>
+                    ) : rec?.state && (
                         <span className="px-2.5 py-1 rounded-full border text-xs capitalize bg-[#1a1a24] border-[#252530] text-[#a1a1aa]">
                             {rec.state.replace('_', ' ')}
                         </span>
@@ -465,6 +500,20 @@ function TaskHealthHeader({
                 />
             </div>
 
+            {/* AHA! Insight Alert for Suboptimal Hardcoding */}
+            {isMostUsedSuboptimal && mostUsedAction && fallbackBest && (
+                <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/30 rounded-xl p-4">
+                    <Zap size={16} className="text-red-400 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-sm font-bold text-red-400">Action Switch Recommended</p>
+                        <p className="text-xs text-red-200/80 mt-1">
+                            Your agent is currently heavily routing to <code className="font-mono bg-red-500/20 px-1 rounded">{mostUsedAction.action_name}</code> which has a win rate of <strong className="text-red-400">{pct(mostUsedAction.resolution_rate)}</strong>. 
+                            Switching to <code className="font-mono bg-red-500/20 px-1 rounded">{fallbackBest.action_name}</code> would improve success by <strong className="text-red-400">{pct(fallbackBest.resolution_rate - mostUsedAction.resolution_rate)}</strong>.
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* Insufficient data gate */}
             {!hasSufficient && (
                 <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-4">
@@ -505,24 +554,31 @@ function KpiCell({ label, value, sub, accent, danger, good }: {
 
 function DriftAlert({ analytics }: { analytics: TaskAnalytics }): React.ReactElement | null {
     const { drift } = analytics;
-    if (drift.direction !== 'degrading' || drift.slope === null) return null;
+    
+    // Noise Gate: Hide alert if statistical confidence in the trend is too weak (R² < 0.25)
+    if (drift.direction !== 'degrading' || drift.slope === null || drift.confidence === null || drift.confidence < 0.25) {
+        return null;
+    }
 
-    const dropPp = Math.abs(drift.slope * 100).toFixed(2);
+    // Explode the pain point: Show total drop across window, not drop per outcome
+    const totalDropPct = Math.abs(drift.slope * drift.window_size * 100).toFixed(1);
 
     return (
-        <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/20 rounded-2xl p-4">
+        <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/30 rounded-2xl p-4">
             <TrendingDown size={16} className="text-red-400 mt-0.5 shrink-0" />
             <div className="space-y-1 flex-1">
-                <p className="text-sm font-semibold text-red-400">Context drift detected — early warning</p>
-                <p className="text-xs text-[#a1a1aa]">
-                    The success rate for this task is dropping <strong className="text-red-300">{dropPp}pp per outcome</strong> over the
-                    last {drift.window_size} executions
-                    {drift.confidence !== null ? ` (R² = ${drift.confidence.toFixed(2)})` : ''}.
-                    The engine is about to pivot. If your agent is hard-coded to use one action, it may stop matching the
-                    recommendation before you notice.
+                <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-bold text-red-500">Critical Context Drift</p>
+                    <span className="px-2 py-0.5 bg-red-500/20 rounded-md text-[10px] font-bold text-red-300 border border-red-500/20 uppercase tracking-widest">
+                        {totalDropPct}% Plunge
+                    </span>
+                </div>
+                <p className="text-xs text-red-200/80 leading-relaxed">
+                    The success rate for this task has cumulatively plunged by <strong className="text-red-400">{totalDropPct}%</strong> over the last {drift.window_size} executions (R² = {drift.confidence.toFixed(2)}). 
+                    The environment has fundamentally changed. If your agent is hardcoded to a single action, it is rapidly failing.
                 </p>
                 {drift.points.length >= 2 && (
-                    <div className="pt-2">
+                    <div className="pt-3 pb-1">
                         <Sparkline points={drift.points} direction="degrading" />
                     </div>
                 )}
@@ -534,6 +590,9 @@ function DriftAlert({ analytics }: { analytics: TaskAnalytics }): React.ReactEle
 // ─── LLM Insight panel ────────────────────────────────────────────────────────
 
 function LLMInsightPanel({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
+    // When the agent is trust blocked, the LLM insight is irrelevant and static fallbacks contradict the trust banner.
+    if (rec.trust_blocked) return null;
+
     const n = rec.llm_narrative;
     if (!n?.generated) {
         // Static fallback
@@ -694,10 +753,8 @@ function ActionLeaderboard({
                     <thead>
                         <tr className="border-b border-[#1a1a24] text-[#52525b] text-[10px] uppercase tracking-wider">
                             <th className="text-left px-5 py-2.5 font-medium">Action</th>
-                            <th className="text-right px-4 py-2.5 font-medium">Win Rate</th>
+                            <th className="text-left px-4 py-2.5 font-medium min-w-[120px]">Win Rate</th>
                             <th className="text-right px-4 py-2.5 font-medium">Attempts</th>
-                            <th className="text-right px-4 py-2.5 font-medium">ML Score</th>
-                            <th className="text-right px-4 py-2.5 font-medium">Convergence</th>
                             <th className="text-right px-4 py-2.5 font-medium">Confidence Tier</th>
                             <th className="text-right px-5 py-2.5 font-medium">Last Seen</th>
                         </tr>
@@ -739,37 +796,23 @@ function ActionLeaderboard({
                                     </td>
 
                                     {/* Win rate */}
-                                    <td className="px-4 py-3 text-right">
-                                        <span className={`font-mono font-semibold ${isRecommended ? 'text-[#b8ff00]' : 'text-white'}`}>
-                                            {pct(action.resolution_rate)}
-                                        </span>
+                                    <td className="px-4 py-3">
+                                        <div className="flex items-center gap-3">
+                                            <span className={`font-mono font-semibold w-10 ${isRecommended ? 'text-[#b8ff00]' : 'text-white'}`}>
+                                                {pct(action.resolution_rate)}
+                                            </span>
+                                            <div className="flex-1 h-1.5 bg-[#1a1a24] rounded-full overflow-hidden min-w-[50px]">
+                                                <div 
+                                                    className={`h-full rounded-full transition-all ${isRecommended ? 'bg-[#b8ff00]' : 'bg-[#52525b]'}`}
+                                                    style={{ width: `${action.resolution_rate * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
                                     </td>
 
                                     {/* Attempts */}
                                     <td className="px-4 py-3 text-right text-[#a1a1aa] font-mono">
                                         {action.total_count.toLocaleString()}
-                                    </td>
-
-                                    {/* ML score */}
-                                    <td className="px-4 py-3 text-right">
-                                        {action.ml_score != null ? (
-                                            <span className="font-mono text-[#a1a1aa]">
-                                                {(action.ml_score * 100).toFixed(1)}%
-                                            </span>
-                                        ) : (
-                                            <span className="text-[#3f3f46]">—</span>
-                                        )}
-                                    </td>
-
-                                    {/* Semantic convergence */}
-                                    <td className="px-4 py-3 text-right">
-                                        {conv !== null ? (
-                                            <span className={`font-mono text-xs ${conv >= 0.7 ? 'text-[#b8ff00]' : conv >= 0.5 ? 'text-yellow-400' : 'text-[#52525b]'}`}>
-                                                {pct(conv, 0)}
-                                            </span>
-                                        ) : (
-                                            <span className="text-[#3f3f46]">—</span>
-                                        )}
                                     </td>
 
                                     {/* Confidence tier */}
@@ -799,7 +842,7 @@ function EngineInterventions({
 }: {
     analytics: TaskAnalytics;
     rec: RecommendationResponse;
-}): React.ReactElement {
+}): React.ReactElement | null {
     const { explore_exploit, trust_blocks } = analytics;
     const exploreRatio = explore_exploit.explore_ratio;
     const trustBlockRate = trust_blocks.total > 0 ? trust_blocks.blocked_count / trust_blocks.total : 0;
@@ -808,6 +851,16 @@ function EngineInterventions({
     const silentWarning = rec._silent_failure_warning ?? false;
     const cohortBand = rec.cohort_reliability?.band ?? null;
     const bandCls = cohortBand === 'stable' ? 'text-[#b8ff00]' : cohortBand === 'anomalous' ? 'text-red-400' : 'text-yellow-400';
+
+    // Exception-based UI: Hide this entire panel if the engine is operating cleanly with 0 interventions
+    const hasExplore = exploreRatio !== null && exploreRatio > 0;
+    const hasBlocks = trust_blocks.blocked_count > 0;
+    const isAnomalous = cohortBand !== 'stable' && cohortBand !== null;
+    const hasWarnings = silentWarning || noiseGate?.is_noisy_task;
+
+    if (!hasExplore && !hasBlocks && !isAnomalous && !hasWarnings) {
+        return null;
+    }
 
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
@@ -896,6 +949,16 @@ function DataSourcesPanel({ rec }: { rec: RecommendationResponse }): React.React
 
     if (!ds && !freshness && !scope) return null;
 
+    // Exception-based UI: Only show this panel if there is something interesting to report
+    const hasUploads = ds && ds.uploaded_outcomes > 0;
+    const hasQualityIssues = ds && ds.quality_score !== null && ds.quality_score < 0.8;
+    const isStale = freshness?.is_stale === true;
+    const hasFallback = scope?.fallback_applied === true;
+
+    if (!hasUploads && !hasQualityIssues && !isStale && !hasFallback) {
+        return null;
+    }
+
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-3">
             <p className="text-xs font-semibold text-white">Data Sources & Scope</p>
@@ -947,15 +1010,21 @@ function TrustGateBanner({ rec }: { rec: RecommendationResponse }): React.ReactE
     if (!rec.trust_blocked) return null;
 
     return (
-        <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/20 rounded-2xl p-4">
-            <Shield size={15} className="text-red-400 mt-0.5 shrink-0" />
-            <div className="space-y-1">
-                <p className="text-sm font-semibold text-red-300">Recommendation actioning blocked — agent suspended</p>
-                <p className="text-xs text-red-200/70">
-                    Trust status: <span className="font-mono">{rec.trust_status ?? 'suspended'}</span>. The engine will not
-                    issue a switch decision until trust is reinstated. The action leaderboard below shows historical evidence
-                    from this agent and task so you can still inspect win rates and signals.
-                </p>
+        <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl p-4">
+            <Shield size={16} className="text-red-400 mt-0.5 shrink-0" />
+            <div className="space-y-2 flex-1">
+                <p className="text-sm font-bold text-red-400">Recommendation Engine Suspended</p>
+                <div className="text-xs text-red-200/80 leading-relaxed space-y-1">
+                    <p>
+                        <strong>Trust Status: <span className="font-mono text-red-300 uppercase">{rec.trust_status ?? 'suspended'}</span></strong>
+                    </p>
+                    <p>
+                        Your agent has triggered the Layerinfinite security boundary. The ML engine has forcefully severed live recommendation logic to the SDK to protect your application from toxic routing or high variance hallucinations.
+                    </p>
+                    <p className="pt-1">
+                        <strong>Action required:</strong> Review the Action Leaderboard below to inspect the historical evidence. Fix the violating actions in your codebase to automatically reinstate engine trust.
+                    </p>
+                </div>
             </div>
         </div>
     );

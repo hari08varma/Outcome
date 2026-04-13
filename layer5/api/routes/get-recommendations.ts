@@ -284,9 +284,13 @@ async function getRecommendationWithTaskFallback(
 function addOutcomeCount(
     agentTaskTotals: Map<string, Map<string, number>>,
     agentGrandTotals: Map<string, number>,
+    agentSuccessStats: Map<string, { wins: number; rated: number }>,
     agentId: string,
     taskName: string,
     increment: number,
+    success: boolean | null,
+    score: number | null,
+    scoreRaw: number | null,
 ): void {
     if (!agentId || !taskName || !Number.isFinite(increment) || increment <= 0) {
         return;
@@ -300,6 +304,15 @@ function addOutcomeCount(
 
     taskMap.set(taskName, (taskMap.get(taskName) ?? 0) + increment);
     agentGrandTotals.set(agentId, (agentGrandTotals.get(agentId) ?? 0) + increment);
+
+    // Track win rate across all tasks for this agent
+    const stats = agentSuccessStats.get(agentId) ?? { wins: 0, rated: 0 };
+    const finalScore = scoreRaw ?? score ?? (success === true ? 1 : success === false ? 0 : null);
+    if (finalScore !== null) {
+        stats.rated += increment;
+        stats.wins += (finalScore * increment);
+        agentSuccessStats.set(agentId, stats);
+    }
 }
 
 async function fetchAgentTaskOutcomeTotals(params: {
@@ -308,16 +321,18 @@ async function fetchAgentTaskOutcomeTotals(params: {
 }): Promise<{
     agentTaskTotals: Map<string, Map<string, number>>;
     agentGrandTotals: Map<string, number>;
+    agentSuccessStats: Map<string, { wins: number; rated: number }>;
     source: 'fact_outcomes';
 }> {
     const { customerId, agentId } = params;
     const agentTaskTotals = new Map<string, Map<string, number>>();
     const agentGrandTotals = new Map<string, number>();
+    const agentSuccessStats = new Map<string, { wins: number; rated: number }>();
 
     for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
         let factsQuery = supabase
             .from('fact_outcomes')
-            .select('agent_id, task_name')
+            .select('agent_id, task_name, success, outcome_score, outcome_score_raw')
             .eq('customer_id', customerId)
             .eq('is_synthetic', false)
             .eq('is_deleted', false)
@@ -333,14 +348,24 @@ async function fetchAgentTaskOutcomeTotals(params: {
             throw new Error(`[agent-summary] fallback aggregation failed: ${error.message}`);
         }
 
-        const page = (data ?? []) as Array<{ agent_id: string | null; task_name: string | null }>;
+        const page = (data ?? []) as Array<{ 
+            agent_id: string | null; 
+            task_name: string | null;
+            success: boolean | null;
+            outcome_score: number | null;
+            outcome_score_raw: number | null;
+        }>;
         for (const row of page) {
             addOutcomeCount(
                 agentTaskTotals,
                 agentGrandTotals,
+                agentSuccessStats,
                 row.agent_id ?? '',
                 row.task_name ?? '',
                 1,
+                row.success,
+                row.outcome_score,
+                row.outcome_score_raw
             );
         }
 
@@ -349,7 +374,7 @@ async function fetchAgentTaskOutcomeTotals(params: {
         }
     }
 
-    return { agentTaskTotals, agentGrandTotals, source: 'fact_outcomes' };
+    return { agentTaskTotals, agentGrandTotals, agentSuccessStats, source: 'fact_outcomes' };
 }
 
 // GET /agent-summary — per-agent stats + per-task outcome counts
@@ -388,12 +413,16 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
             agent_id: string; trust_score: number; trust_status: string;
         } | null;
 
-        const { agentTaskTotals, agentGrandTotals, source } = outcomeTotals;
+        const { agentTaskTotals, agentGrandTotals, agentSuccessStats, source } = outcomeTotals;
 
         if (agentId) {
             const meta = (agentMeta as any[]).find((a) => a.agent_id === agentId);
             const taskMap = agentTaskTotals.get(agentId) ?? new Map();
             const grandTotal = agentGrandTotals.get(agentId) ?? 0;
+            const successStats = agentSuccessStats.get(agentId);
+            const winRate = successStats && successStats.rated > 0 
+                ? Number((successStats.wins / successStats.rated).toFixed(4)) 
+                : null;
 
             const tasks = Array.from(taskMap.entries())
                 .map(([task_name, total]) => ({ task_name, total }))
@@ -407,6 +436,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                 trust_score: trustMeta?.trust_score ?? null,
                 trust_status: trustMeta?.trust_status ?? null,
                 total_outcomes: grandTotal,
+                win_rate: winRate,
                 tasks,
                 window_days: null,
                 counts_source: source,
