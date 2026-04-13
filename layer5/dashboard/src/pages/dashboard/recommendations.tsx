@@ -31,15 +31,11 @@ interface AgentSummary {
     trust_score: number | null;
     trust_status: string | null;
     total_outcomes: number;
-    sdk_outcomes: number;
-    imported_outcomes: number;
     tasks: TaskSummary[];
 }
 
 interface TaskSummary {
     task_name: string;
-    sdk: number;
-    imported: number;
     total: number;
 }
 
@@ -963,8 +959,6 @@ export default function RecommendationsPage(): React.ReactElement {
                     trust_score: null,
                     trust_status: null,
                     total_outcomes: 0,
-                    sdk_outcomes: 0,
-                    imported_outcomes: 0,
                     tasks: [],
                 }));
                 setAgents(fallback);

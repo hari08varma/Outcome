@@ -128,9 +128,9 @@ function buildTraceability(params: {
     return baseTraceability;
 }
 
-// GET /agent-summary — per-agent stats + per-task outcome counts from fact_outcomes
-// Returns: total_outcomes (sdk+import), agent trust/mode, per-task breakdown
-// Used by the redesigned recommendations page to show agent overview + task list.
+// GET /agent-summary — per-agent stats + per-task outcome counts
+// Task counts come from mv_task_action_performance_180d (same source as the engine).
+// Falls back to fact_outcomes if MV is unavailable.
 getRecommendationsRouter.get('/agent-summary', async (c) => {
     const customerId = c.get('customer_id') as string | undefined;
     if (!customerId) {
@@ -139,27 +139,14 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
     const agentId = c.req.query('agent_id')?.trim() || null;
 
     try {
-        // 1. Fetch agent metadata — scoped to agentId when provided
+        // 1. Agent metadata + trust (parallel)
         let agentQuery = supabase
             .from('dim_agents')
             .select('agent_id, agent_name, agent_type, llm_model')
             .eq('customer_id', customerId);
-        if (agentId) {
-            agentQuery = agentQuery.eq('agent_id', agentId);
-        }
+        if (agentId) agentQuery = agentQuery.eq('agent_id', agentId);
 
-        // 2. Outcomes query — scope to agent when provided to avoid full table scans
-        let outcomesQuery = supabase
-            .from('fact_outcomes')
-            .select('agent_id, task_name, ingestion_source')
-            .eq('customer_id', customerId)
-            .eq('is_synthetic', false)
-            .eq('is_deleted', false);
-        if (agentId) {
-            outcomesQuery = outcomesQuery.eq('agent_id', agentId);
-        }
-
-        const [agentResult, trustResult, outcomesResult] = await Promise.all([
+        const [agentResult, trustResult] = await Promise.all([
             agentQuery,
             agentId
                 ? supabase
@@ -168,7 +155,6 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
                     .eq('agent_id', agentId)
                     .single()
                 : Promise.resolve({ data: null, error: null }),
-            outcomesQuery.then(({ data }) => data ?? []),
         ]);
 
         const agentMeta = agentResult.data ?? [];
@@ -176,76 +162,86 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
             agent_id: string; trust_score: number; trust_status: string;
         } | null;
 
-        // Aggregate outcome counts per agent + task
-        const outcomesData = outcomesResult as Array<{
-            agent_id: string; task_name: string; ingestion_source: string;
-        }>;
+        // 2. Task+outcome counts from MV — same source the engine uses.
+        //    Sum total_count per (agent_id, task_name) across all action rows.
+        let mvQuery = supabase
+            .from('mv_task_action_performance_180d')
+            .select('agent_id, task_name, total_count')
+            .eq('customer_id', customerId)
+            .neq('agent_id', '00000000-0000-0000-0000-000000000000');
+        if (agentId) mvQuery = mvQuery.eq('agent_id', agentId);
 
-        type TaskCounts = { sdk: number; imported: number; total: number };
-        type AgentTaskMap = Map<string, TaskCounts>;
-        const agentTaskCounts = new Map<string, AgentTaskMap>();
-        const agentTotals = new Map<string, { sdk: number; imported: number; total: number }>();
+        const { data: mvRows, error: mvError } = await mvQuery;
 
-        for (const row of outcomesData) {
-            if (!row.agent_id || !row.task_name) continue;
+        // Aggregate: sum total_count per agent+task from MV rows
+        type TaskTotals = Map<string, number>; // task_name -> total
+        const agentTaskTotals = new Map<string, TaskTotals>();
+        const agentGrandTotals = new Map<string, number>();
 
-            // Per-agent totals
-            let totals = agentTotals.get(row.agent_id);
-            if (!totals) { totals = { sdk: 0, imported: 0, total: 0 }; agentTotals.set(row.agent_id, totals); }
+        const useFallback = !!mvError;
 
-            // Per-agent per-task counts
-            let taskMap = agentTaskCounts.get(row.agent_id);
-            if (!taskMap) { taskMap = new Map(); agentTaskCounts.set(row.agent_id, taskMap); }
-            let counts = taskMap.get(row.task_name);
-            if (!counts) { counts = { sdk: 0, imported: 0, total: 0 }; taskMap.set(row.task_name, counts); }
+        if (!mvError && mvRows) {
+            for (const row of mvRows as Array<{ agent_id: string; task_name: string; total_count: number }>) {
+                if (!row.agent_id || !row.task_name) continue;
+                const count = Math.max(0, Number(row.total_count ?? 0));
 
-            if (row.ingestion_source === 'import') {
-                counts.imported++;
-                totals.imported++;
-            } else {
-                counts.sdk++;
-                totals.sdk++;
+                let taskMap = agentTaskTotals.get(row.agent_id);
+                if (!taskMap) { taskMap = new Map(); agentTaskTotals.set(row.agent_id, taskMap); }
+                taskMap.set(row.task_name, (taskMap.get(row.task_name) ?? 0) + count);
+
+                agentGrandTotals.set(row.agent_id, (agentGrandTotals.get(row.agent_id) ?? 0) + count);
             }
-            counts.total++;
-            totals.total++;
+        }
+
+        // Fallback: count from fact_outcomes when MV unavailable
+        if (useFallback) {
+            console.warn('[agent-summary] MV unavailable, falling back to fact_outcomes:', mvError?.message);
+            let foQuery = supabase
+                .from('fact_outcomes')
+                .select('agent_id, task_name')
+                .eq('customer_id', customerId)
+                .eq('is_synthetic', false)
+                .eq('is_deleted', false)
+                .neq('agent_id', '00000000-0000-0000-0000-000000000000');
+            if (agentId) foQuery = foQuery.eq('agent_id', agentId);
+
+            const { data: foRows } = await foQuery;
+            for (const row of (foRows ?? []) as Array<{ agent_id: string; task_name: string }>) {
+                if (!row.agent_id || !row.task_name) continue;
+                let taskMap = agentTaskTotals.get(row.agent_id);
+                if (!taskMap) { taskMap = new Map(); agentTaskTotals.set(row.agent_id, taskMap); }
+                taskMap.set(row.task_name, (taskMap.get(row.task_name) ?? 0) + 1);
+                agentGrandTotals.set(row.agent_id, (agentGrandTotals.get(row.agent_id) ?? 0) + 1);
+            }
         }
 
         if (agentId) {
-            // Single-agent detail response
-            const meta = agentMeta.find((a) => a.agent_id === agentId);
-            const totals = agentTotals.get(agentId) ?? { sdk: 0, imported: 0, total: 0 };
-            const taskMap = agentTaskCounts.get(agentId) ?? new Map();
+            const meta = agentMeta.find((a: any) => a.agent_id === agentId);
+            const taskMap = agentTaskTotals.get(agentId) ?? new Map();
+            const grandTotal = agentGrandTotals.get(agentId) ?? 0;
 
             const tasks = Array.from(taskMap.entries())
-                .map(([task_name, counts]) => ({ task_name, ...counts }))
+                .map(([task_name, total]) => ({ task_name, total }))
                 .sort((a, b) => b.total - a.total);
 
             return c.json({
                 agent_id: agentId,
-                agent_name: meta?.agent_name ?? agentId,
-                agent_type: meta?.agent_type ?? null,
-                llm_model: meta?.llm_model ?? null,
+                agent_name: (meta as any)?.agent_name ?? agentId,
+                agent_type: (meta as any)?.agent_type ?? null,
+                llm_model: (meta as any)?.llm_model ?? null,
                 trust_score: trustMeta?.trust_score ?? null,
                 trust_status: trustMeta?.trust_status ?? null,
-                total_outcomes: totals.total,
-                sdk_outcomes: totals.sdk,
-                imported_outcomes: totals.imported,
+                total_outcomes: grandTotal,
                 tasks,
             }, 200);
         } else {
-            // All-agents list (for dropdown population)
-            const agents = agentMeta.map((a) => {
-                const totals = agentTotals.get(a.agent_id) ?? { sdk: 0, imported: 0, total: 0 };
-                return {
-                    agent_id: a.agent_id,
-                    agent_name: a.agent_name,
-                    agent_type: a.agent_type ?? null,
-                    llm_model: a.llm_model ?? null,
-                    total_outcomes: totals.total,
-                    sdk_outcomes: totals.sdk,
-                    imported_outcomes: totals.imported,
-                };
-            }).sort((a, b) => b.total_outcomes - a.total_outcomes);
+            const agents = (agentMeta as any[]).map((a) => ({
+                agent_id: a.agent_id,
+                agent_name: a.agent_name,
+                agent_type: a.agent_type ?? null,
+                llm_model: a.llm_model ?? null,
+                total_outcomes: agentGrandTotals.get(a.agent_id) ?? 0,
+            })).sort((a, b) => b.total_outcomes - a.total_outcomes);
 
             return c.json({ agents }, 200);
         }
