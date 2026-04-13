@@ -286,11 +286,10 @@ function TaskList({
                     <button
                         key={task.task_name}
                         onClick={() => onSelect(task.task_name)}
-                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
-                            active
+                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${active
                                 ? 'bg-[#0f0f18] border-[#b8ff00]/30'
                                 : 'bg-[#0a0a0f] border-[#1a1a24] hover:bg-[#0f0f18]'
-                        }`}
+                            }`}
                     >
                         <div className="flex items-center justify-between gap-2">
                             <p className="text-xs text-white font-mono truncate">{task.task_name}</p>
