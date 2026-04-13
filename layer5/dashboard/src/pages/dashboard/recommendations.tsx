@@ -360,13 +360,18 @@ function AgentOverview({ agent, sdkMode }: { agent: AgentSummary; sdkMode: strin
                 </div>
             </div>
 
-            {/* Stats row */}
+            {/* Stats row — total outcomes + task count only */}
             <div className="grid grid-cols-2 gap-2">
-                <StatChip label="Total Outcomes" value={agent.total_outcomes.toLocaleString()} accent />
                 <StatChip
-                    label="SDK / Import"
-                    value={`${agent.sdk_outcomes} / ${agent.imported_outcomes}`}
-                    sub="live SDK vs uploaded"
+                    label="Total Outcomes"
+                    value={agent.total_outcomes.toLocaleString()}
+                    sub="all tasks combined"
+                    accent
+                />
+                <StatChip
+                    label="Tasks"
+                    value={agent.tasks.length}
+                    sub="with logged outcomes"
                 />
             </div>
             {agent.llm_model && (
@@ -540,32 +545,35 @@ function ActionBattleCard({ data }: { data: RecommendationResponse }): React.Rea
 
 // ── Evidence Meter ─────────────────────────────────────────────────
 
-function EvidenceMeter({ data }: { data: RecommendationResponse }): React.ReactElement {
-    const samples = data.progress?.current_samples ?? 0;
+function EvidenceMeter({ data, taskTotal }: { data: RecommendationResponse; taskTotal: number }): React.ReactElement {
+    // taskTotal = raw fact_outcomes count (authoritative total for this task)
+    // minPerAction = engine's min sample count across actions (threshold gate)
+    const minPerAction = data.progress?.current_samples ?? 0;
+    // Use taskTotal for the bar fill — it's the real number of logged outcomes
+    const samples = taskTotal > 0 ? taskTotal : minPerAction;
     const milestones = [
-        { at: 10, label: 'Warmup', desc: 'First signals appear' },
-        { at: 30, label: 'Unlock', desc: 'Recommendations unlock' },
-        { at: 50, label: 'Stable', desc: 'Stable signal' },
-        { at: 100, label: 'High confidence', desc: '70%+ confidence possible' },
+        { at: 10, label: 'Warmup' },
+        { at: 30, label: 'Unlock' },
+        { at: 50, label: 'Stable' },
+        { at: 100, label: 'High conf.' },
     ];
     const maxMilestone = 100;
     const fillPct = Math.min(100, (samples / maxMilestone) * 100);
+    const barColour = samples >= 50 ? ACCENT : samples >= 30 ? '#facc15' : '#3f3f46';
 
     return (
         <div className="space-y-3">
             <div className="flex items-center justify-between">
                 <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">Evidence</p>
-                <span className="text-xs font-mono font-semibold text-white tabular-nums">{samples} outcomes</span>
+                <span className="text-xs font-mono font-semibold text-white tabular-nums">{samples.toLocaleString()} outcomes</span>
             </div>
 
             {/* Track */}
             <div className="relative h-2 bg-[#1a1a24] rounded-full overflow-visible">
-                {/* Fill */}
                 <div
                     className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
-                    style={{ width: `${fillPct}%`, backgroundColor: samples >= 50 ? ACCENT : samples >= 30 ? '#facc15' : '#3f3f46' }}
+                    style={{ width: `${fillPct}%`, backgroundColor: barColour }}
                 />
-                {/* Milestone ticks */}
                 {milestones.map((m) => {
                     const pos = (m.at / maxMilestone) * 100;
                     const reached = samples >= m.at;
@@ -573,10 +581,7 @@ function EvidenceMeter({ data }: { data: RecommendationResponse }): React.ReactE
                         <div
                             key={m.at}
                             className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full border-2 border-[#0a0a0f] transition-colors duration-500"
-                            style={{
-                                left: `${pos}%`,
-                                backgroundColor: reached ? (samples >= 50 ? ACCENT : '#facc15') : '#3f3f46',
-                            }}
+                            style={{ left: `${pos}%`, backgroundColor: reached ? barColour : '#3f3f46' }}
                             title={`${m.label}: ${m.at} outcomes`}
                         />
                     );
@@ -584,14 +589,22 @@ function EvidenceMeter({ data }: { data: RecommendationResponse }): React.ReactE
             </div>
 
             {/* Milestone labels */}
-            <div className="flex justify-between text-[10px] text-[#52525b] px-0">
+            <div className="flex justify-between text-[10px] text-[#52525b]">
                 {milestones.map((m) => (
-                    <div key={m.at} className="flex flex-col items-center gap-0.5" style={{ minWidth: 0 }}>
+                    <div key={m.at} className="flex flex-col items-center gap-0.5">
                         <span className={samples >= m.at ? 'text-[#a1a1aa]' : ''}>{m.label}</span>
                         <span className="text-[9px] opacity-60">{m.at}</span>
                     </div>
                 ))}
             </div>
+
+            {/* Min-per-action note — only shown when it differs from total (helps devs understand the threshold gate) */}
+            {minPerAction > 0 && minPerAction < samples && (
+                <p className="text-[10px] text-[#52525b]">
+                    Threshold gate: <span className="text-[#a1a1aa] font-mono">{minPerAction}</span> outcomes on weakest action
+                    {minPerAction < 30 && <span className="text-yellow-500/70"> · needs {30 - minPerAction} more to unlock</span>}
+                </p>
+            )}
 
             {data.unlock_hint && (
                 <p className="text-[10px] text-[#52525b] bg-[#0a0a0f] border border-[#1a1a24] rounded-lg px-3 py-2">
@@ -829,7 +842,7 @@ function TaskDetail({
 
                     {/* Evidence Meter */}
                     <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4">
-                        <EvidenceMeter data={data} />
+                        <EvidenceMeter data={data} taskTotal={taskTotal} />
                     </div>
 
                     {/* Confidence detail */}
