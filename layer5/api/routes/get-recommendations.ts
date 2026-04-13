@@ -500,7 +500,55 @@ getRecommendationsRouter.get('/', async (c) => {
                 // so the developer knows what fraction of confidence comes from each source.
                 data_sources: dataSources,
                 // All action-level performance data — used by Action Battle card in dashboard.
-                all_actions: result.all_actions,
+                // Deduplicated by action_name: the MV has one row per (agent_id, action_id, task_name),
+                // so the same action can appear multiple times when blending across agents.
+                // We merge them here: sum total_count, weighted-average resolution_rate.
+                all_actions: (() => {
+                    const byName = new Map<string, {
+                        action_id: string;
+                        action_name: string;
+                        total_count: number;
+                        resolution_rate_weighted_sum: number;
+                        last_seen_at: string | null;
+                    }>();
+                    for (const a of result.all_actions) {
+                        const name = a.action_name;
+                        const existing = byName.get(name);
+                        if (!existing) {
+                            byName.set(name, {
+                                action_id: a.action_id,
+                                action_name: name,
+                                total_count: Math.max(0, Number(a.total_count ?? 0)),
+                                resolution_rate_weighted_sum: Number(a.resolution_rate ?? 0) * Math.max(0, Number(a.total_count ?? 0)),
+                                last_seen_at: a.last_seen_at ?? null,
+                            });
+                        } else {
+                            const count = Math.max(0, Number(a.total_count ?? 0));
+                            existing.total_count += count;
+                            existing.resolution_rate_weighted_sum += Number(a.resolution_rate ?? 0) * count;
+                            // keep latest last_seen_at
+                            if (a.last_seen_at && (!existing.last_seen_at || a.last_seen_at > existing.last_seen_at)) {
+                                existing.last_seen_at = a.last_seen_at;
+                            }
+                        }
+                    }
+                    return Array.from(byName.values())
+                        .map((a) => ({
+                            action_id: a.action_id,
+                            action_name: a.action_name,
+                            total_count: a.total_count,
+                            resolution_rate: a.total_count > 0
+                                ? Number((a.resolution_rate_weighted_sum / a.total_count).toFixed(4))
+                                : 0,
+                            last_seen_at: a.last_seen_at,
+                        }))
+                        .sort((a, b) => b.resolution_rate - a.resolution_rate);
+                })(),
+                // Total outcomes for this task (sum of deduplicated all_actions total_count).
+                // This is the authoritative count that matches what the recommendation engine used.
+                task_total_outcomes: result.all_actions.reduce(
+                    (sum, a) => sum + Math.max(0, Number(a.total_count ?? 0)), 0,
+                ),
             },
             200
         );

@@ -153,6 +153,8 @@ interface RecommendationResponse {
         generated: boolean;
     };
     all_actions?: ActionPerformance[];
+    // Authoritative total for this task from the recommendation engine (deduplicated by action_name)
+    task_total_outcomes?: number;
     improvement_display?: {
         raw_delta_pct: string;
         qualified_delta_pct: string;
@@ -524,7 +526,7 @@ function ActionBattleCard({ data }: { data: RecommendationResponse }): React.Rea
                             .sort((a, b) => (b.resolution_rate ?? 0) - (a.resolution_rate ?? 0))
                             .slice(0, 6)
                             .map((action) => (
-                                <div key={action.action_id} className="flex items-center px-3 py-2 gap-3">
+                                <div key={action.action_name} className="flex items-center px-3 py-2 gap-3">
                                     <p className="flex-1 text-xs font-mono text-[#a1a1aa] truncate">
                                         {action.action_name}
                                     </p>
@@ -717,6 +719,9 @@ function TaskDetail({
     error: string | null;
 }): React.ReactElement {
     const col = taskColour(taskName);
+    // Use task_total_outcomes from rec engine (deduplicated, same window used for recommendations)
+    // when available. Fall back to taskTotal from /agent-summary (raw fact_outcomes count).
+    const displayTotal = data?.task_total_outcomes ?? taskTotal;
     const ready = taskTotal >= MIN_OUTCOMES_FOR_RECOMMENDATION;
 
     if (loading) {
@@ -743,7 +748,7 @@ function TaskDetail({
                             <p className="text-sm font-semibold font-mono text-white">{taskName}</p>
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 <span className="text-[11px] text-[#52525b]">
-                                    {taskTotal.toLocaleString()} outcomes
+                                    {displayTotal.toLocaleString()} outcomes
                                 </span>
                                 {data && <StateBadge state={data.state} />}
                                 {data && (
@@ -842,7 +847,7 @@ function TaskDetail({
 
                     {/* Evidence Meter */}
                     <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4">
-                        <EvidenceMeter data={data} taskTotal={taskTotal} />
+                        <EvidenceMeter data={data} taskTotal={displayTotal} />
                     </div>
 
                     {/* Confidence detail */}
