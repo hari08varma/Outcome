@@ -474,24 +474,35 @@ getRecommendationsRouter.get('/task-analytics', async (c) => {
     }
 
     try {
-        // Fetch the last `windowSize * 2` outcomes for this agent+task ordered by timestamp desc.
-        // We fetch 2x so we have enough for a meaningful trendline even after filtering.
-        const { data: rawRows, error } = await supabase
-            .from('fact_outcomes')
-            .select('success, outcome_score, outcome_score_raw, execution_status, failure_reason_code, cross_event_status, is_synthetic, timestamp, data_quality')
-            .eq('customer_id', customerId)
-            .eq('agent_id', rawAgentId)
-            .eq('task_name', rawTask)
-            .eq('is_deleted', false)
-            .eq('is_synthetic', false)
-            .order('timestamp', { ascending: false })
-            .limit(windowSize * 2);
+        // Run drift-window query and action-aggregate query in parallel.
+        // The drift query is limited to a recent window; action aggregates are all-time.
+        // Action aggregates are needed when trust gate blocks the engine (all_actions=[]).
+        const [driftResult, actionResult] = await Promise.all([
+            supabase
+                .from('fact_outcomes')
+                .select('success, outcome_score, outcome_score_raw, execution_status, failure_reason_code, cross_event_status, is_synthetic, timestamp, data_quality')
+                .eq('customer_id', customerId)
+                .eq('agent_id', rawAgentId)
+                .eq('task_name', rawTask)
+                .eq('is_deleted', false)
+                .eq('is_synthetic', false)
+                .order('timestamp', { ascending: false })
+                .limit(windowSize * 2),
+            supabase
+                .from('fact_outcomes')
+                .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, dim_actions(action_name)')
+                .eq('customer_id', customerId)
+                .eq('agent_id', rawAgentId)
+                .eq('task_name', rawTask)
+                .eq('is_deleted', false)
+                .eq('is_synthetic', false),
+        ]);
 
-        if (error) {
-            throw new Error(`[task-analytics] query failed: ${error.message}`);
+        if (driftResult.error) {
+            throw new Error(`[task-analytics] drift query failed: ${driftResult.error.message}`);
         }
 
-        const rows = (rawRows ?? []) as Array<{
+        const rows = (driftResult.data ?? []) as Array<{
             success: boolean | null;
             outcome_score: number | null;
             outcome_score_raw: number | null;
@@ -503,11 +514,47 @@ getRecommendationsRouter.get('/task-analytics', async (c) => {
             data_quality: number | null;
         }>;
 
-        if (rows.length === 0) {
+        // ── Action aggregates (for trust-blocked fallback) ────
+        type ActionAgg = { action_id: string; action_name: string; total_count: number; score_sum: number; score_count: number; last_seen_at: string | null };
+        const actionAggMap = new Map<string, ActionAgg>();
+        for (const raw of (actionResult.data ?? []) as Array<Record<string, unknown>>) {
+            const actionId = typeof raw.action_id === 'string' ? raw.action_id : null;
+            if (!actionId) continue;
+            const rel = raw.dim_actions;
+            const actionName: string = (Array.isArray(rel) ? (rel[0] as any)?.action_name : (rel as any)?.action_name) ?? actionId;
+            const rawScore = typeof raw.outcome_score_raw === 'number' ? raw.outcome_score_raw
+                : typeof raw.outcome_score === 'number' ? raw.outcome_score : null;
+            const statusScore = typeof raw.execution_status === 'string'
+                ? (raw.execution_status.toUpperCase() === 'COMPLETED' ? 1 : raw.execution_status.toUpperCase() === 'FAILED' ? 0 : null)
+                : null;
+            const score = rawScore ?? statusScore ?? (raw.success === true ? 1 : raw.success === false ? 0 : null);
+            const ts = typeof raw.timestamp === 'string' ? raw.timestamp : null;
+            const key = actionId;
+            const agg = actionAggMap.get(key) ?? { action_id: actionId, action_name: actionName, total_count: 0, score_sum: 0, score_count: 0, last_seen_at: null };
+            agg.total_count += 1;
+            if (score !== null) { agg.score_sum += score; agg.score_count += 1; }
+            if (ts && (!agg.last_seen_at || ts > agg.last_seen_at)) agg.last_seen_at = ts;
+            actionAggMap.set(key, agg);
+        }
+        const actionAggregates = Array.from(actionAggMap.values())
+            .map((a) => ({
+                action_id: a.action_id,
+                action_name: a.action_name,
+                total_count: a.total_count,
+                effective_sample_count: a.total_count,
+                resolution_rate: a.score_count > 0 ? Number((a.score_sum / a.score_count).toFixed(4)) : 0,
+                ml_score: null,
+                semantic_cluster_convergence: null,
+                last_seen_at: a.last_seen_at,
+            }))
+            .sort((a, b) => b.resolution_rate - a.resolution_rate);
+
+        if (rows.length === 0 && actionAggregates.length === 0) {
             return c.json({
                 drift: { slope: null, confidence: null, window_size: 0, direction: 'unknown', points: [] },
                 explore_exploit: { explore_count: 0, exploit_count: 0, total: 0, explore_ratio: null },
                 trust_blocks: { blocked_count: 0, total: 0 },
+                action_aggregates: [],
             }, 200);
         }
 
@@ -609,6 +656,8 @@ getRecommendationsRouter.get('/task-analytics', async (c) => {
                 blocked_count: blockedCount,
                 total,
             },
+            // All-time action aggregates from fact_outcomes — available even when trust gate blocks the engine.
+            action_aggregates: actionAggregates,
         }, 200);
     } catch (err: any) {
         console.error('[task-analytics] unexpected error:', err.message);
@@ -817,7 +866,10 @@ getRecommendationsRouter.get('/', async (c) => {
         const medianSuccessRate = medianOf(
             result.all_actions.map((action) => Number(action.resolution_rate ?? Number.NaN)),
         );
-        const [cohortCycle, dataSources] = await Promise.all([
+        // Run cohort upsert, data sources, and LLM narrative in parallel.
+        // LLM narrative is skipped when the agent is trust-blocked (no actions = no useful narrative).
+        const isTrustBlocked = !!(result as any)._trust_gate_blocked;
+        const [cohortCycle, dataSources, narrative] = await Promise.all([
             upsertRecommendationCohortCycle({
                 customer_id: customerId,
                 task_name: taskName,
@@ -831,21 +883,23 @@ getRecommendationsRouter.get('/', async (c) => {
             scopedAgentId
                 ? fetchDataSources(customerId, scopedAgentId, taskName)
                 : Promise.resolve(null),
+            // Skip LLM when trust-blocked — no actions means nothing meaningful to narrate.
+            // Also skip when state is no_data to avoid burning tokens on empty responses.
+            !isTrustBlocked && result.state !== 'no_data'
+                ? generateNarrative(output, {
+                    reliability_band: null, // filled after cohortReliability — we'll patch below
+                    reliability_reasons: [],
+                    silent_failure_warning: !!(result as any)._silent_failure_warning,
+                    data_freshness_stale: dataFreshness.is_stale,
+                    data_freshness_age_hours: dataFreshness.age_hours,
+                    scope: servedScope,
+                    scope_fallback_applied: fallbackApplied,
+                    confidence_source: confidenceSource,
+                    confidence_source_reason: confidenceSourceReason,
+                })
+                : Promise.resolve(null),
         ]);
         const cohortReliability = computeCohortReliability(result, cohortCycle);
-
-        // LLM narrative — non-blocking, falls back to static text on failure
-        const narrative = await generateNarrative(output, {
-            reliability_band: cohortReliability.band,
-            reliability_reasons: cohortReliability.reasons,
-            silent_failure_warning: !!(result as any)._silent_failure_warning,
-            data_freshness_stale: dataFreshness.is_stale,
-            data_freshness_age_hours: dataFreshness.age_hours,
-            scope: servedScope,
-            scope_fallback_applied: fallbackApplied,
-            confidence_source: confidenceSource,
-            confidence_source_reason: confidenceSourceReason,
-        });
 
         const traceability = buildTraceability({
             result,
@@ -957,6 +1011,8 @@ getRecommendationsRouter.get('/', async (c) => {
                         environment: rawEnvironment,
                         customer_tier: rawCustomerTier,
                     },
+                trust_blocked: isTrustBlocked,
+                trust_status: isTrustBlocked ? ((result as any)._trust_status ?? null) : null,
                 noise_gate: result._noise_gate ?? null,
                 simulation_guardrail: result._simulation_guardrail ?? null,
                 confidence_source: confidenceSource,

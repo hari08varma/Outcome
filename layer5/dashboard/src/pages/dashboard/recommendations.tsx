@@ -96,6 +96,8 @@ interface RecommendationResponse {
     };
     all_actions?: ActionPerformance[];
     task_total_outcomes?: number;
+    trust_blocked?: boolean;
+    trust_status?: string | null;
     agent_scope: 'agent_scoped' | 'customer_blended';
     scope_transition?: {
         fallback_applied: boolean;
@@ -156,6 +158,7 @@ interface TaskAnalytics {
         explore_ratio: number | null;
     };
     trust_blocks: { blocked_count: number; total: number };
+    action_aggregates?: ActionPerformance[];
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -921,18 +924,17 @@ function DataSourcesPanel({ rec }: { rec: RecommendationResponse }): React.React
 }
 
 function TrustGateBanner({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
-    if (!rec.policy_gate?.trust_blocked) {
-        return null;
-    }
+    if (!rec.trust_blocked) return null;
 
     return (
         <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/20 rounded-2xl p-4">
             <Shield size={15} className="text-red-400 mt-0.5 shrink-0" />
             <div className="space-y-1">
-                <p className="text-sm font-semibold text-red-300">Recommendation actioning is blocked by trust policy</p>
-                <p className="text-xs text-red-200/80">
-                    Trust status is <span className="font-mono">{rec.policy_gate.trust_status ?? 'blocked'}</span>. The action table below is still this
-                    agent + task evidence so you can inspect win rates and ML signals, but the engine will not emit a switch decision until trust is reinstated.
+                <p className="text-sm font-semibold text-red-300">Recommendation actioning blocked — agent suspended</p>
+                <p className="text-xs text-red-200/70">
+                    Trust status: <span className="font-mono">{rec.trust_status ?? 'suspended'}</span>. The engine will not
+                    issue a switch decision until trust is reinstated. The action leaderboard below shows historical evidence
+                    from this agent and task so you can still inspect win rates and signals.
                 </p>
             </div>
         </div>
@@ -940,12 +942,13 @@ function TrustGateBanner({ rec }: { rec: RecommendationResponse }): React.ReactE
 }
 
 function ScopeDebugStrip({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
-    const scope = rec.debug_scope;
-    if (!scope) return null;
+    const scope = rec.scope_transition;
+    if (!scope?.fallback_applied) return null;
 
     return (
-        <div className="text-[10px] text-[#52525b] bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2 font-mono">
-            scope agent={scope.requested_agent_id ?? 'none'} requested_task={scope.requested_task_name} evidence_task={scope.evidence_task_name} actions={scope.evidence_action_count} source={scope.evidence_source}
+        <div className="text-[10px] text-[#52525b] bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2">
+            Scope fallback active — {scope.reason ?? 'agent scope insufficient'}
+            {scope.remaining_samples_to_next_bucket !== null && ` · ${scope.remaining_samples_to_next_bucket} outcomes to agent scope`}
         </div>
     );
 }
@@ -1298,10 +1301,15 @@ export default function RecommendationsPage(): React.ReactElement {
                                         {/* LLM insight */}
                                         <LLMInsightPanel rec={rec} />
 
-                                        {/* Action leaderboard */}
+                                        {/* Action leaderboard — use engine actions normally;
+                                            fall back to analytics aggregates when trust gate blocks the engine */}
                                         <ActionLeaderboard
-                                            actions={rec.all_actions ?? []}
-                                            bestActionName={rec.insight.best_action}
+                                            actions={
+                                                (rec.all_actions && rec.all_actions.length > 0)
+                                                    ? rec.all_actions
+                                                    : (analytics?.action_aggregates ?? [])
+                                            }
+                                            bestActionName={rec.trust_blocked ? null : rec.insight?.best_action ?? null}
                                             totalOutcomes={taskOutcomes}
                                         />
 
