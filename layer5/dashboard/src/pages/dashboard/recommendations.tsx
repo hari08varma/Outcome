@@ -2,43 +2,60 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     AlertTriangle,
     ArrowRight,
+    Bot,
+    ChevronDown,
     CheckCircle,
+    Database,
     RefreshCw,
+    Shield,
     TrendingUp,
-    XCircle,
     Zap,
+    XCircle,
+    Activity,
+    BarChart2,
+    Clock,
+    Target,
 } from 'lucide-react';
 import { createAgentFetch } from '../../lib/api';
 import { API_BASE } from '../../lib/config';
 import { useAgentApiKey } from '../../hooks/useAgentApiKey';
 import { supabase } from '../../supabaseClient';
 
-type RecommendationState =
-    | 'no_data'
-    | 'early_signal'
-    | 'stable';
+// ── Types ─────────────────────────────────────────────────────────
+
+interface AgentSummary {
+    agent_id: string;
+    agent_name: string;
+    agent_type: string | null;
+    llm_model: string | null;
+    trust_score: number | null;
+    trust_status: string | null;
+    total_outcomes: number;
+    sdk_outcomes: number;
+    imported_outcomes: number;
+    tasks: TaskSummary[];
+}
+
+interface TaskSummary {
+    task_name: string;
+    sdk: number;
+    imported: number;
+    total: number;
+}
 
 type ConfidenceLabel = 'none' | 'low' | 'medium' | 'high' | 'very_high';
 
-interface ConfidenceMeta {
-    value: number;
-    percent: number;
-    label: ConfidenceLabel;
-}
-
-interface ExpectedImprovement {
-    baseline: string;
-    improved: string;
-    delta: string;
-    delta_raw: number;
-    based_on_samples: number;
-    caution: string | null;
-}
-
-interface SampleSize {
-    best: number;
-    worst: number;
-    min: number;
+interface ActionPerformance {
+    action_id: string;
+    action_name: string;
+    total_count: number;
+    effective_sample_count: number;
+    success_count: number;
+    success_rate: number;
+    resolution_rate: number;
+    semantic_cluster_convergence: number;
+    ml_score: number | null;
+    last_seen_at: string | null;
 }
 
 interface RecommendationResponse {
@@ -65,809 +82,983 @@ interface RecommendationResponse {
         target_samples: number;
         percent_complete: number;
     };
-    confidence_meta: ConfidenceMeta;
+    confidence_meta: {
+        value: number;
+        percent: number;
+        label: ConfidenceLabel;
+    };
     message: string;
     reason: {
         summary: string;
         evidence: string;
         confidence_note: string;
     };
-    problem: string | null;
-    risk_context: string | null;
-    expected_improvement: ExpectedImprovement | null;
-    sample_size: SampleSize | null;
-    validation_hint: string | null;
-    agent_id: string | null;
-    agent_scope: 'agent_scoped' | 'customer_blended';
-    customer_id: string;
-    generated_at: string;
-    improvement_display: {
-        raw_delta_pct: string;
-        qualified_delta_pct: string;
-        is_estimate: boolean;
-        samples_basis: number;
+    expected_improvement: {
+        baseline: string;
+        improved: string;
+        delta: string;
+        delta_raw: number;
+        based_on_samples: number;
+        caution: string | null;
     } | null;
-    monitor_steps: string[] | null;
-    unlock_hint: string | null;
+    sample_size: { best: number; worst: number; min: number } | null;
+    action_uncertainty: {
+        best: { action: string; rate_pct: string; margin_pct: string };
+        worst: { action: string; rate_pct: string; margin_pct: string };
+    } | null;
     data_window: {
         first_seen_at: string | null;
         last_seen_at: string | null;
         last_updated_label: string;
     } | null;
-    action_uncertainty: {
-        best: { action: string; rate_pct: string; margin_pct: string };
-        worst: { action: string; rate_pct: string; margin_pct: string };
-    } | null;
+    agent_id: string | null;
+    agent_scope: 'agent_scoped' | 'customer_blended';
+    customer_id: string;
+    generated_at: string;
+    unlock_hint: string | null;
     threshold_hint: string;
     scope_label: string;
     scope_transition?: {
-        requested_scope: 'agent_scoped' | 'customer_blended';
-        served_scope: 'agent_scoped' | 'customer_blended';
         fallback_applied: boolean;
         reason: string | null;
         switch_back_rule: string | null;
     };
     data_freshness?: {
-        source: 'mv' | 'fact_fallback' | 'unknown';
-        last_seen_at: string | null;
-        age_hours: number | null;
         is_stale: boolean;
+        age_hours: number | null;
         stale_threshold_hours: number;
+        last_seen_at: string | null;
+        source: string;
     };
-    cohort_cycle?: {
-        active_cycle: {
-            cycle_id: string;
-            opened_at: string;
-            closed_at: string | null;
-            close_reason: 'time_elapsed' | 'outcome_count' | 'confidence_drop' | 'success_rate_drop' | null;
-            elapsed_days: number;
-            outcomes_in_cycle: number;
-        };
-        previous_cycle: {
-            cycle_id: string;
-            opened_at: string;
-            closed_at: string | null;
-            close_reason: 'time_elapsed' | 'outcome_count' | 'confidence_drop' | 'success_rate_drop' | null;
-            elapsed_days: number;
-            outcomes_in_cycle: number;
-        } | null;
-        rotation_triggered: boolean;
-        rotation_reason: 'time_elapsed' | 'outcome_count' | 'confidence_drop' | 'success_rate_drop' | null;
-        thresholds: {
-            max_days: number;
-            max_outcomes: number;
-            confidence_drop: number;
-            success_rate_drop: number;
-        };
+    cohort_reliability?: {
+        anomaly_score: number;
+        reliability_score: number;
+        band: 'stable' | 'watch' | 'anomalous';
+        reasons: string[];
     };
+    action_registry?: {
+        registered_actions: string[];
+        action_mismatch: boolean;
+        warning: string | null;
+    };
+    data_sources?: {
+        uploaded_outcomes: number;
+        sdk_outcomes: number;
+        total: number;
+        upload_share: number;
+        quality_score: number | null;
+    } | null;
+    llm_narrative?: {
+        headline: string | null;
+        generated: boolean;
+    };
+    all_actions?: ActionPerformance[];
+    improvement_display?: {
+        raw_delta_pct: string;
+        qualified_delta_pct: string;
+        is_estimate: boolean;
+        samples_basis: number;
+    } | null;
+    monitor_steps?: string[] | null;
+    risk_context?: string | null;
+    problem?: string | null;
+    validation_hint?: string | null;
 }
 
-const CONFIDENCE_CONFIG: Record<
-    ConfidenceLabel,
-    {
-        label: string;
-        textClass: string;
-        chipClass: string;
-        barColor: string;
-    }
-> = {
-    very_high: {
-        label: 'Very High Confidence',
-        textClass: 'text-[#b8ff00]',
-        chipClass: 'bg-[#b8ff00]/20 text-[#b8ff00] border border-[#b8ff00]/50',
-        barColor: '#b8ff00',
+// ── Constants ─────────────────────────────────────────────────────
+const MIN_OUTCOMES_FOR_RECOMMENDATION = 30;
+const ACCENT = '#b8ff00';
+
+// ── Deterministic task colour ─────────────────────────────────────
+const TASK_COLOURS = [
+    { bg: 'bg-[#b8ff00]/10', text: 'text-[#b8ff00]', border: 'border-[#b8ff00]/25' },
+    { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/25' },
+    { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/25' },
+    { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/25' },
+    { bg: 'bg-pink-500/10', text: 'text-pink-400', border: 'border-pink-500/25' },
+    { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/25' },
+];
+
+function taskColour(task: string) {
+    let hash = 0;
+    for (let i = 0; i < task.length; i++) hash = (hash * 31 + task.charCodeAt(i)) | 0;
+    return TASK_COLOURS[Math.abs(hash) % TASK_COLOURS.length]!;
+}
+
+function taskInitial(task: string): string {
+    return task.replace(/_/g, ' ').trim().slice(0, 2).toUpperCase();
+}
+
+// ── Confidence config ─────────────────────────────────────────────
+const CONF_CONFIG: Record<ConfidenceLabel, { label: string; text: string; bar: string; chip: string }> = {
+    very_high: { label: 'Very High', text: 'text-[#b8ff00]', bar: '#b8ff00', chip: 'bg-[#b8ff00]/15 text-[#b8ff00] border-[#b8ff00]/40' },
+    high:      { label: 'High',      text: 'text-[#b8ff00]', bar: '#b8ff00', chip: 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30' },
+    medium:    { label: 'Medium',    text: 'text-yellow-400', bar: '#facc15', chip: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' },
+    low:       { label: 'Low',       text: 'text-red-400',    bar: '#f87171', chip: 'bg-red-500/10 text-red-400 border-red-500/30' },
+    none:      { label: 'No Signal', text: 'text-[#a1a1aa]',  bar: '#3f3f46', chip: 'bg-[#1a1a24] text-[#a1a1aa] border-[#1a1a24]' },
+};
+
+// ── SDK Mode config ───────────────────────────────────────────────
+const MODE_CONFIG: Record<string, { label: string; desc: string; colour: string; bg: string; border: string }> = {
+    recommend: {
+        label: 'Recommend',
+        desc: 'Observe and log — LI learns from every outcome.',
+        colour: 'text-blue-400',
+        bg: 'bg-blue-500/10',
+        border: 'border-blue-500/25',
     },
-    high: {
-        label: 'High Confidence',
-        textClass: 'text-[#b8ff00]',
-        chipClass: 'bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30',
-        barColor: '#b8ff00',
+    assist: {
+        label: 'Assist',
+        desc: 'LI suggests the best action — human confirms before executing.',
+        colour: 'text-yellow-400',
+        bg: 'bg-yellow-500/10',
+        border: 'border-yellow-500/25',
     },
-    medium: {
-        label: 'Medium Confidence',
-        textClass: 'text-yellow-400',
-        chipClass: 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30',
-        barColor: '#facc15',
-    },
-    low: {
-        label: 'Low Confidence',
-        textClass: 'text-[#ff4444]',
-        chipClass: 'bg-red-500/10 text-[#ff4444] border border-red-500/30',
-        barColor: '#ff4444',
-    },
-    none: {
-        label: 'No Confidence Estimate',
-        textClass: 'text-[#a1a1aa]',
-        chipClass: 'bg-[#1a1a24] text-[#a1a1aa] border border-[#1a1a24]',
-        barColor: '#52525b',
+    auto: {
+        label: 'Auto',
+        desc: 'LI executes the best action automatically at ≥70% confidence.',
+        colour: 'text-[#b8ff00]',
+        bg: 'bg-[#b8ff00]/10',
+        border: 'border-[#b8ff00]/25',
     },
 };
 
+// ── Helpers ───────────────────────────────────────────────────────
+function pct(n: number | null, decimals = 1): string {
+    if (n === null || !Number.isFinite(n)) return '—';
+    return `${(n * 100).toFixed(decimals)}%`;
+}
 
-function stateBadge(state: RecommendationState): React.ReactElement {
-    const map: Record<
-        RecommendationState,
-        { label: string; cls: string; icon: React.ReactElement }
-    > = {
-        stable: {
-            label: 'Stable Signal',
-            cls: 'bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30',
-            icon: <CheckCircle size={12} />,
-        },
-        early_signal: {
-            label: 'Early Signal',
-            cls: 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30',
-            icon: <Zap size={12} />,
-        },
-        no_data: {
-            label: 'No Data',
-            cls: 'bg-[#1a1a24] text-[#a1a1aa] border border-[#1a1a24]',
-            icon: <XCircle size={12} />,
-        },
-    };
+function relativeTime(iso: string | null): string {
+    if (!iso) return '—';
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const h = Math.floor(diffMs / 3_600_000);
+    if (h < 1) return 'just now';
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 30) return `${d}d ago`;
+    return `${Math.floor(d / 30)}mo ago`;
+}
 
-    const { label, cls, icon } = map[state];
+// ── Small components ──────────────────────────────────────────────
+
+function StatChip({ label, value, sub, accent }: {
+    label: string; value: string | number; sub?: string; accent?: boolean;
+}): React.ReactElement {
+    return (
+        <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-4 py-3 min-w-[110px]">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b] mb-1">{label}</p>
+            <p className={`text-xl font-bold font-mono ${accent ? 'text-[#b8ff00]' : 'text-white'}`}>{value}</p>
+            {sub && <p className="text-[10px] text-[#52525b] mt-0.5">{sub}</p>}
+        </div>
+    );
+}
+
+function TrustBadge({ status, score }: { status: string | null; score: number | null }): React.ReactElement {
+    const cls = status === 'trusted'
+        ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30'
+        : status === 'probation'
+        ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+        : status === 'suspended'
+        ? 'bg-red-500/10 text-red-400 border-red-500/30'
+        : 'bg-[#1a1a24] text-[#a1a1aa] border-[#1a1a24]';
 
     return (
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
-            {icon}
-            {label}
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${cls}`}>
+            <Shield size={10} />
+            {status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown'}
+            {score !== null && <span className="opacity-60">· {Math.round(score * 100)}%</span>}
         </span>
     );
 }
 
-function ConfidenceBar({ meta }: { meta: ConfidenceMeta | null }): React.ReactElement {
-    if (!meta) {
-        return <span className="text-[#a1a1aa] text-sm">No estimate</span>;
-    }
-
-    const cfg = CONFIDENCE_CONFIG[meta.label];
-
+function StateBadge({ state }: { state: string }): React.ReactElement {
+    if (state === 'stable') return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30">
+            <CheckCircle size={10} /> Stable
+        </span>
+    );
+    if (state === 'early_signal') return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-400 border border-yellow-500/30">
+            <Zap size={10} /> Early Signal
+        </span>
+    );
     return (
-        <div className="flex items-center gap-3">
-            <div className="flex-1 bg-[#1a1a24] rounded-full h-2 overflow-hidden">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#1a1a24] text-[#a1a1aa] border border-[#1a1a24]">
+            <XCircle size={10} /> No Data
+        </span>
+    );
+}
+
+function ConfidenceBar({ pct: percent, label }: { pct: number; label: ConfidenceLabel }): React.ReactElement {
+    const cfg = CONF_CONFIG[label];
+    return (
+        <div className="flex items-center gap-2.5">
+            <div className="flex-1 bg-[#1a1a24] rounded-full h-1.5 overflow-hidden">
                 <div
                     className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${meta.percent}%`, backgroundColor: cfg.barColor }}
+                    style={{ width: `${percent}%`, backgroundColor: cfg.bar }}
                 />
             </div>
-            <span className={`text-sm font-medium ${cfg.textClass}`}>{meta.percent}%</span>
+            <span className={`text-xs font-mono font-semibold tabular-nums ${cfg.text}`}>{percent}%</span>
         </div>
     );
 }
 
-function LoadingSkeleton(): React.ReactElement {
+function SufficiencyMeter({ total }: { total: number }): React.ReactElement {
+    const pctFill = Math.min(100, Math.round((total / MIN_OUTCOMES_FOR_RECOMMENDATION) * 100));
+    const ready = total >= MIN_OUTCOMES_FOR_RECOMMENDATION;
     return (
-        <div className="animate-pulse space-y-4">
-            <div className="h-6 bg-[#1a1a24] rounded-lg w-1/3" />
-            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-6 space-y-4">
-                <div className="h-5 bg-[#1a1a24] rounded w-1/2" />
-                <div className="h-4 bg-[#1a1a24] rounded w-3/4" />
-                <div className="h-4 bg-[#1a1a24] rounded w-2/3" />
-                <div className="h-10 bg-[#1a1a24] rounded-lg" />
+        <div className="flex items-center gap-2">
+            <div className="flex-1 bg-[#1a1a24] rounded-full h-1 overflow-hidden">
+                <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                        width: `${pctFill}%`,
+                        backgroundColor: ready ? ACCENT : '#facc15',
+                    }}
+                />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[0, 1, 2].map((i) => (
-                    <div key={i} className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5">
-                        <div className="h-3 bg-[#1a1a24] rounded w-1/2 mb-3" />
-                        <div className="h-7 bg-[#1a1a24] rounded w-2/3" />
-                    </div>
-                ))}
-            </div>
+            {ready ? (
+                <span className="text-[10px] text-[#b8ff00] font-medium whitespace-nowrap">ready</span>
+            ) : (
+                <span className="text-[10px] text-[#52525b] whitespace-nowrap">
+                    {MIN_OUTCOMES_FOR_RECOMMENDATION - total} to go
+                </span>
+            )}
         </div>
     );
 }
 
-function ResultCard({ data }: { data: RecommendationResponse }): React.ReactElement {
-    const state = data.state as RecommendationState;
-    const confidenceMeta = data.confidence_meta ?? null;
-    const confidenceCfg = CONFIDENCE_CONFIG[confidenceMeta?.label ?? 'none'];
+// ── Agent Overview ────────────────────────────────────────────────
 
-    const borderAccent =
-        state === 'stable' ? 'border-[#b8ff00]/40' :
-            state === 'early_signal' ? 'border-yellow-500/40' :
-                'border-[#1a1a24]';
-
-    const recommendationTone =
-        data.decision.type === 'replace' ? 'text-[#b8ff00]' :
-            data.decision.type === 'monitor' ? 'text-yellow-400' :
-                'text-[#a1a1aa]';
-
-    const recommendationTitle =
-        data.decision.type === 'replace' ? 'Recommended Action' :
-            data.decision.type === 'monitor' ? 'Recommended Action (Monitor)' :
-                'Recommended Action (Wait)';
+function AgentOverview({ agent, sdkMode }: { agent: AgentSummary; sdkMode: string }): React.ReactElement {
+    const modeCfg = MODE_CONFIG[sdkMode] ?? MODE_CONFIG['recommend']!;
 
     return (
-        <div className="space-y-6">
-            {/* ── Header row ── */}
-            <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-3 flex-wrap">
-                    <span className="text-lg font-semibold text-white font-mono">{data.task}</span>
-                    {stateBadge(state)}
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${confidenceCfg.chipClass}`}>
-                        {confidenceCfg.label}
-                    </span>
-                    {/* Issue 8: Descriptive scope label */}
-                    <span
-                        title={data.scope_label}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-help ${data.agent_scope === 'agent_scoped'
-                            ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
-                            : 'bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'
-                            }`}
-                    >
-                        {data.agent_scope === 'agent_scoped' ? '⬡ Agent data only' : '⬡ All agents blended'}
-                    </span>
+        <div className="space-y-4">
+            {/* Agent header */}
+            <div className="flex items-start justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#1a1a24] border border-[#252530] flex items-center justify-center shrink-0">
+                        <Bot size={18} className="text-[#a1a1aa]" />
+                    </div>
+                    <div>
+                        <h2 className="text-base font-semibold text-white">{agent.agent_name}</h2>
+                        <p className="text-xs text-[#52525b] font-mono">{agent.agent_id.slice(-12)}</p>
+                    </div>
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                    <p className="text-xs text-[#a1a1aa]">{data.explanation}</p>
-                    {/* Issue 5: Last updated label from API */}
-                    <p className="text-xs text-[#52525b]">
-                        {data.data_window?.last_updated_label ?? `Updated ${new Date(data.generated_at).toLocaleString()}`}
-                    </p>
-                </div>
+                <TrustBadge status={agent.trust_status} score={agent.trust_score} />
             </div>
 
-            {/* ── Main card ── */}
-            <div className={`bg-[#111118] border ${borderAccent} rounded-xl p-6 space-y-5`}>
-
-                {/* Override cost alert — shown when LI has a clear recommendation
-                    and the expected improvement is significant (>10%).
-                    This is the cost of ignoring LI's suggestion. */}
-                {data.decision.type === 'replace' &&
-                    data.expected_improvement &&
-                    data.expected_improvement.delta_raw > 0.1 && (
-                    <div className="rounded-lg bg-[#ff4444]/10 border border-[#ff4444]/30 px-4 py-3">
-                        <p className="text-xs font-medium uppercase tracking-wider text-[#ff4444] mb-1 flex items-center gap-1">
-                            <AlertTriangle size={12} />
-                            Cost of Ignoring LI
-                        </p>
-                        <p className="text-sm text-[#ffb4b4]">
-                            Running <span className="font-mono text-white">{data.insight.worst_action}</span> instead of{' '}
-                            <span className="font-mono text-[#b8ff00]">{data.insight.best_action}</span> costs{' '}
-                            <span className="font-bold text-[#ff4444]">
-                                ~{(data.expected_improvement.delta_raw * 100).toFixed(0)}% success rate
-                            </span>{' '}
-                            per decision.
-                            {data.insight.sample_size && (
-                                <span className="text-[#a1a1aa]"> Based on {data.insight.sample_size.best + data.insight.sample_size.worst} outcomes.</span>
-                            )}
-                        </p>
-                    </div>
-                )}
-
-                {data.problem && (
-                    <div>
-                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">Problem</p>
-                        <p className="text-white text-sm flex items-start gap-2">
-                            <AlertTriangle size={15} className="text-[#ff4444] mt-0.5 shrink-0" />
-                            {data.problem}
-                        </p>
-                    </div>
-                )}
-
-                {data.message && (
-                    <div>
-                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">
-                            {recommendationTitle}
-                        </p>
-                        <p className={`text-sm font-semibold flex items-center gap-2 ${recommendationTone}`}>
-                            <ArrowRight size={15} className="shrink-0" />
-                            {data.message}
-                        </p>
-                    </div>
-                )}
-
-                {data.scope_transition?.fallback_applied && (
-                    <div className="rounded-lg bg-blue-500/5 border border-blue-500/25 px-4 py-3">
-                        <p className="text-xs font-medium uppercase tracking-wider text-blue-400 mb-1">
-                            Cohort Fallback Active
-                        </p>
-                        {data.scope_transition.reason && (
-                            <p className="text-xs text-[#a1a1aa]">{data.scope_transition.reason}</p>
-                        )}
-                        {data.scope_transition.switch_back_rule && (
-                            <p className="text-xs text-[#52525b] mt-1">{data.scope_transition.switch_back_rule}</p>
-                        )}
-                    </div>
-                )}
-
-                {data.data_freshness?.is_stale && (
-                    <div className="rounded-lg bg-yellow-500/5 border border-yellow-500/25 px-4 py-3">
-                        <p className="text-xs font-medium uppercase tracking-wider text-yellow-400 mb-1">
-                            Data Freshness Warning
-                        </p>
-                        <p className="text-xs text-[#a1a1aa]">
-                            Latest outcome evidence is older than {data.data_freshness.stale_threshold_hours}h.
-                            {data.data_freshness.age_hours !== null
-                                ? ` Current age: ${data.data_freshness.age_hours.toFixed(1)}h.`
-                                : ' Current age unavailable.'}
-                        </p>
-                        <p className="text-xs text-[#52525b] mt-1">
-                            Source: {data.data_freshness.source}
-                            {data.data_freshness.last_seen_at
-                                ? ` · Last seen ${new Date(data.data_freshness.last_seen_at).toLocaleString()}`
-                                : ''}
-                        </p>
-                    </div>
-                )}
-
-                {data.cohort_cycle && (
-                    <div className="rounded-lg bg-[#1a1a24]/60 border border-[#52525b]/30 px-4 py-3">
-                        <p className="text-xs font-medium uppercase tracking-wider text-[#a1a1aa] mb-1">
-                            Cohort Cycle
-                        </p>
-                        <p className="text-xs text-[#a1a1aa] font-mono break-all">
-                            Active cycle: {data.cohort_cycle.active_cycle.cycle_id}
-                        </p>
-                        <p className="text-xs text-[#52525b] mt-1">
-                            Opened: {new Date(data.cohort_cycle.active_cycle.opened_at).toLocaleString()} ·
-                            Elapsed: {data.cohort_cycle.active_cycle.elapsed_days.toFixed(2)}d ·
-                            Outcomes in cycle: {data.cohort_cycle.active_cycle.outcomes_in_cycle}
-                        </p>
-                        {data.cohort_cycle.previous_cycle && (
-                            <p className="text-xs text-[#52525b] mt-1">
-                                Last close: {data.cohort_cycle.previous_cycle.close_reason ?? 'unknown'} at{' '}
-                                {data.cohort_cycle.previous_cycle.closed_at
-                                    ? new Date(data.cohort_cycle.previous_cycle.closed_at).toLocaleString()
-                                    : 'unknown'}
-                            </p>
-                        )}
-                    </div>
-                )}
-
-                {/* Issue 3: Actionable monitor steps */}
-                {data.monitor_steps && data.monitor_steps.length > 0 && (
-                    <div className="rounded-lg bg-yellow-500/5 border border-yellow-500/20 px-4 py-3">
-                        <p className="text-xs font-medium uppercase tracking-wider text-yellow-500 mb-2">
-                            How to Monitor
-                        </p>
-                        <ul className="space-y-1">
-                            {data.monitor_steps.map((step, i) => (
-                                <li key={i} className="text-xs text-[#a1a1aa] flex items-start gap-2">
-                                    <span className="text-yellow-500 shrink-0">{i + 1}.</span>
-                                    <span>{step}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
-
-                {data.risk_context && (
-                    <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-[#ffb4b4]">
-                        <p className="text-xs font-medium uppercase tracking-wider text-[#ff6b6b] mb-1">Risk Context</p>
-                        <p>{data.risk_context}</p>
-                    </div>
-                )}
-
-                {/* Issue 1+2: Confidence-qualified improvement block */}
-                {data.improvement_display && (
-                    <div>
-                        <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-2">
-                            Expected Impact
-                        </p>
-                        <div className="flex items-start gap-6 flex-wrap">
-                            {/* Raw delta with estimate label */}
-                            <div>
-                                <div className="flex items-baseline gap-2">
-                                    <span className="text-2xl font-bold text-white">
-                                        {data.expected_improvement?.baseline ?? '-'}
-                                    </span>
-                                    <ArrowRight size={16} className="text-[#a1a1aa]" />
-                                    <span className="text-2xl font-bold text-[#b8ff00]">
-                                        {data.expected_improvement?.improved ?? '-'}
-                                    </span>
-                                    <span className="px-2 py-0.5 rounded-full text-sm font-bold bg-[#b8ff00]/10 text-[#b8ff00] border border-[#b8ff00]/30">
-                                        {data.improvement_display.raw_delta_pct}
-                                        {data.improvement_display.is_estimate && (
-                                            <span className="text-[10px] font-normal text-yellow-400 ml-1">
-                                                early estimate
-                                            </span>
-                                        )}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-[#a1a1aa] mt-1">
-                                    potential improvement (based on {data.improvement_display.samples_basis} samples)
-                                </p>
-                            </div>
-                            {/* Issue 2: Confidence-weighted reliable gain */}
-                            {data.improvement_display.is_estimate && (
-                                <div className="bg-[#1a1a24] rounded-lg px-3 py-2">
-                                    <p className="text-xs text-[#a1a1aa] mb-0.5">Reliable gain estimate</p>
-                                    <p className="text-lg font-bold text-yellow-400">
-                                        {data.improvement_display.qualified_delta_pct}
-                                    </p>
-                                    <p className="text-[10px] text-[#52525b]">
-                                        = raw delta × {data.confidence_meta?.percent ?? 0}% confidence
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                        {data.expected_improvement?.caution && (
-                            <p className="text-xs text-[#ffaa00] mt-2 flex items-center gap-1">
-                                <span>⚠</span>
-                                <span>{data.expected_improvement.caution}</span>
-                            </p>
-                        )}
-                    </div>
-                )}
-
+            {/* Mode — current only, no progression widget */}
+            <div className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${modeCfg.bg} ${modeCfg.border}`}>
+                <Activity size={14} className={`${modeCfg.colour} mt-0.5 shrink-0`} />
                 <div>
-                    <p className="text-xs font-medium text-[#a1a1aa] uppercase tracking-wider mb-1">Why</p>
-                    <div className="space-y-1">
-                        <p className="text-sm text-white font-medium">{data.reason.summary}</p>
-                        <p className="text-sm text-[#a1a1aa]">{data.reason.evidence}</p>
-                        <p className="text-xs text-[#a1a1aa] italic">{data.reason.confidence_note}</p>
-                    </div>
+                    <p className={`text-xs font-semibold ${modeCfg.colour}`}>{modeCfg.label} mode</p>
+                    <p className="text-[11px] text-[#a1a1aa] mt-0.5">{modeCfg.desc}</p>
                 </div>
             </div>
 
-            {/* Mode upgrade banner — shown when LI has high/very_high confidence
-                and a replace decision. Tells developer they are ready to upgrade mode. */}
-            {data.decision.type === 'replace' &&
-                (confidenceMeta?.label === 'high' || confidenceMeta?.label === 'very_high') && (
-                <div className="rounded-lg bg-[#b8ff00]/5 border border-[#b8ff00]/30 px-4 py-3 flex items-start gap-3">
-                    <TrendingUp size={16} className="text-[#b8ff00] mt-0.5 shrink-0" />
-                    <div>
-                        <p className="text-xs font-medium uppercase tracking-wider text-[#b8ff00] mb-1">
-                            Ready to Upgrade Mode
-                        </p>
-                        <p className="text-xs text-[#a1a1aa]">
-                            LI has {confidenceMeta.label === 'very_high' ? 'very high' : 'high'} confidence on{' '}
-                            <span className="font-mono text-white">{data.task}</span>.{' '}
-                            If you are on <span className="text-white font-medium">recommend</span> mode — switch to{' '}
-                            <span className="text-[#b8ff00] font-medium">assist</span>.{' '}
-                            If already on assist — switch to <span className="text-[#b8ff00] font-medium">auto</span>.
-                        </p>
-                        <p className="text-[10px] text-[#52525b] mt-1 font-mono">
-                            Layerinfinite(mode="assist") or Layerinfinite(mode="auto")
-                        </p>
+            {/* Stats row */}
+            <div className="grid grid-cols-2 gap-2">
+                <StatChip label="Total Outcomes" value={agent.total_outcomes.toLocaleString()} accent />
+                <StatChip
+                    label="SDK / Import"
+                    value={`${agent.sdk_outcomes} / ${agent.imported_outcomes}`}
+                    sub="live SDK vs uploaded"
+                />
+            </div>
+            {agent.llm_model && (
+                <p className="text-[10px] text-[#52525b] font-mono px-1">model: {agent.llm_model}</p>
+            )}
+        </div>
+    );
+}
+
+// ── Task List Item ─────────────────────────────────────────────────
+
+function TaskListItem({
+    task,
+    active,
+    onClick,
+}: {
+    task: TaskSummary;
+    active: boolean;
+    onClick: () => void;
+}): React.ReactElement {
+    const col = taskColour(task.task_name);
+    const ready = task.total >= MIN_OUTCOMES_FOR_RECOMMENDATION;
+
+    return (
+        <button
+            onClick={onClick}
+            className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-150 ${
+                active
+                    ? 'bg-[#111118] border-[#b8ff00]/30 shadow-[0_0_0_1px_rgba(184,255,0,0.08)]'
+                    : 'bg-[#0a0a0f] border-[#1a1a24] hover:bg-[#0f0f18] hover:border-[#252530]'
+            }`}
+        >
+            <div className="flex items-start gap-2.5">
+                {/* Icon */}
+                <div className={`w-7 h-7 rounded-lg ${col.bg} border ${col.border} flex items-center justify-center shrink-0 mt-0.5`}>
+                    <span className={`text-[9px] font-bold ${col.text}`}>{taskInitial(task.task_name)}</span>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                    <p className="text-xs font-mono text-white truncate leading-tight">{task.task_name}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                        <span className="text-[10px] text-[#52525b]">{task.total.toLocaleString()} outcomes</span>
+                        {!ready && (
+                            <span className="text-[10px] text-yellow-500/80">·</span>
+                        )}
                     </div>
+                    <div className="mt-1.5">
+                        <SufficiencyMeter total={task.total} />
+                    </div>
+                </div>
+
+                {/* State chip */}
+                {ready && active && (
+                    <div className="shrink-0 w-1.5 h-1.5 rounded-full bg-[#b8ff00] mt-1" />
+                )}
+            </div>
+        </button>
+    );
+}
+
+// ── Action Battle Card ─────────────────────────────────────────────
+
+function ActionBattleCard({ data }: { data: RecommendationResponse }): React.ReactElement | null {
+    if (!data.insight.best_action && !data.insight.worst_action) return null;
+    if (data.state === 'no_data') return null;
+
+    const allActions = data.all_actions ?? [];
+
+    return (
+        <div className="space-y-2">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">Action Battle</p>
+            <div className="grid grid-cols-2 gap-2">
+                {/* Best */}
+                <div className="bg-[#b8ff00]/5 border border-[#b8ff00]/20 rounded-xl p-3.5">
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <Target size={10} className="text-[#b8ff00]" />
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-[#b8ff00]/70">Best</span>
+                    </div>
+                    <p className="text-sm font-semibold text-white font-mono leading-tight break-all">
+                        {data.insight.best_action ?? '—'}
+                    </p>
+                    <div className="flex items-baseline gap-1.5 mt-2">
+                        <span className="text-xl font-bold text-[#b8ff00]">
+                            {pct(data.insight.best_rate)}
+                        </span>
+                        <span className="text-[10px] text-[#a1a1aa]">success</span>
+                    </div>
+                    {data.action_uncertainty?.best && (
+                        <p className="text-[10px] text-[#52525b] mt-0.5">
+                            {data.action_uncertainty.best.margin_pct} margin
+                        </p>
+                    )}
+                    {data.insight.sample_size && (
+                        <p className="text-[10px] text-[#52525b] mt-1">
+                            {data.insight.sample_size.best} samples
+                        </p>
+                    )}
+                </div>
+
+                {/* Worst */}
+                <div className="bg-[#1a1a24]/60 border border-[#252530] rounded-xl p-3.5">
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">Baseline</span>
+                    </div>
+                    <p className="text-sm font-semibold text-[#a1a1aa] font-mono leading-tight break-all">
+                        {data.insight.worst_action ?? '—'}
+                    </p>
+                    <div className="flex items-baseline gap-1.5 mt-2">
+                        <span className="text-xl font-bold text-[#a1a1aa]">
+                            {pct(data.insight.worst_rate)}
+                        </span>
+                        <span className="text-[10px] text-[#52525b]">success</span>
+                    </div>
+                    {data.action_uncertainty?.worst && (
+                        <p className="text-[10px] text-[#52525b] mt-0.5">
+                            {data.action_uncertainty.worst.margin_pct} margin
+                        </p>
+                    )}
+                    {data.insight.sample_size && (
+                        <p className="text-[10px] text-[#52525b] mt-1">
+                            {data.insight.sample_size.worst} samples
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            {/* Delta bar */}
+            {data.insight.delta !== null && data.insight.delta > 0 && (
+                <div className="flex items-center gap-3 bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-4 py-2.5">
+                    <TrendingUp size={13} className="text-[#b8ff00] shrink-0" />
+                    <span className="text-xs text-[#a1a1aa]">Performance gap</span>
+                    <span className="text-sm font-bold text-[#b8ff00] ml-auto font-mono">
+                        +{(data.insight.delta * 100).toFixed(1)}%
+                    </span>
                 </div>
             )}
 
-            {/* ── Metric cards row ── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-                {/* Confidence card */}
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 space-y-3">
-                    <p className="text-xs text-[#a1a1aa]">Confidence</p>
-                    <ConfidenceBar meta={confidenceMeta} />
-
-                    {data.progress && (
-                        <div>
-                            <div className="flex items-center justify-between text-xs text-[#a1a1aa] mb-1">
-                                <span>Data progress</span>
-                                <span>{data.progress.current_samples} / {data.progress.target_samples}</span>
-                            </div>
-                            <div className="bg-[#1a1a24] rounded-full h-1.5 overflow-hidden">
-                                <div
-                                    className="h-full rounded-full bg-[#b8ff00]/60 transition-all duration-500"
-                                    style={{ width: `${data.progress.percent_complete}%` }}
-                                />
-                            </div>
-                            <p className="text-xs text-[#a1a1aa] mt-1">
-                                {data.progress.percent_complete}% toward stable signal
-                            </p>
-                        </div>
-                    )}
-
-                    {/* Issue 4: Unlock hint */}
-                    {data.unlock_hint && (
-                        <p className="text-xs text-[#52525b] border-t border-[#1a1a24] pt-2">
-                            {data.unlock_hint}
+            {/* All actions table when we have the data */}
+            {allActions.length > 2 && (
+                <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-xl overflow-hidden mt-1">
+                    <div className="px-3 py-2 border-b border-[#1a1a24]">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">
+                            All Actions ({allActions.length})
                         </p>
-                    )}
-
-                    {/* Issue 7: Decision threshold hint */}
-                    <p className="text-xs text-[#52525b] border-t border-[#1a1a24] pt-2">
-                        {data.threshold_hint}
-                    </p>
-
-                    {/* Current signal row */}
-                    {data.insight.best_action && (
-                        <div className="bg-[#111118] border border-[#1a1a24] rounded-lg p-3">
-                            <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-2">
-                                Current Signal
-                            </p>
-                            <div className="flex items-center justify-between text-sm">
-                                <div>
-                                    <p className="text-white font-medium">{data.insight.best_action}</p>
-                                    <p className="text-xs text-[#a1a1aa]">
-                                        {data.insight.best_rate !== null
-                                            ? `${(data.insight.best_rate * 100).toFixed(1)}% success`
-                                            : '-'}
-                                        {data.insight.sample_size
-                                            ? ` · ${data.insight.sample_size.best} outcomes`
-                                            : ''}
+                    </div>
+                    <div className="divide-y divide-[#1a1a24]">
+                        {allActions
+                            .slice()
+                            .sort((a, b) => (b.resolution_rate ?? 0) - (a.resolution_rate ?? 0))
+                            .slice(0, 6)
+                            .map((action) => (
+                                <div key={action.action_id} className="flex items-center px-3 py-2 gap-3">
+                                    <p className="flex-1 text-xs font-mono text-[#a1a1aa] truncate">
+                                        {action.action_name}
                                     </p>
+                                    <span className="text-xs font-mono font-semibold text-white tabular-nums">
+                                        {pct(action.resolution_rate)}
+                                    </span>
+                                    <span className="text-[10px] text-[#52525b] tabular-nums w-14 text-right">
+                                        {action.total_count} outcomes
+                                    </span>
                                 </div>
-                                {data.insight.delta !== null && (
-                                    <div className="text-right">
-                                        <p className="text-[#b8ff00] font-bold">
-                                            +{(data.insight.delta * 100).toFixed(1)}%
-                                        </p>
-                                        <p className="text-xs text-[#a1a1aa]">vs {data.insight.worst_action}</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
+                            ))}
+                    </div>
                 </div>
-
-                {/* Sample size card with Issue 6: uncertainty bands */}
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 space-y-3">
-                    <p className="text-xs text-[#a1a1aa] mb-2">Sample Size</p>
-                    {data.sample_size ? (
-                        <div className="space-y-2">
-                            {data.action_uncertainty ? (
-                                <>
-                                    <div className="space-y-1">
-                                        <p className="text-[#a1a1aa] text-xs uppercase tracking-wider">Best</p>
-                                        <p className="text-white text-sm font-mono">
-                                            {data.action_uncertainty.best.rate_pct}
-                                            <span className="text-[#52525b] ml-1 text-xs">
-                                                {data.action_uncertainty.best.margin_pct}
-                                            </span>
-                                        </p>
-                                        <p className="text-[#52525b] text-xs">
-                                            {data.action_uncertainty.best.action} · {data.sample_size.best} outcomes
-                                        </p>
-                                    </div>
-                                    <div className="space-y-1 border-t border-[#1a1a24] pt-2">
-                                        <p className="text-[#a1a1aa] text-xs uppercase tracking-wider">Baseline</p>
-                                        <p className="text-white text-sm font-mono">
-                                            {data.action_uncertainty.worst.rate_pct}
-                                            <span className="text-[#52525b] ml-1 text-xs">
-                                                {data.action_uncertainty.worst.margin_pct}
-                                            </span>
-                                        </p>
-                                        <p className="text-[#52525b] text-xs">
-                                            {data.action_uncertainty.worst.action} · {data.sample_size.worst} outcomes
-                                        </p>
-                                    </div>
-                                    <p className="text-[#52525b] text-xs border-t border-[#1a1a24] pt-2">
-                                        ± margin is 95% confidence interval
-                                    </p>
-                                </>
-                            ) : (
-                                <>
-                                    <p className="text-white text-sm">Best: <span className="font-bold">{data.sample_size.best}</span></p>
-                                    <p className="text-white text-sm">Worst: <span className="font-bold">{data.sample_size.worst}</span></p>
-                                    <p className="text-[#a1a1aa] text-xs">Gate value (min): {data.sample_size.min}</p>
-                                </>
-                            )}
-                        </div>
-                    ) : (
-                        <p className="text-[#a1a1aa] text-sm">-</p>
-                    )}
-                </div>
-
-                {/* Task + scope card */}
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-5 space-y-3">
-                    <p className="text-xs text-[#a1a1aa] mb-2">Task</p>
-                    <p className="text-white text-sm font-mono break-all">{data.task}</p>
-                    {data.customer_id && (
-                        <p className="text-[#a1a1aa] text-xs mt-1 font-mono">{data.customer_id.slice(-8)}</p>
-                    )}
-                    {/* Issue 8: Full scope explanation */}
-                    {data.scope_label && (
-                        <p className="text-xs text-[#52525b] border-t border-[#1a1a24] pt-2">
-                            {data.scope_label}
-                        </p>
-                    )}
-                    {/* Issue 5: Time dimension */}
-                    {data.data_window?.last_seen_at && (
-                        <p className="text-xs text-[#52525b]">
-                            Last outcome: {new Date(data.data_window.last_seen_at).toLocaleString()}
-                        </p>
-                    )}
-                </div>
-            </div>
+            )}
         </div>
     );
 }
+
+// ── Evidence Meter ─────────────────────────────────────────────────
+
+function EvidenceMeter({ data }: { data: RecommendationResponse }): React.ReactElement {
+    const samples = data.progress?.current_samples ?? 0;
+    const milestones = [
+        { at: 10, label: 'Warmup', desc: 'First signals appear' },
+        { at: 30, label: 'Unlock', desc: 'Recommendations unlock' },
+        { at: 50, label: 'Stable', desc: 'Stable signal' },
+        { at: 100, label: 'High confidence', desc: '70%+ confidence possible' },
+    ];
+    const maxMilestone = 100;
+    const fillPct = Math.min(100, (samples / maxMilestone) * 100);
+
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center justify-between">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">Evidence</p>
+                <span className="text-xs font-mono font-semibold text-white tabular-nums">{samples} outcomes</span>
+            </div>
+
+            {/* Track */}
+            <div className="relative h-2 bg-[#1a1a24] rounded-full overflow-visible">
+                {/* Fill */}
+                <div
+                    className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
+                    style={{ width: `${fillPct}%`, backgroundColor: samples >= 50 ? ACCENT : samples >= 30 ? '#facc15' : '#3f3f46' }}
+                />
+                {/* Milestone ticks */}
+                {milestones.map((m) => {
+                    const pos = (m.at / maxMilestone) * 100;
+                    const reached = samples >= m.at;
+                    return (
+                        <div
+                            key={m.at}
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full border-2 border-[#0a0a0f] transition-colors duration-500"
+                            style={{
+                                left: `${pos}%`,
+                                backgroundColor: reached ? (samples >= 50 ? ACCENT : '#facc15') : '#3f3f46',
+                            }}
+                            title={`${m.label}: ${m.at} outcomes`}
+                        />
+                    );
+                })}
+            </div>
+
+            {/* Milestone labels */}
+            <div className="flex justify-between text-[10px] text-[#52525b] px-0">
+                {milestones.map((m) => (
+                    <div key={m.at} className="flex flex-col items-center gap-0.5" style={{ minWidth: 0 }}>
+                        <span className={samples >= m.at ? 'text-[#a1a1aa]' : ''}>{m.label}</span>
+                        <span className="text-[9px] opacity-60">{m.at}</span>
+                    </div>
+                ))}
+            </div>
+
+            {data.unlock_hint && (
+                <p className="text-[10px] text-[#52525b] bg-[#0a0a0f] border border-[#1a1a24] rounded-lg px-3 py-2">
+                    {data.unlock_hint}
+                </p>
+            )}
+        </div>
+    );
+}
+
+// ── Signal Integrity (collapsed) ──────────────────────────────────
+
+function SignalIntegrity({ data }: { data: RecommendationResponse }): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    const band = data.cohort_reliability?.band ?? null;
+    const bandColour = band === 'anomalous' ? 'text-red-400' : band === 'watch' ? 'text-yellow-400' : 'text-[#b8ff00]';
+
+    return (
+        <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-xl overflow-hidden">
+            <button
+                onClick={() => setOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#0d0d14] transition-colors"
+            >
+                <div className="flex items-center gap-2">
+                    <Activity size={12} className={bandColour} />
+                    <span className="text-xs font-medium text-[#a1a1aa]">Signal Integrity</span>
+                    {band && band !== 'stable' && (
+                        <span className={`text-[10px] font-medium uppercase ${bandColour}`}>{band}</span>
+                    )}
+                </div>
+                <ChevronDown size={12} className={`text-[#52525b] transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+
+            {open && (
+                <div className="px-4 pb-4 space-y-3 border-t border-[#1a1a24]">
+                    {data.cohort_reliability && (
+                        <div className="space-y-2 pt-3">
+                            <div className="flex justify-between text-xs">
+                                <span className="text-[#52525b]">Reliability score</span>
+                                <span className="text-white font-mono">
+                                    {Math.round(data.cohort_reliability.reliability_score * 100)}%
+                                </span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                                <span className="text-[#52525b]">Anomaly score</span>
+                                <span className="text-white font-mono">
+                                    {Math.round(data.cohort_reliability.anomaly_score * 100)}%
+                                </span>
+                            </div>
+                            {data.cohort_reliability.reasons.length > 0 && (
+                                <ul className="space-y-1 pt-1">
+                                    {data.cohort_reliability.reasons.map((r, i) => (
+                                        <li key={i} className="text-[10px] text-[#52525b] flex gap-1.5">
+                                            <span className="text-[#3f3f46]">·</span>
+                                            {r}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+
+                    {data.action_registry?.action_mismatch && (
+                        <div className="flex items-start gap-2 bg-orange-500/8 border border-orange-500/20 rounded-lg px-3 py-2">
+                            <AlertTriangle size={11} className="text-orange-400 mt-0.5 shrink-0" />
+                            <p className="text-[10px] text-orange-300/80">{data.action_registry.warning}</p>
+                        </div>
+                    )}
+
+                    {data.data_freshness?.is_stale && (
+                        <div className="flex items-start gap-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
+                            <Clock size={11} className="text-yellow-400 mt-0.5 shrink-0" />
+                            <p className="text-[10px] text-yellow-300/80">
+                                Data is {data.data_freshness.age_hours?.toFixed(1)}h old
+                                (threshold: {data.data_freshness.stale_threshold_hours}h)
+                            </p>
+                        </div>
+                    )}
+
+                    {data.scope_transition?.fallback_applied && (
+                        <div className="bg-blue-500/8 border border-blue-500/20 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-blue-300/80">
+                                Scope fallback active: {data.scope_transition.reason}
+                            </p>
+                        </div>
+                    )}
+
+                    <div className="text-[10px] text-[#52525b]">
+                        Confidence source: <span className="font-mono text-[#3f3f46]">{(data as any).confidence_source ?? '—'}</span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Task Detail Panel ─────────────────────────────────────────────
+
+function TaskDetail({
+    taskName,
+    taskTotal,
+    loading,
+    data,
+    error,
+}: {
+    taskName: string;
+    taskTotal: number;
+    loading: boolean;
+    data: RecommendationResponse | null;
+    error: string | null;
+}): React.ReactElement {
+    const col = taskColour(taskName);
+    const ready = taskTotal >= MIN_OUTCOMES_FOR_RECOMMENDATION;
+
+    if (loading) {
+        return (
+            <div className="space-y-4 animate-pulse">
+                <div className="h-14 bg-[#111118] border border-[#1a1a24] rounded-xl" />
+                <div className="h-24 bg-[#111118] border border-[#1a1a24] rounded-xl" />
+                <div className="h-32 bg-[#111118] border border-[#1a1a24] rounded-xl" />
+                <div className="h-24 bg-[#111118] border border-[#1a1a24] rounded-xl" />
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4">
+            {/* Task header */}
+            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl ${col.bg} border ${col.border} flex items-center justify-center shrink-0`}>
+                            <span className={`text-[10px] font-bold ${col.text}`}>{taskInitial(taskName)}</span>
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold font-mono text-white">{taskName}</p>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="text-[11px] text-[#52525b]">
+                                    {taskTotal.toLocaleString()} outcomes
+                                </span>
+                                {data && <StateBadge state={data.state} />}
+                                {data && (
+                                    <span className={`text-[11px] font-medium border px-2 py-0.5 rounded-full ${CONF_CONFIG[data.confidence_meta?.label ?? 'none'].chip}`}>
+                                        {data.confidence_meta?.percent ?? 0}% confidence
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    {data?.data_window?.last_seen_at && (
+                        <div className="text-right shrink-0">
+                            <p className="text-[10px] text-[#52525b]">Last outcome</p>
+                            <p className="text-xs text-[#a1a1aa]">{relativeTime(data.data_window.last_seen_at)}</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Not enough data gate */}
+            {!ready && (
+                <div className="bg-[#111118] border border-yellow-500/20 rounded-xl px-4 py-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                        <Database size={13} className="text-yellow-400" />
+                        <p className="text-xs font-medium text-yellow-400">Building evidence</p>
+                    </div>
+                    <p className="text-xs text-[#a1a1aa]">
+                        {MIN_OUTCOMES_FOR_RECOMMENDATION - taskTotal} more outcomes needed before recommendations unlock for this task.
+                        Every SDK call with <span className="font-mono text-white">log_outcome()</span> counts.
+                    </p>
+                    <SufficiencyMeter total={taskTotal} />
+                </div>
+            )}
+
+            {/* Error */}
+            {error && (
+                <div className="bg-red-500/8 border border-red-500/25 rounded-xl px-4 py-3 flex items-center gap-2 text-xs text-red-400">
+                    <AlertTriangle size={13} />
+                    {error}
+                </div>
+            )}
+
+            {data && (
+                <>
+                    {/* LLM headline */}
+                    {data.llm_narrative?.headline && (
+                        <div className="bg-[#b8ff00]/5 border border-[#b8ff00]/20 rounded-xl px-4 py-3.5 flex items-start gap-3">
+                            <Zap size={14} className="text-[#b8ff00] mt-0.5 shrink-0" />
+                            <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-[#b8ff00]/50 mb-1">AI Analysis</p>
+                                <p className="text-sm font-medium text-white leading-snug">{data.llm_narrative.headline}</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Decision + LLM summary */}
+                    <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4 space-y-3">
+                        {data.message && (
+                            <div className="flex items-start gap-2">
+                                <ArrowRight size={13} className={
+                                    data.decision.type === 'replace' ? 'text-[#b8ff00] mt-0.5 shrink-0' :
+                                    data.decision.type === 'monitor' ? 'text-yellow-400 mt-0.5 shrink-0' :
+                                    'text-[#52525b] mt-0.5 shrink-0'
+                                } />
+                                <p className={`text-sm font-semibold ${
+                                    data.decision.type === 'replace' ? 'text-[#b8ff00]' :
+                                    data.decision.type === 'monitor' ? 'text-yellow-400' :
+                                    'text-[#a1a1aa]'
+                                }`}>{data.message}</p>
+                            </div>
+                        )}
+
+                        {/* LLM summary block */}
+                        {(data.reason.summary || data.reason.evidence) && (
+                            <div className="border-l-2 border-[#252530] pl-3 space-y-1">
+                                {data.reason.summary && (
+                                    <p className="text-xs text-white leading-relaxed">{data.reason.summary}</p>
+                                )}
+                                {data.reason.evidence && (
+                                    <p className="text-xs text-[#a1a1aa] leading-relaxed">{data.reason.evidence}</p>
+                                )}
+                                {data.reason.confidence_note && (
+                                    <p className="text-[11px] text-[#52525b] italic leading-relaxed">{data.reason.confidence_note}</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Action Battle */}
+                    <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4">
+                        <ActionBattleCard data={data} />
+                        {!data.insight.best_action && (
+                            <p className="text-xs text-[#52525b]">No action comparison available yet.</p>
+                        )}
+                    </div>
+
+                    {/* Evidence Meter */}
+                    <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4">
+                        <EvidenceMeter data={data} />
+                    </div>
+
+                    {/* Confidence detail */}
+                    {data.confidence_meta && (
+                        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4 space-y-2.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b]">Confidence</p>
+                            <ConfidenceBar pct={data.confidence_meta.percent} label={data.confidence_meta.label} />
+                            {data.threshold_hint && (
+                                <p className="text-[10px] text-[#52525b]">{data.threshold_hint}</p>
+                            )}
+                            {data.improvement_display && (
+                                <div className="flex items-center gap-3 pt-1">
+                                    <span className="text-xs text-[#52525b]">Potential improvement</span>
+                                    <span className="text-sm font-bold text-[#b8ff00] font-mono ml-auto">
+                                        {data.improvement_display.raw_delta_pct}
+                                    </span>
+                                    {data.improvement_display.is_estimate && (
+                                        <span className="text-[10px] text-yellow-400">est.</span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Signal Integrity (collapsed) */}
+                    <SignalIntegrity data={data} />
+                </>
+            )}
+
+            {/* No data state when ready threshold met but no API data yet */}
+            {ready && !data && !error && !loading && (
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-8 text-center space-y-2">
+                    <BarChart2 size={24} className="mx-auto text-[#52525b]" />
+                    <p className="text-xs text-[#52525b]">Loading recommendation…</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────
 
 export default function RecommendationsPage(): React.ReactElement {
     const { apiKey, isValid, error: keyError, handleAuthFailure } = useAgentApiKey();
 
-    const [taskInput, setTaskInput] = useState('');
-    const [activeTask, setActiveTask] = useState('');
-    const [data, setData] = useState<RecommendationResponse | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    // Agent list for scoping recommendations
-    const [agents, setAgents] = useState<Array<{ agent_id: string; agent_name: string }>>([]);
+    // Agent list + selection
+    const [agents, setAgents] = useState<AgentSummary[]>([]);
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+    const [agentSummary, setAgentSummary] = useState<AgentSummary | null>(null);
     const [agentsLoading, setAgentsLoading] = useState(false);
-    // Dynamic task list — always scoped to selected agent.
-    const [agentTasks, setAgentTasks] = useState<string[]>([]);
-    const [agentTasksLoading, setAgentTasksLoading] = useState(false);
-    const fetchRef = useRef<(() => Promise<void>) | null>(null);
-    const latestFetchTokenRef = useRef(0);
+    const [summaryLoading, setSummaryLoading] = useState(false);
 
+    // Task selection
+    const [selectedTask, setSelectedTask] = useState<string | null>(null);
+
+    // Recommendation fetch
+    const [recData, setRecData] = useState<RecommendationResponse | null>(null);
+    const [recLoading, setRecLoading] = useState(false);
+    const [recError, setRecError] = useState<string | null>(null);
+
+    // SDK mode — derive from agent name/type heuristic or trust status
+    // In a real system this would come from an API field; for now we derive
+    // a sensible default from trust status.
+    const sdkMode = agentSummary?.trust_status === 'suspended' ? 'recommend'
+        : (agentSummary?.total_outcomes ?? 0) >= 100 ? 'auto'
+        : (agentSummary?.total_outcomes ?? 0) >= 50 ? 'assist'
+        : 'recommend';
+
+    const fetchRef = useRef<(() => void) | null>(null);
+    const latestRecToken = useRef(0);
+
+    // ── Load agents list ──────────────────────────────────────────
     useEffect(() => {
-        if (!isValid) return;
-        void (async () => {
-            setAgentsLoading(true);
-            try {
-                const { data } = await supabase
-                    .from('dim_agents')
-                    .select('agent_id, agent_name')
-                    .order('agent_name', { ascending: true });
-                setAgents(data ?? []);
-
-                setSelectedAgentId((current) => {
-                    if (!data || data.length === 0) return null;
-                    if (current && data.some((agent) => agent.agent_id === current)) {
-                        return current;
-                    }
-                    return data[0]!.agent_id;
-                });
-            } finally {
-                setAgentsLoading(false);
-            }
-        })();
-    }, [isValid]);
-
-    // Fetch tasks via the authenticated API endpoint scoped to selected agent.
-    useEffect(() => {
-        if (!isValid || !apiKey || !API_BASE || !selectedAgentId) {
-            setAgentTasks([]);
-            setAgentTasksLoading(false);
-            return;
-        }
-
-        setAgentTasksLoading(true);
+        if (!isValid || !apiKey || !API_BASE) return;
+        setAgentsLoading(true);
         const controller = new AbortController();
 
         void (async () => {
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const qs = `?agent_id=${encodeURIComponent(selectedAgentId)}`;
-                const res = await agentFetch(`${API_BASE}/v1/recommendations/tasks${qs}`, {
-                    signal: controller.signal,
-                });
-
+                const res = await agentFetch(`${API_BASE}/v1/recommendations/agent-summary`, { signal: controller.signal });
                 if (res.ok) {
-                    const json = await res.json() as { tasks: string[] };
-                    setAgentTasks(json.tasks ?? []);
-                } else {
-                    setAgentTasks([]);
+                    const json = await res.json() as { agents: AgentSummary[] };
+                    const list = json.agents ?? [];
+                    setAgents(list);
+
+                    // Auto-select first agent
+                    setSelectedAgentId((cur) => {
+                        if (cur && list.some((a) => a.agent_id === cur)) return cur;
+                        return list[0]?.agent_id ?? null;
+                    });
                 }
-            } catch (err: any) {
-                if (err?.name === 'AbortError') return;
-                setAgentTasks([]);
+            } catch (e: any) {
+                if (e?.name === 'AbortError') return;
+                // Fallback: load from supabase directly
+                try {
+                    const { data } = await supabase
+                        .from('dim_agents')
+                        .select('agent_id, agent_name, agent_type, llm_model')
+                        .order('agent_name');
+                    const fallback: AgentSummary[] = (data ?? []).map((a) => ({
+                        agent_id: a.agent_id,
+                        agent_name: a.agent_name,
+                        agent_type: a.agent_type ?? null,
+                        llm_model: a.llm_model ?? null,
+                        trust_score: null,
+                        trust_status: null,
+                        total_outcomes: 0,
+                        sdk_outcomes: 0,
+                        imported_outcomes: 0,
+                        tasks: [],
+                    }));
+                    setAgents(fallback);
+                    setSelectedAgentId((cur) => {
+                        if (cur && fallback.some((a) => a.agent_id === cur)) return cur;
+                        return fallback[0]?.agent_id ?? null;
+                    });
+                } catch {}
             } finally {
-                setAgentTasksLoading(false);
+                setAgentsLoading(false);
             }
         })();
+
+        return () => controller.abort();
+    }, [isValid, apiKey, handleAuthFailure]);
+
+    // ── Load per-agent summary when agent changes ─────────────────
+    useEffect(() => {
+        if (!isValid || !apiKey || !API_BASE || !selectedAgentId) {
+            setAgentSummary(null);
+            setSelectedTask(null);
+            setRecData(null);
+            return;
+        }
+        setSummaryLoading(true);
+        const controller = new AbortController();
+
+        void (async () => {
+            try {
+                const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
+                const res = await agentFetch(
+                    `${API_BASE}/v1/recommendations/agent-summary?agent_id=${encodeURIComponent(selectedAgentId)}`,
+                    { signal: controller.signal },
+                );
+                if (res.ok) {
+                    const json = await res.json() as AgentSummary;
+                    setAgentSummary(json);
+                    // Auto-select first task
+                    setSelectedTask((cur) => {
+                        if (cur && json.tasks.some((t) => t.task_name === cur)) return cur;
+                        return json.tasks[0]?.task_name ?? null;
+                    });
+                }
+            } catch (e: any) {
+                if (e?.name === 'AbortError') return;
+            } finally {
+                setSummaryLoading(false);
+            }
+        })();
+
         return () => controller.abort();
     }, [isValid, apiKey, handleAuthFailure, selectedAgentId]);
 
-    // Reset selected task/result when agent scope changes.
+    // Reset task + rec when agent changes
     useEffect(() => {
-        setTaskInput('');
-        setActiveTask('');
-        setData(null);
-        setError(null);
+        setSelectedTask(null);
+        setRecData(null);
+        setRecError(null);
     }, [selectedAgentId]);
 
-    // -- Auto-select first task after agent switch ------------------------
-    // Runs whenever agentTasks changes (i.e., after agent switch
-    // completes and the new task list has loaded).
-    // Only fires when activeTask is '' — meaning we just switched
-    // agents and the reset cleared it. Skips if user is actively
-    // typing (activeTask already non-empty from manual input).
-    useEffect(() => {
-        if (agentTasksLoading) return;
-        if (activeTask !== '') return;
-        if (agentTasks.length === 0) return;
-        const first = agentTasks[0]!;
-        setTaskInput(first);
-        setActiveTask(first);
-    }, [agentTasks, agentTasksLoading, activeTask]);
-
-    const fetchRecommendation = useCallback(
-        async (task: string, showLoading = true): Promise<void> => {
+    // ── Fetch recommendation for selected task ────────────────────
+    const fetchRec = useCallback(
+        async (task: string, showLoading = true) => {
             if (!isValid || !apiKey || !API_BASE || !selectedAgentId) return;
-
-            const fetchToken = ++latestFetchTokenRef.current;
-
-            if (showLoading) setLoading(true);
-            setError(null);
+            const token = ++latestRecToken.current;
+            if (showLoading) setRecLoading(true);
+            setRecError(null);
 
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
                 const res = await agentFetch(
-                    `${API_BASE}/v1/recommendations?task=${encodeURIComponent(task)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=true`
+                    `${API_BASE}/v1/recommendations?task=${encodeURIComponent(task)}&agent_id=${encodeURIComponent(selectedAgentId)}`,
                 );
-
                 if (!res.ok) {
                     const body = await res.json().catch(() => ({}));
                     throw new Error((body as any)?.error ?? `HTTP ${res.status}`);
                 }
-
-                const json = (await res.json()) as RecommendationResponse;
-
-                if (fetchToken !== latestFetchTokenRef.current) return;
-                setData(json);
+                const json = await res.json() as RecommendationResponse;
+                if (token !== latestRecToken.current) return;
+                setRecData(json);
             } catch (err: any) {
-                if (fetchToken !== latestFetchTokenRef.current) return;
-                setError(err.message ?? 'Failed to load recommendation.');
-                setData(null);
+                if (token !== latestRecToken.current) return;
+                setRecError(err.message ?? 'Failed to load recommendation.');
+                setRecData(null);
             } finally {
-                if (fetchToken === latestFetchTokenRef.current) {
-                    setLoading(false);
-                }
+                if (token === latestRecToken.current) setRecLoading(false);
             }
         },
-        [apiKey, isValid, handleAuthFailure, selectedAgentId],
+        [isValid, apiKey, handleAuthFailure, selectedAgentId],
     );
 
     useEffect(() => {
-        if (!isValid || !selectedAgentId) return;
-        // Guard: activeTask is '' right after an agent switch (cleared
-        // by the agent-reset effect). Do not fetch — wait for the
-        // auto-select effect to populate activeTask with a valid task.
-        if (!activeTask.trim()) {
-            setData(null);
-            setError(null);
+        if (!selectedTask || !selectedAgentId) {
+            setRecData(null);
+            setRecError(null);
             fetchRef.current = null;
             return;
         }
-        // Clear stale result immediately so user never sees another agent's data while loading
-        setData(null);
-        setError(null);
+        setRecData(null);
+        setRecError(null);
+        fetchRef.current = () => void fetchRec(selectedTask, false);
+        void fetchRec(selectedTask, true);
 
-        fetchRef.current = () => fetchRecommendation(activeTask, false);
-        void fetchRecommendation(activeTask, true);
-
-        const interval = window.setInterval(() => {
-            void fetchRecommendation(activeTask, false);
-        }, 30_000);
-
+        const interval = window.setInterval(() => void fetchRec(selectedTask, false), 30_000);
         return () => {
             window.clearInterval(interval);
             fetchRef.current = null;
         };
-    }, [activeTask, isValid, fetchRecommendation, selectedAgentId]);
+    }, [selectedTask, selectedAgentId, fetchRec]);
 
-    const handleSubmit = (e: React.FormEvent): void => {
-        e.preventDefault();
-
-        if (!selectedAgentId) {
-            setError('Select an agent first.');
-            return;
-        }
-
-        const normalized = taskInput.trim().toLowerCase().replace(/\s+/g, '_');
-        if (!normalized) return;
-
-        if (agentTasks.length === 0) {
-            setError('No tasks logged for this agent yet.');
-            setData(null);
-            return;
-        }
-
-        if (!agentTasks.includes(normalized)) {
-            setError('Task not found for selected agent. Choose from Quick Select.');
-            setData(null);
-            return;
-        }
-
-        setActiveTask(normalized);
-        setTaskInput(normalized);
-    };
-
+    // ── Not valid ─────────────────────────────────────────────────
     if (!isValid) {
         return (
             <div className="space-y-6">
                 <div>
                     <h1 className="text-2xl font-bold text-white">Recommendations</h1>
-                    <p className="text-[#a1a1aa] text-sm mt-1">Decision Recommendation Engine</p>
+                    <p className="text-[#a1a1aa] text-sm mt-1">AI-powered decision recommendations for your agent actions</p>
                 </div>
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-8 text-center space-y-3">
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-10 text-center space-y-3">
                     <TrendingUp size={32} className="mx-auto text-[#a1a1aa]" />
                     <p className="text-white font-medium">API Key Required</p>
                     <p className="text-[#a1a1aa] text-sm max-w-md mx-auto">
@@ -884,142 +1075,157 @@ export default function RecommendationsPage(): React.ReactElement {
         );
     }
 
+    const selectedTaskSummary = agentSummary?.tasks.find((t) => t.task_name === selectedTask) ?? null;
+
     return (
-        <div className="space-y-8">
+        <div className="space-y-6">
+            {/* ── Page header ── */}
             <div className="flex items-start justify-between flex-wrap gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <TrendingUp size={22} className="text-[#b8ff00]" />
+                        <TrendingUp size={20} className="text-[#b8ff00]" />
                         Recommendations
                     </h1>
-                    <p className="text-[#a1a1aa] text-sm mt-1">
-                        AI-powered decision recommendations for your agent actions
-                    </p>
+                    <p className="text-[#a1a1aa] text-sm mt-1">AI-powered decision recommendations for your agent actions</p>
                 </div>
                 <button
                     className="inline-flex items-center gap-2 text-xs border border-[#1a1a24] rounded-lg px-3 py-1.5 text-[#a1a1aa] hover:text-white transition-colors"
-                    onClick={() => void fetchRef.current?.()}
-                    disabled={loading}
+                    onClick={() => fetchRef.current?.()}
+                    disabled={recLoading}
                 >
-                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                    <RefreshCw size={13} className={recLoading ? 'animate-spin' : ''} />
                     Refresh
                 </button>
             </div>
 
-            {error && (
-                <div className="bg-red-500/10 border border-red-500/30 text-[#ff4444] rounded-xl px-4 py-3 text-sm flex items-center gap-2">
-                    <AlertTriangle size={16} />
-                    <span>{error}</span>
-                </div>
-            )}
-
-            {agents.length > 0 && (
-                <div>
-                    <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-3">
-                        Agent Scope
-                    </p>
-                    <div className="flex flex-wrap gap-2 items-center">
-                        {agentsLoading ? (
-                            <span className="text-xs text-[#a1a1aa]">Loading agents…</span>
-                        ) : (
-                            agents.map((agent) => (
-                                <button
-                                    key={agent.agent_id}
-                                    onClick={() => setSelectedAgentId(agent.agent_id)}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${selectedAgentId === agent.agent_id
-                                        ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                        : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
-                                        }`}
-                                >
-                                    {agent.agent_name}
-                                </button>
-                            ))
-                        )}
-                    </div>
-                    {selectedAgentId ? (
-                        <p className="text-xs text-[#a1a1aa] mt-2">
-                            Showing recommendations scoped to this agent only.
-                        </p>
-                    ) : (
-                        <p className="text-xs text-[#52525b] mt-2">Select an agent to continue.</p>
-                    )}
-                </div>
-            )}
-
-            {!agentsLoading && agents.length === 0 && (
-                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-4 text-sm text-[#a1a1aa]">
-                    No agents found for this workspace.
-                </div>
-            )}
-
-            <div>
-                <p className="text-xs text-[#a1a1aa] uppercase tracking-wider mb-3">
-                    Quick Select
-                    {selectedAgentId && agentTasks.length > 0 && (
-                        <span className="ml-2 text-[#52525b] normal-case font-normal">
-                            — tasks logged by this agent
-                        </span>
-                    )}
-                </p>
-                {agentTasksLoading ? (
-                    <div className="flex gap-2">
-                        {[0, 1, 2].map((i) => (
-                            <div key={i} className="h-7 w-24 bg-[#1a1a24] rounded-lg animate-pulse" />
-                        ))}
-                    </div>
-                ) : agentTasks.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                        {agentTasks.map((task) => (
-                            <button
-                                key={task}
-                                onClick={() => {
-                                    setTaskInput(task);
-                                    setActiveTask(task);
-                                }}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors font-mono ${activeTask === task
-                                    ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/40'
-                                    : 'bg-[#111118] text-[#a1a1aa] border-[#1a1a24] hover:text-white'
-                                    }`}
-                            >
-                                {task}
-                            </button>
-                        ))}
+            {/* ── Agent dropdown ── */}
+            <div className="max-w-sm">
+                <label className="block text-[10px] font-medium uppercase tracking-wider text-[#52525b] mb-2">
+                    Agent
+                </label>
+                {agentsLoading ? (
+                    <div className="h-10 bg-[#111118] border border-[#1a1a24] rounded-xl animate-pulse" />
+                ) : agents.length === 0 ? (
+                    <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-2.5 text-xs text-[#52525b]">
+                        No agents found
                     </div>
                 ) : (
-                    <p className="text-xs text-[#52525b]">No tasks logged for this agent yet.</p>
+                    <div className="relative">
+                        <select
+                            value={selectedAgentId ?? ''}
+                            onChange={(e) => setSelectedAgentId(e.target.value || null)}
+                            className="w-full appearance-none bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#b8ff00]/40 cursor-pointer pr-9 transition-colors"
+                        >
+                            {agents.map((a) => (
+                                <option key={a.agent_id} value={a.agent_id}>
+                                    {a.agent_name}
+                                    {a.total_outcomes > 0 ? ` · ${a.total_outcomes.toLocaleString()} outcomes` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#52525b] pointer-events-none" />
+                    </div>
                 )}
             </div>
 
-            <form onSubmit={handleSubmit} className="flex items-center gap-3">
-                <div className="flex-1 relative">
-                    <input
-                        type="text"
-                        value={taskInput}
-                        onChange={(e) => setTaskInput(e.target.value)}
-                        placeholder="Enter a task from Quick Select"
-                        className="w-full bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-3 text-sm text-white placeholder-[#52525b] focus:outline-none focus:border-[#b8ff00]/50 font-mono transition-colors"
-                    />
-                </div>
-                <button
-                    type="submit"
-                    disabled={loading || !taskInput.trim() || !selectedAgentId || agentTasks.length === 0}
-                    className="px-5 py-3 rounded-xl bg-[#b8ff00] text-black text-sm font-semibold hover:bg-[#a0e600] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                    Analyse
-                </button>
-            </form>
+            {/* ── Two-pane layout ── */}
+            {selectedAgentId && (
+                <div className="grid grid-cols-12 gap-5 items-start">
 
-            {loading ? (
-                <LoadingSkeleton />
-            ) : data ? (
-                <ResultCard data={data} />
-            ) : (
-                !error && (
-                    <div className="bg-[#111118] border border-[#1a1a24] rounded-xl p-10 text-center text-[#a1a1aa] text-sm space-y-2">
-                        <TrendingUp size={28} className="mx-auto text-[#a1a1aa]" />
-                        <p>Select a task above or type one to see recommendations.</p>
+                    {/* ── Left pane: agent overview + task list ── */}
+                    <div className="col-span-12 lg:col-span-4 space-y-4">
+
+                        {/* Agent overview card */}
+                        <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-4">
+                            {summaryLoading || !agentSummary ? (
+                                <div className="space-y-3 animate-pulse">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-[#1a1a24]" />
+                                        <div className="space-y-1.5">
+                                            <div className="h-4 w-28 bg-[#1a1a24] rounded" />
+                                            <div className="h-3 w-20 bg-[#1a1a24] rounded" />
+                                        </div>
+                                    </div>
+                                    <div className="h-12 bg-[#1a1a24] rounded-xl" />
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="h-16 bg-[#1a1a24] rounded-xl" />
+                                        <div className="h-16 bg-[#1a1a24] rounded-xl" />
+                                    </div>
+                                </div>
+                            ) : (
+                                <AgentOverview agent={agentSummary} sdkMode={sdkMode} />
+                            )}
+                        </div>
+
+                        {/* Task list */}
+                        <div>
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-[#52525b] mb-2 px-1">
+                                Tasks
+                                {agentSummary && (
+                                    <span className="ml-1.5 text-[#3f3f46] normal-case font-normal">
+                                        ({agentSummary.tasks.length})
+                                    </span>
+                                )}
+                            </p>
+
+                            {summaryLoading ? (
+                                <div className="space-y-2">
+                                    {[0, 1, 2].map((i) => (
+                                        <div key={i} className="h-16 bg-[#111118] border border-[#1a1a24] rounded-xl animate-pulse" />
+                                    ))}
+                                </div>
+                            ) : agentSummary && agentSummary.tasks.length > 0 ? (
+                                <div className="space-y-1.5">
+                                    {agentSummary.tasks.map((task) => (
+                                        <TaskListItem
+                                            key={task.task_name}
+                                            task={task}
+                                            active={selectedTask === task.task_name}
+                                            onClick={() => setSelectedTask(task.task_name)}
+                                        />
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-6 text-center space-y-2">
+                                    <Database size={20} className="mx-auto text-[#3f3f46]" />
+                                    <p className="text-xs text-[#52525b]">No tasks logged for this agent yet.</p>
+                                    <p className="text-[10px] text-[#3f3f46]">
+                                        Use <span className="font-mono">log_outcome()</span> in your SDK integration.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                )
+
+                    {/* ── Right pane: task detail ── */}
+                    <div className="col-span-12 lg:col-span-8">
+                        {selectedTask ? (
+                            <TaskDetail
+                                taskName={selectedTask}
+                                taskTotal={selectedTaskSummary?.total ?? 0}
+                                loading={recLoading}
+                                data={recData}
+                                error={recError}
+                            />
+                        ) : (
+                            <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-16 text-center space-y-3">
+                                <BarChart2 size={28} className="mx-auto text-[#3f3f46]" />
+                                <p className="text-sm text-[#52525b]">Select a task to see its recommendation</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* ── No agents state ── */}
+            {!agentsLoading && agents.length === 0 && (
+                <div className="bg-[#111118] border border-[#1a1a24] rounded-xl px-4 py-12 text-center space-y-3">
+                    <Bot size={28} className="mx-auto text-[#3f3f46]" />
+                    <p className="text-sm text-white">No agents registered yet</p>
+                    <p className="text-xs text-[#52525b] max-w-sm mx-auto">
+                        Install the Layerinfinite SDK and call <span className="font-mono text-[#a1a1aa]">Layerinfinite(agent_id=...)</span> to register your first agent.
+                    </p>
+                </div>
             )}
         </div>
     );

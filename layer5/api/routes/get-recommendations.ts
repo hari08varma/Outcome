@@ -16,6 +16,7 @@ import { fetchAvailableTasks } from '../lib/recommendation/task-performance.js';
 import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
 import { computeCohortReliability } from '../lib/recommendation/cohort-reliability.js';
 import { supabase } from '../lib/supabase.js';
+import { generateNarrative } from '../lib/recommendation/llm-narrative.js';
 
 export const getRecommendationsRouter = new Hono();
 
@@ -126,6 +127,127 @@ function buildTraceability(params: {
 
     return baseTraceability;
 }
+
+// GET /agent-summary — per-agent stats + per-task outcome counts from fact_outcomes
+// Returns: total_outcomes (sdk+import), agent trust/mode, per-task breakdown
+// Used by the redesigned recommendations page to show agent overview + task list.
+getRecommendationsRouter.get('/agent-summary', async (c) => {
+    const customerId = c.get('customer_id') as string | undefined;
+    if (!customerId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const agentId = c.req.query('agent_id')?.trim() || null;
+
+    try {
+        // 1. Fetch agent metadata
+        const agentQuery = supabase
+            .from('dim_agents')
+            .select('agent_id, agent_name, agent_type, llm_model')
+            .eq('customer_id', customerId);
+        if (agentId) agentQuery.eq('agent_id', agentId);
+
+        const [agentResult, trustResult, outcomesResult] = await Promise.all([
+            agentQuery,
+            agentId
+                ? supabase
+                    .from('agent_trust_scores')
+                    .select('agent_id, trust_score, trust_status')
+                    .eq('agent_id', agentId)
+                    .single()
+                : Promise.resolve({ data: null, error: null }),
+            // 2. Group outcomes by agent_id, task_name, ingestion_source
+            supabase
+                .from('fact_outcomes')
+                .select('agent_id, task_name, ingestion_source')
+                .eq('customer_id', customerId)
+                .eq('is_synthetic', false)
+                .eq('is_deleted', false)
+                .then(({ data }) => data ?? []),
+        ]);
+
+        const agentMeta = agentResult.data ?? [];
+        const trustMeta = trustResult.data as {
+            agent_id: string; trust_score: number; trust_status: string;
+        } | null;
+
+        // Aggregate outcome counts per agent + task
+        const outcomesData = outcomesResult as Array<{
+            agent_id: string; task_name: string; ingestion_source: string;
+        }>;
+
+        type TaskCounts = { sdk: number; imported: number; total: number };
+        type AgentTaskMap = Map<string, TaskCounts>;
+        const agentTaskCounts = new Map<string, AgentTaskMap>();
+        const agentTotals = new Map<string, { sdk: number; imported: number; total: number }>();
+
+        for (const row of outcomesData) {
+            if (!row.agent_id || !row.task_name) continue;
+
+            // Per-agent totals
+            let totals = agentTotals.get(row.agent_id);
+            if (!totals) { totals = { sdk: 0, imported: 0, total: 0 }; agentTotals.set(row.agent_id, totals); }
+
+            // Per-agent per-task counts
+            let taskMap = agentTaskCounts.get(row.agent_id);
+            if (!taskMap) { taskMap = new Map(); agentTaskCounts.set(row.agent_id, taskMap); }
+            let counts = taskMap.get(row.task_name);
+            if (!counts) { counts = { sdk: 0, imported: 0, total: 0 }; taskMap.set(row.task_name, counts); }
+
+            if (row.ingestion_source === 'import') {
+                counts.imported++;
+                totals.imported++;
+            } else {
+                counts.sdk++;
+                totals.sdk++;
+            }
+            counts.total++;
+            totals.total++;
+        }
+
+        if (agentId) {
+            // Single-agent detail response
+            const meta = agentMeta.find((a) => a.agent_id === agentId);
+            const totals = agentTotals.get(agentId) ?? { sdk: 0, imported: 0, total: 0 };
+            const taskMap = agentTaskCounts.get(agentId) ?? new Map();
+
+            const tasks = Array.from(taskMap.entries())
+                .map(([task_name, counts]) => ({ task_name, ...counts }))
+                .sort((a, b) => b.total - a.total);
+
+            return c.json({
+                agent_id: agentId,
+                agent_name: meta?.agent_name ?? agentId,
+                agent_type: meta?.agent_type ?? null,
+                llm_model: meta?.llm_model ?? null,
+                trust_score: trustMeta?.trust_score ?? null,
+                trust_status: trustMeta?.trust_status ?? null,
+                total_outcomes: totals.total,
+                sdk_outcomes: totals.sdk,
+                imported_outcomes: totals.imported,
+                tasks,
+            }, 200);
+        } else {
+            // All-agents list (for dropdown population)
+            const agents = agentMeta.map((a) => {
+                const totals = agentTotals.get(a.agent_id) ?? { sdk: 0, imported: 0, total: 0 };
+                return {
+                    agent_id: a.agent_id,
+                    agent_name: a.agent_name,
+                    agent_type: a.agent_type ?? null,
+                    llm_model: a.llm_model ?? null,
+                    total_outcomes: totals.total,
+                    sdk_outcomes: totals.sdk,
+                    imported_outcomes: totals.imported,
+                };
+            }).sort((a, b) => b.total_outcomes - a.total_outcomes);
+
+            return c.json({ agents }, 200);
+        }
+    } catch (err: any) {
+        console.error('[agent-summary] error:', err.message);
+        return c.json({ error: 'Internal error', details: err.message }, 500);
+    }
+});
 
 // GET /tasks — returns distinct task_names available for a customer (+ optional agent scope)
 // Uses mv_task_action_performance with automatic fallback to fact_outcomes.
@@ -279,13 +401,25 @@ getRecommendationsRouter.get('/', async (c) => {
                 confidence_source: confidenceSource,
                 confidence_source_reason: confidenceSourceReason,
             }),
-            // Only fetch data_sources when scoped to an agent — most useful context
-            // for developers who have uploaded historical data for that agent.
             scopedAgentId
                 ? fetchDataSources(customerId, scopedAgentId, taskName)
                 : Promise.resolve(null),
         ]);
         const cohortReliability = computeCohortReliability(result, cohortCycle);
+
+        // LLM narrative — non-blocking, falls back to static text on failure
+        const narrative = await generateNarrative(output, {
+            reliability_band: cohortReliability.band,
+            reliability_reasons: cohortReliability.reasons,
+            silent_failure_warning: !!(result as any)._silent_failure_warning,
+            data_freshness_stale: dataFreshness.is_stale,
+            data_freshness_age_hours: dataFreshness.age_hours,
+            scope: servedScope,
+            scope_fallback_applied: fallbackApplied,
+            confidence_source: confidenceSource,
+            confidence_source_reason: confidenceSourceReason,
+        });
+
         const traceability = buildTraceability({
             result,
             requestedScope,
@@ -294,9 +428,26 @@ getRecommendationsRouter.get('/', async (c) => {
             scopeReason,
         });
 
+        // Merge LLM narrative over the static template fields when available
+        const narrativeOverride = narrative
+            ? {
+                message: narrative.message,
+                reason: {
+                    summary: narrative.summary,
+                    evidence: narrative.evidence,
+                    confidence_note: narrative.confidence_note,
+                },
+                llm_narrative: {
+                    headline: narrative.headline,
+                    generated: true,
+                },
+            }
+            : { llm_narrative: { headline: null, generated: false } };
+
         return c.json(
             {
                 ...output,
+                ...narrativeOverride,
                 agent_id: result.agent_id,
                 agent_scope: servedScope,
                 scope_label: scopeLabel,
@@ -342,6 +493,8 @@ getRecommendationsRouter.get('/', async (c) => {
                 // uploaded historical outcomes and live SDK outcomes for this agent+task,
                 // so the developer knows what fraction of confidence comes from each source.
                 data_sources: dataSources,
+                // All action-level performance data — used by Action Battle card in dashboard.
+                all_actions: result.all_actions,
             },
             200
         );
