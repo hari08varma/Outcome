@@ -125,6 +125,20 @@ interface RecommendationResponse {
     } | null;
     noise_gate?: { is_noisy_task: boolean; task_noise_score: number } | null;
     _silent_failure_warning?: boolean;
+    policy_gate?: {
+        trust_blocked: boolean;
+        trust_status: string | null;
+    } | null;
+    debug_scope?: {
+        requested_agent_id: string | null;
+        requested_task_name: string;
+        effective_task_name: string;
+        evidence_task_name: string;
+        strict_agent_scope: boolean;
+        evidence_source: string;
+        evidence_action_count: number;
+        trust_gate_blocked: boolean;
+    } | null;
 }
 
 interface TaskAnalytics {
@@ -197,8 +211,8 @@ function Sparkline({ points, direction }: { points: Array<{ rate: number }>; dir
 
     const stroke =
         direction === 'improving' ? ACCENT :
-        direction === 'degrading' ? '#f87171' :
-        '#52525b';
+            direction === 'degrading' ? '#f87171' :
+                '#52525b';
 
     return (
         <svg width={W} height={H} className="overflow-visible">
@@ -245,8 +259,8 @@ function AgentPicker({
 function AgentOverviewCard({ agent }: { agent: AgentSummary }): React.ReactElement {
     const trustCls =
         agent.trust_status === 'active' ? 'text-[#b8ff00]' :
-        agent.trust_status === 'suspended' ? 'text-red-400' :
-        'text-[#52525b]';
+            agent.trust_status === 'suspended' ? 'text-red-400' :
+                'text-[#52525b]';
 
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
@@ -368,8 +382,23 @@ function TaskHealthHeader({
 }): React.ReactElement {
     const hasSufficient = totalOutcomes >= MIN_OUTCOMES_FOR_RECOMMENDATION;
     const confidenceMeta = rec?.confidence_meta;
-    const cl = confidenceMeta ? confidenceLabel(confidenceMeta.label) : null;
+    const cl = confidenceMeta && !rec?.policy_gate?.trust_blocked
+        ? confidenceLabel(confidenceMeta.label)
+        : null;
     const drift = analytics?.drift ?? null;
+    const fallbackBest = rec?.all_actions && rec.all_actions.length > 0
+        ? [...rec.all_actions].sort((a, b) => b.resolution_rate - a.resolution_rate)[0]
+        : null;
+    const bestRate = rec?.insight?.best_rate ?? fallbackBest?.resolution_rate ?? null;
+    const bestAction = rec?.insight?.best_action ?? fallbackBest?.action_name ?? 'no data';
+    const confidenceValue = rec?.policy_gate?.trust_blocked
+        ? 'Blocked'
+        : rec?.confidence_meta?.percent != null
+            ? `${rec.confidence_meta.percent}%`
+            : '—';
+    const confidenceSub = rec?.policy_gate?.trust_blocked
+        ? `trust: ${rec.policy_gate.trust_status ?? 'blocked'}`
+        : rec?.confidence_source?.replace('_', ' ') ?? '—';
 
     return (
         <div className="bg-[#111118] border border-[#1a1a24] rounded-2xl p-5 space-y-4">
@@ -393,14 +422,13 @@ function TaskHealthHeader({
                         </span>
                     )}
                     {drift && drift.direction !== 'unknown' && (
-                        <span className={`px-2.5 py-1 rounded-full border text-xs flex items-center gap-1 ${
-                            drift.direction === 'degrading' ? 'bg-red-500/10 text-red-400 border-red-500/30' :
+                        <span className={`px-2.5 py-1 rounded-full border text-xs flex items-center gap-1 ${drift.direction === 'degrading' ? 'bg-red-500/10 text-red-400 border-red-500/30' :
                             drift.direction === 'improving' ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30' :
-                            'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]'
-                        }`}>
+                                'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]'
+                            }`}>
                             {drift.direction === 'degrading' ? <TrendingDown size={10} /> :
-                             drift.direction === 'improving' ? <TrendingUp size={10} /> :
-                             <Minus size={10} />}
+                                drift.direction === 'improving' ? <TrendingUp size={10} /> :
+                                    <Minus size={10} />}
                             {drift.direction}
                         </span>
                     )}
@@ -417,13 +445,13 @@ function TaskHealthHeader({
                 />
                 <KpiCell
                     label="Best Win Rate"
-                    value={rec?.insight?.best_rate != null ? pct(rec.insight.best_rate) : '—'}
-                    sub={rec?.insight?.best_action ?? 'no data'}
+                    value={bestRate != null ? pct(bestRate) : '—'}
+                    sub={bestAction}
                 />
                 <KpiCell
                     label="Confidence"
-                    value={rec?.confidence_meta?.percent != null ? `${rec.confidence_meta.percent}%` : '—'}
-                    sub={rec?.confidence_source?.replace('_', ' ') ?? '—'}
+                    value={confidenceValue}
+                    sub={confidenceSub}
                 />
                 <KpiCell
                     label="Drift Slope"
@@ -536,14 +564,13 @@ function LLMInsightPanel({ rec }: { rec: RecommendationResponse }): React.ReactE
                     <span className="text-[10px] text-[#3f3f46] font-mono">{n.model ?? 'gpt-4o-mini'}</span>
                 </div>
                 {n.trend_direction && n.trend_direction !== 'unknown' && (
-                    <span className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${
-                        n.trend_direction === 'improving' ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30' :
+                    <span className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${n.trend_direction === 'improving' ? 'bg-[#b8ff00]/10 text-[#b8ff00] border-[#b8ff00]/30' :
                         n.trend_direction === 'degrading' ? 'bg-red-500/10 text-red-400 border-red-500/30' :
-                        'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]'
-                    }`}>
+                            'bg-[#1a1a24] text-[#52525b] border-[#1a1a24]'
+                        }`}>
                         {n.trend_direction === 'improving' ? <ArrowUp size={9} /> :
-                         n.trend_direction === 'degrading' ? <ArrowDown size={9} /> :
-                         <Minus size={9} />}
+                            n.trend_direction === 'degrading' ? <ArrowDown size={9} /> :
+                                <Minus size={9} />}
                         {n.trend_direction}
                     </span>
                 )}
@@ -770,10 +797,9 @@ function EngineInterventions({
                 {/* Explore ratio */}
                 <div className="bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-3 space-y-1">
                     <p className="text-[10px] text-[#52525b] uppercase tracking-wider">Exploration Rate</p>
-                    <p className={`text-lg font-bold font-mono ${
-                        exploreRatio === null ? 'text-[#3f3f46]' :
+                    <p className={`text-lg font-bold font-mono ${exploreRatio === null ? 'text-[#3f3f46]' :
                         exploreRatio > 0.25 ? 'text-yellow-400' : 'text-white'
-                    }`}>
+                        }`}>
                         {exploreRatio !== null ? pct(exploreRatio) : '—'}
                     </p>
                     <p className="text-[10px] text-[#3f3f46]">
@@ -890,6 +916,36 @@ function DataSourcesPanel({ rec }: { rec: RecommendationResponse }): React.React
                     )}
                 </div>
             )}
+        </div>
+    );
+}
+
+function TrustGateBanner({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
+    if (!rec.policy_gate?.trust_blocked) {
+        return null;
+    }
+
+    return (
+        <div className="flex items-start gap-3 bg-red-500/5 border border-red-500/20 rounded-2xl p-4">
+            <Shield size={15} className="text-red-400 mt-0.5 shrink-0" />
+            <div className="space-y-1">
+                <p className="text-sm font-semibold text-red-300">Recommendation actioning is blocked by trust policy</p>
+                <p className="text-xs text-red-200/80">
+                    Trust status is <span className="font-mono">{rec.policy_gate.trust_status ?? 'blocked'}</span>. The action table below is still this
+                    agent + task evidence so you can inspect win rates and ML signals, but the engine will not emit a switch decision until trust is reinstated.
+                </p>
+            </div>
+        </div>
+    );
+}
+
+function ScopeDebugStrip({ rec }: { rec: RecommendationResponse }): React.ReactElement | null {
+    const scope = rec.debug_scope;
+    if (!scope) return null;
+
+    return (
+        <div className="text-[10px] text-[#52525b] bg-[#0d0d14] border border-[#1a1a24] rounded-xl px-3 py-2 font-mono">
+            scope agent={scope.requested_agent_id ?? 'none'} requested_task={scope.requested_task_name} evidence_task={scope.evidence_task_name} actions={scope.evidence_action_count} source={scope.evidence_source}
         </div>
     );
 }
@@ -1038,6 +1094,12 @@ export default function RecommendationsPage(): React.ReactElement {
             try {
                 const json = await recRes.value.json() as RecommendationResponse;
                 if (tok !== recToken.current) return;
+                if (json.debug_scope?.requested_agent_id && json.debug_scope.requested_agent_id !== selectedAgentId) {
+                    return;
+                }
+                if (json.debug_scope?.requested_task_name && json.debug_scope.requested_task_name !== taskName) {
+                    return;
+                }
                 setRec(json);
             } catch {
                 setRec(null);
@@ -1229,6 +1291,10 @@ export default function RecommendationsPage(): React.ReactElement {
 
                                 {rec && (
                                     <>
+                                        <TrustGateBanner rec={rec} />
+
+                                        <ScopeDebugStrip rec={rec} />
+
                                         {/* LLM insight */}
                                         <LLMInsightPanel rec={rec} />
 

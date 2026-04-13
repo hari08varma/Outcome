@@ -15,7 +15,11 @@ import {
     chooseScopedOrBlendedCandidate,
 } from '../lib/recommendation/scope-transition.js';
 import { buildRecommendationDataFreshness } from '../lib/recommendation/data-freshness.js';
-import { fetchAvailableTasks, type ContextFilter } from '../lib/recommendation/task-performance.js';
+import {
+    fetchAvailableTasks,
+    fetchTaskActionPerformance,
+    type ContextFilter,
+} from '../lib/recommendation/task-performance.js';
 import { ZERO_UUID_AGENT_ID } from '../lib/recommendation/task-performance.js';
 import { upsertRecommendationCohortCycle } from '../lib/recommendation/cohort-cycle.js';
 import { computeCohortReliability } from '../lib/recommendation/cohort-reliability.js';
@@ -214,11 +218,6 @@ async function resolveContextFilter(params: {
     }
 }
 
-function clamp01(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.max(0, Math.min(1, value));
-}
-
 function normalizeTaskSlug(value: string): string {
     return value
         .trim()
@@ -230,6 +229,21 @@ function normalizeTaskSlug(value: string): string {
 
 function hasRecommendationEvidence(result: RecommendationResult): boolean {
     return result.all_actions.some((action) => Math.max(0, Number(action.total_count ?? 0)) > 0);
+}
+
+function toUniqueTaskCandidates(values: Array<string | null | undefined>): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+
+    for (const value of values) {
+        if (!value) continue;
+        const trimmed = value.trim();
+        if (!trimmed || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        out.push(trimmed);
+    }
+
+    return out;
 }
 
 async function getRecommendationWithTaskFallback(
@@ -329,177 +343,6 @@ async function fetchAgentTaskOutcomeTotals(params: {
     }
 
     return { agentTaskTotals, agentGrandTotals, source: 'fact_outcomes' };
-}
-
-type AgentTaskActionRow = {
-    action_id: string | null;
-    outcome_score: number | null;
-    outcome_score_raw: number | null;
-    success: boolean | null;
-    execution_status: string | null;
-    timestamp: string | null;
-    dim_actions: { action_name: string | null } | Array<{ action_name: string | null }> | null;
-};
-
-type AgentTaskActionAggregate = {
-    action_id: string;
-    action_name: string;
-    total_count: number;
-    score_sum: number;
-    score_count: number;
-    last_seen_at: string | null;
-};
-
-function latestTimestamp(current: string | null, candidate: string | null): string | null {
-    if (!current) return candidate;
-    if (!candidate) return current;
-    return candidate > current ? candidate : current;
-}
-
-function deriveResolutionScore(row: AgentTaskActionRow): number | null {
-    if (typeof row.outcome_score === 'number' && Number.isFinite(row.outcome_score)) {
-        return clamp01(row.outcome_score);
-    }
-
-    if (typeof row.outcome_score_raw === 'number' && Number.isFinite(row.outcome_score_raw)) {
-        return clamp01(row.outcome_score_raw);
-    }
-
-    const status = typeof row.execution_status === 'string'
-        ? row.execution_status.trim().toLowerCase()
-        : '';
-
-    if (status === 'completed' || status === 'success' || status === 'succeeded') {
-        return 1;
-    }
-    if (status === 'partial' || status === 'degraded') {
-        return 0.5;
-    }
-    if (status === 'failed' || status === 'error') {
-        return 0;
-    }
-
-    if (typeof row.success === 'boolean') {
-        return row.success ? 1 : 0;
-    }
-
-    return null;
-}
-
-async function fetchAgentTaskActionPerformance(params: {
-    customerId: string;
-    agentId: string;
-    taskName: string;
-}): Promise<{
-    actions: Array<{
-        action_id: string;
-        action_name: string;
-        total_count: number;
-        effective_sample_count: number;
-        resolution_rate: number;
-        last_seen_at: string | null;
-    }>;
-    total_outcomes: number;
-}> {
-    const queryForTask = async (taskName: string): Promise<{
-        actions: Array<{
-            action_id: string;
-            action_name: string;
-            total_count: number;
-            effective_sample_count: number;
-            resolution_rate: number;
-            last_seen_at: string | null;
-        }>;
-        total_outcomes: number;
-    }> => {
-        const aggregates = new Map<string, AgentTaskActionAggregate>();
-
-        for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
-            const query = supabase
-                .from('fact_outcomes')
-                .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, dim_actions!inner(action_name)')
-                .eq('customer_id', params.customerId)
-                .eq('agent_id', params.agentId)
-                .eq('task_name', taskName)
-                .eq('is_synthetic', false)
-                .eq('is_deleted', false)
-                .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
-
-            const { data, error } = await query;
-            if (error) {
-                throw new Error(`[get-recommendations] action performance query failed: ${error.message}`);
-            }
-
-            const page = (data ?? []) as AgentTaskActionRow[];
-
-            for (const row of page) {
-                const actionId = row.action_id ?? '';
-                if (!actionId) continue;
-
-                const relation = Array.isArray(row.dim_actions)
-                    ? row.dim_actions[0]
-                    : row.dim_actions;
-                const actionName = relation?.action_name ?? actionId;
-
-                const existing = aggregates.get(actionName) ?? {
-                    action_id: actionId,
-                    action_name: actionName,
-                    total_count: 0,
-                    score_sum: 0,
-                    score_count: 0,
-                    last_seen_at: null,
-                };
-
-                existing.total_count += 1;
-
-                const score = deriveResolutionScore(row);
-                if (score !== null) {
-                    existing.score_sum += score;
-                    existing.score_count += 1;
-                }
-
-                existing.last_seen_at = latestTimestamp(existing.last_seen_at, row.timestamp ?? null);
-
-                aggregates.set(actionName, existing);
-            }
-
-            if (page.length < SUPABASE_PAGE_SIZE) {
-                break;
-            }
-        }
-
-        const actions = Array.from(aggregates.values())
-            .map((entry) => ({
-                action_id: entry.action_id,
-                action_name: entry.action_name,
-                total_count: entry.total_count,
-                effective_sample_count: entry.total_count,
-                resolution_rate: entry.score_count > 0
-                    ? Number((entry.score_sum / entry.score_count).toFixed(4))
-                    : 0,
-                last_seen_at: entry.last_seen_at,
-            }))
-            .sort((a, b) => {
-                if (b.total_count !== a.total_count) return b.total_count - a.total_count;
-                return b.resolution_rate - a.resolution_rate;
-            });
-
-        const totalOutcomes = actions.reduce((sum, action) => sum + action.total_count, 0);
-
-        return { actions, total_outcomes: totalOutcomes };
-    };
-
-    const exactResult = await queryForTask(params.taskName);
-    if (exactResult.total_outcomes > 0) {
-        return exactResult;
-    }
-
-    const normalizedTask = normalizeTaskSlug(params.taskName);
-    if (!normalizedTask || normalizedTask === params.taskName) {
-        return exactResult;
-    }
-
-    return queryForTask(normalizedTask);
 }
 
 // GET /agent-summary — per-agent stats + per-task outcome counts
@@ -844,9 +687,6 @@ getRecommendationsRouter.get('/', async (c) => {
             remaining_to_next_bucket: number;
         } | null = null;
         let taskName = requestedTaskName;
-        // Always track the agent-scoped result when an agent_id is provided —
-        // used to compute task_total_outcomes so it matches the task list count.
-        let agentScopedResult: RecommendationResult | null = null;
 
         if (scopedAgentId) {
             const scopedResolution = await getRecommendationWithTaskFallback(
@@ -859,7 +699,6 @@ getRecommendationsRouter.get('/', async (c) => {
 
             const scopedResult = scopedResolution.result;
             const blendedResult = await getRecommendation(customerId, taskName, null, contextFilter);
-            agentScopedResult = scopedResult;
 
             if (strictAgentScope) {
                 result = scopedResult;
@@ -914,6 +753,63 @@ getRecommendationsRouter.get('/', async (c) => {
             lastSeenAt,
         );
 
+        let scopedEvidenceActions = result.all_actions;
+        let scopedEvidenceSource: 'engine' | 'task_performance_mv' | 'task_performance_fact_fallback' = 'engine';
+        let evidenceTaskName = taskName;
+
+        // Keep decision policy gates (trust/no-data) independent from evidence rendering.
+        // Even when recommendation state is blocked, still return scoped per-task action evidence.
+        if (scopedAgentId && (result._trust_gate_blocked || scopedEvidenceActions.length === 0)) {
+            const taskCandidates = toUniqueTaskCandidates([
+                taskName,
+                requestedTaskName,
+                normalizeTaskSlug(taskName),
+                normalizeTaskSlug(requestedTaskName),
+            ]);
+
+            const windowStart = new Date(
+                Date.now() - RECOMMENDATION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+            ).toISOString();
+
+            for (const candidateTask of taskCandidates) {
+                const { rows, source } = await fetchTaskActionPerformance({
+                    customerId,
+                    taskName: candidateTask,
+                    agentId: scopedAgentId,
+                    windowStart,
+                    contextFilter,
+                });
+
+                if (!rows.length) {
+                    continue;
+                }
+
+                scopedEvidenceActions = rows.map((row) => ({
+                    action_id: row.action_id,
+                    action_name: row.action_name,
+                    total_count: Number(row.total_count ?? 0),
+                    effective_sample_count: Number(row.effective_sample_count ?? row.total_count ?? 0),
+                    success_count: Number(row.success_count ?? 0),
+                    success_rate: Number(row.success_rate ?? 0),
+                    resolution_rate: Number(row.resolution_rate ?? row.success_rate ?? 0),
+                    ml_score: row.ml_score === null || row.ml_score === undefined ? null : Number(row.ml_score),
+                    semantic_cluster_convergence: Number(row.semantic_cluster_convergence ?? 0.5),
+                    last_seen_at: row.last_seen_at ?? null,
+                }));
+
+                evidenceTaskName = candidateTask;
+                scopedEvidenceSource = source === 'mv'
+                    ? 'task_performance_mv'
+                    : 'task_performance_fact_fallback';
+                break;
+            }
+        }
+
+        const scopedTaskOutcomeTotal = scopedEvidenceActions.reduce(
+            (sum, action) => sum + Math.max(0, Number(action.total_count ?? 0)),
+            0,
+        );
+
         const totalOutcomes = result.all_actions.reduce(
             (sum, action) => sum + Math.max(0, Number(action.total_count ?? 0)),
             0,
@@ -921,7 +817,7 @@ getRecommendationsRouter.get('/', async (c) => {
         const medianSuccessRate = medianOf(
             result.all_actions.map((action) => Number(action.resolution_rate ?? Number.NaN)),
         );
-        const [cohortCycle, dataSources, agentTaskPerformance] = await Promise.all([
+        const [cohortCycle, dataSources] = await Promise.all([
             upsertRecommendationCohortCycle({
                 customer_id: customerId,
                 task_name: taskName,
@@ -934,13 +830,6 @@ getRecommendationsRouter.get('/', async (c) => {
             }),
             scopedAgentId
                 ? fetchDataSources(customerId, scopedAgentId, taskName)
-                : Promise.resolve(null),
-            scopedAgentId
-                ? fetchAgentTaskActionPerformance({
-                    customerId,
-                    agentId: scopedAgentId,
-                    taskName,
-                })
                 : Promise.resolve(null),
         ]);
         const cohortReliability = computeCohortReliability(result, cohortCycle);
@@ -1073,6 +962,20 @@ getRecommendationsRouter.get('/', async (c) => {
                 confidence_source: confidenceSource,
                 confidence_source_reason: confidenceSourceReason,
                 traceability,
+                policy_gate: {
+                    trust_blocked: !!result._trust_gate_blocked,
+                    trust_status: result._trust_status ?? null,
+                },
+                debug_scope: {
+                    requested_agent_id: scopedAgentId,
+                    requested_task_name: requestedTaskName,
+                    effective_task_name: taskName,
+                    evidence_task_name: evidenceTaskName,
+                    strict_agent_scope: strictAgentScope,
+                    evidence_source: scopedEvidenceSource,
+                    evidence_action_count: scopedEvidenceActions.length,
+                    trust_gate_blocked: !!result._trust_gate_blocked,
+                },
                 // ISSUE 1: Action registry validation.
                 // Tells the developer if the recommended action matches what they have registered.
                 // action_mismatch=true means the recommended action name does not exist in
@@ -1091,55 +994,22 @@ getRecommendationsRouter.get('/', async (c) => {
                 // uploaded historical outcomes and live SDK outcomes for this agent+task,
                 // so the developer knows what fraction of confidence comes from each source.
                 data_sources: dataSources,
-                // Always use agent-scoped fact_outcomes rows for action and outcome display
-                // when an agent_id is provided, so the UI reflects exactly what this agent logged.
-                all_actions: agentTaskPerformance?.actions ?? (() => {
-                    const byName = new Map<string, {
-                        action_id: string;
-                        action_name: string;
-                        total_count: number;
-                        resolution_rate_weighted_sum: number;
-                        last_seen_at: string | null;
-                    }>();
-                    for (const a of result.all_actions) {
-                        const name = a.action_name;
-                        const existing = byName.get(name);
-                        if (!existing) {
-                            byName.set(name, {
-                                action_id: a.action_id,
-                                action_name: name,
-                                total_count: Math.max(0, Number(a.total_count ?? 0)),
-                                resolution_rate_weighted_sum: Number(a.resolution_rate ?? 0) * Math.max(0, Number(a.total_count ?? 0)),
-                                last_seen_at: a.last_seen_at ?? null,
-                            });
-                        } else {
-                            const count = Math.max(0, Number(a.total_count ?? 0));
-                            existing.total_count += count;
-                            existing.resolution_rate_weighted_sum += Number(a.resolution_rate ?? 0) * count;
-                            if (a.last_seen_at && (!existing.last_seen_at || a.last_seen_at > existing.last_seen_at)) {
-                                existing.last_seen_at = a.last_seen_at;
-                            }
-                        }
-                    }
-                    return Array.from(byName.values())
-                        .map((a) => ({
-                            action_id: a.action_id,
-                            action_name: a.action_name,
-                            total_count: a.total_count,
-                            effective_sample_count: a.total_count,
-                            resolution_rate: a.total_count > 0
-                                ? Number((a.resolution_rate_weighted_sum / a.total_count).toFixed(4))
-                                : 0,
-                            last_seen_at: a.last_seen_at,
-                        }))
-                        .sort((a, b) => b.total_count - a.total_count);
-                })(),
+                // Always return task-scoped evidence actions for display,
+                // including trust-gated responses where decision state may be blocked.
+                all_actions: scopedEvidenceActions.map((a) => ({
+                    action_id: a.action_id,
+                    action_name: a.action_name,
+                    total_count: a.total_count,
+                    effective_sample_count: a.effective_sample_count,
+                    success_count: a.success_count,
+                    success_rate: a.success_rate,
+                    resolution_rate: a.resolution_rate,
+                    ml_score: a.ml_score ?? null,
+                    semantic_cluster_convergence: a.semantic_cluster_convergence ?? null,
+                    last_seen_at: a.last_seen_at,
+                })).sort((a, b) => b.resolution_rate - a.resolution_rate),
                 // Authoritative task outcomes for gating/display on the dashboard.
-                task_total_outcomes: agentTaskPerformance?.total_outcomes
-                    ?? (agentScopedResult ?? result).all_actions.reduce(
-                        (sum, a) => sum + Math.max(0, Number(a.total_count ?? 0)),
-                        0,
-                    ),
+                task_total_outcomes: scopedTaskOutcomeTotal,
             },
             200
         );
