@@ -582,4 +582,103 @@ describe('inferSchemaAndMap — end-to-end with mock LLM', () => {
         expect(result).not.toBeNull();
         expect(result!.mappedRecords[0].action_name).toBe('search_database');
     });
+
+    it('returns cached mapping on second call — no second LLM call', async () => {
+        vi.mocked(mockProvider.complete).mockClear();
+        (mockProvider.complete as any).mockResolvedValueOnce(JSON.stringify({
+            action_name: 'command.name',
+            success: 'result.success',
+            detected_framework: 'autogpt',
+            confidence: 0.88,
+        }));
+
+        // First call: LLM is invoked
+        const { result: first } = await inferSchemaAndMap(AUTOGPT_RECORDS, mockProvider);
+        expect(first).not.toBeNull();
+        expect(first!.llmModel).toBe('test-mock-llm');
+
+        // Second call with identical schema shape: must hit cache, not LLM
+        const { result: second } = await inferSchemaAndMap(AUTOGPT_RECORDS, mockProvider);
+        expect(second).not.toBeNull();
+        expect(second!.llmModel).toBe('cache');
+        expect(second!.sampleCount).toBe(0);
+        expect(second!.mappedRecords[0].action_name).toBe('search_database');
+
+        // LLM complete() should have been called exactly once
+        expect(mockProvider.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it('concurrent requests with the same fingerprint fire only one LLM call (in-flight dedup)', async () => {
+        vi.mocked(mockProvider.complete).mockClear();
+
+        // Delay the LLM response so all concurrent calls are genuinely in-flight
+        (mockProvider.complete as any).mockImplementationOnce(
+            () => new Promise((resolve) =>
+                setTimeout(() => resolve(JSON.stringify({
+                    action_name: 'command.name',
+                    success: 'result.success',
+                    detected_framework: 'autogpt',
+                    confidence: 0.88,
+                })), 20),
+            ),
+        );
+
+        // Fire 5 identical concurrent requests
+        const results = await Promise.all(
+            Array.from({ length: 5 }, () => inferSchemaAndMap(AUTOGPT_RECORDS, mockProvider)),
+        );
+
+        // LLM should only have been called once
+        expect(mockProvider.complete).toHaveBeenCalledTimes(1);
+
+        // All 5 results must be valid and map correctly
+        for (const { result, error } of results) {
+            expect(error).toBeNull();
+            expect(result).not.toBeNull();
+            expect(result!.mappedRecords[0].action_name).toBe('search_database');
+        }
+
+        // First result is the real call; the rest are in-flight-dedup or cache
+        const models = results.map((r) => r.result!.llmModel);
+        expect(models[0]).toBe('test-mock-llm');
+        expect(models.slice(1).every((m) => m === 'inflight-dedup' || m === 'cache')).toBe(true);
+    });
+
+    it('does NOT share cache between schemas with identical top-level keys but different nested keys', async () => {
+        vi.mocked(mockProvider.complete).mockClear();
+
+        // Same top-level keys, but payload subkeys differ — must produce different fingerprints
+        const schemaA = [
+            { id: '1', payload: { tool: 'search', result: true } },
+            { id: '2', payload: { tool: 'email', result: false } },
+            { id: '3', payload: { tool: 'lookup', result: true } },
+        ];
+        const schemaB = [
+            { id: '1', payload: { url: '/api/search', ok: true } },
+            { id: '2', payload: { url: '/api/email', ok: false } },
+            { id: '3', payload: { url: '/api/lookup', ok: true } },
+        ];
+
+        (mockProvider.complete as any)
+            .mockResolvedValueOnce(JSON.stringify({
+                action_name: 'payload.tool',
+                success: 'payload.result',
+                detected_framework: 'custom',
+                confidence: 0.8,
+            }))
+            .mockResolvedValueOnce(JSON.stringify({
+                action_name: 'id',
+                success: 'payload.ok',
+                detected_framework: 'custom',
+                confidence: 0.7,
+            }));
+
+        const { result: resA } = await inferSchemaAndMap(schemaA, mockProvider);
+        const { result: resB } = await inferSchemaAndMap(schemaB, mockProvider);
+
+        // Both calls should hit the LLM — fingerprints are different
+        expect(mockProvider.complete).toHaveBeenCalledTimes(2);
+        expect(resA!.mapping.action_name).toBe('payload.tool');
+        expect(resB!.mapping.action_name).toBe('id');
+    });
 });

@@ -76,30 +76,51 @@ const LLM_TIMEOUT_MS = 10_000; // 10 second timeout on LLM calls
 // ── Schema Fingerprint Cache ──────────────────────────────────
 // Caches mappings by schema fingerprint so the same data shape
 // doesn't trigger redundant LLM calls across multiple uploads.
+//
+// Implemented as a true LRU: Map insertion order is preserved, and
+// every cache hit moves the entry to the tail so least-recently-used
+// entries are always at the head.
 const mappingCache = new Map<string, SchemaMapping>();
 const MAX_CACHE_SIZE = 100;
 
-/** Clears the schema mapping cache. Exported for testing. */
+// ── In-flight deduplication ───────────────────────────────────
+// When N concurrent uploads share the same schema fingerprint and
+// the mapping isn't cached yet, all N requests coalesce onto a
+// single in-flight LLM promise instead of firing N separate calls.
+// The promise is removed from the map the moment it settles (success
+// or failure), so the next request after that goes through the
+// normal LRU cache path.
+const inflightCalls = new Map<
+    string,
+    Promise<{ result: InferResult | null; error: string | null }>
+>();
+
+/** Clears the schema mapping cache and any in-flight calls. Exported for testing. */
 export function clearMappingCache(): void {
     mappingCache.clear();
+    inflightCalls.clear();
+}
+
+/**
+ * Builds a key-shape string for one record, recursing up to `maxDepth`
+ * levels so that schemas differing only in nested field names produce
+ * distinct fingerprints.
+ */
+function recordKeyShape(obj: Record<string, unknown>, depth: number): string {
+    const keys = Object.keys(obj).sort();
+    return keys.map((k) => {
+        const v = obj[k];
+        if (depth > 0 && typeof v === 'object' && v !== null && !Array.isArray(v)) {
+            return `${k}:{${recordKeyShape(v as Record<string, unknown>, depth - 1)}}`;
+        }
+        return k;
+    }).join('|');
 }
 
 function computeSchemaFingerprint(records: Record<string, unknown>[]): string {
-    // Use the key structure of the first 3 records as a fingerprint.
-    // The values don't matter — only the shape.
-    const samples = records.slice(0, 3);
-    const keyStructures = samples.map((r) => {
-        const keys = Object.keys(r).sort();
-        const nested = keys.map((k) => {
-            const v = r[k];
-            if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-                return `${k}:{${Object.keys(v as Record<string, unknown>).sort().join(',')}}`;
-            }
-            return k;
-        });
-        return nested.join('|');
-    });
-    return keyStructures.join('\n');
+    // Use the key structure (3 levels deep) of the first 3 records.
+    // Values don't matter — only the shape does.
+    return records.slice(0, 3).map((r) => recordKeyShape(r, 2)).join('\n');
 }
 
 // ── LLM Prompt ────────────────────────────────────────────────
@@ -340,20 +361,30 @@ export function applyMapping(
         mapped.action_name = deepGet(record, mapping.action_name);
         mapped.success = deepGet(record, mapping.success);
 
-        // Optional fields — only set if path exists in mapping
-        if (mapping.issue_type) mapped.issue_type = deepGet(record, mapping.issue_type);
-        if (mapping.error_message) mapped.error_message = deepGet(record, mapping.error_message);
-        if (mapping.error_code) mapped.error_code = deepGet(record, mapping.error_code);
-        if (mapping.response_time_ms) mapped.response_time_ms = deepGet(record, mapping.response_time_ms);
-        if (mapping.session_id) mapped.session_id = deepGet(record, mapping.session_id);
-        if (mapping.episode_id) mapped.episode_id = deepGet(record, mapping.episode_id);
-        if (mapping.environment) mapped.environment = deepGet(record, mapping.environment);
-        if (mapping.outcome_score) mapped.outcome_score = deepGet(record, mapping.outcome_score);
-        if (mapping.business_outcome) mapped.business_outcome = deepGet(record, mapping.business_outcome);
-        if (mapping.timestamp) mapped.timestamp = deepGet(record, mapping.timestamp);
-        if (mapping.resource_cost_units) mapped.resource_cost_units = deepGet(record, mapping.resource_cost_units);
-        if (mapping.retry_attempt) mapped.retry_attempt = deepGet(record, mapping.retry_attempt);
-        if (mapping.task_name) mapped.task_name = deepGet(record, mapping.task_name);
+        // Optional fields — only set if path exists in mapping AND the value is
+        // present in this record. Skipping undefined prevents downstream code
+        // from seeing a key with an undefined value (e.g. 'session_id' in record
+        // returning true with value undefined).
+        const optionals: [string, string | null][] = [
+            ['issue_type', mapping.issue_type],
+            ['error_message', mapping.error_message],
+            ['error_code', mapping.error_code],
+            ['response_time_ms', mapping.response_time_ms],
+            ['session_id', mapping.session_id],
+            ['episode_id', mapping.episode_id],
+            ['environment', mapping.environment],
+            ['outcome_score', mapping.outcome_score],
+            ['business_outcome', mapping.business_outcome],
+            ['timestamp', mapping.timestamp],
+            ['resource_cost_units', mapping.resource_cost_units],
+            ['retry_attempt', mapping.retry_attempt],
+            ['task_name', mapping.task_name],
+        ];
+        for (const [field, path] of optionals) {
+            if (!path) continue;
+            const val = deepGet(record, path);
+            if (val !== undefined) mapped[field] = val;
+        }
 
         // Preserve the original record as raw_context for auditability
         mapped._original = record;
@@ -466,10 +497,14 @@ export async function inferSchemaAndMap(
         return { result: null, error: 'No records to infer' };
     }
 
-    // 0. Check cache first — avoid redundant LLM calls for same schema shape
+    // 0. Check cache first — avoid redundant LLM calls for same schema shape.
+    //    On hit, re-insert to move the entry to the tail (true LRU behaviour).
     const fingerprint = computeSchemaFingerprint(records);
     const cachedMapping = mappingCache.get(fingerprint);
     if (cachedMapping) {
+        // Re-insert promotes entry to tail so it won't be the next eviction victim.
+        mappingCache.delete(fingerprint);
+        mappingCache.set(fingerprint, cachedMapping);
         const mappedRecords = applyMapping(records, cachedMapping);
         return {
             result: {
@@ -482,87 +517,108 @@ export async function inferSchemaAndMap(
         };
     }
 
-    // 1. Sample records (limit JSON size to avoid token bloat)
-    const sampleCount = Math.min(SAMPLE_SIZE, records.length);
-    let samples = records.slice(0, sampleCount);
-
-    // Truncate if samples are too large
-    let samplesJson = JSON.stringify(samples, null, 2);
-    if (samplesJson.length > MAX_SAMPLE_JSON_LENGTH) {
-        // Try fewer samples
-        samples = records.slice(0, 3);
-        samplesJson = JSON.stringify(samples, null, 2);
-        if (samplesJson.length > MAX_SAMPLE_JSON_LENGTH) {
-            // Truncate individual records
-            samples = samples.map((r) => {
-                const truncated: Record<string, unknown> = {};
-                let charCount = 0;
-                for (const [k, v] of Object.entries(r)) {
-                    const valStr = JSON.stringify(v);
-                    charCount += k.length + valStr.length;
-                    if (charCount > 1500) break; // limit per record
-                    truncated[k] = v;
-                }
-                return truncated;
-            });
+    // 1–6: Coalesce concurrent requests for the same fingerprint onto a
+    //      single LLM call. If another request is already in-flight for
+    //      this fingerprint, wait on its promise — zero extra API calls.
+    const existing = inflightCalls.get(fingerprint);
+    if (existing) {
+        // Re-apply the mapping to THIS request's records once the
+        // shared call resolves (the in-flight result carries the mapping,
+        // not the caller's specific rows).
+        const shared = await existing;
+        if (shared.result) {
+            return {
+                result: {
+                    mapping: shared.result.mapping,
+                    mappedRecords: applyMapping(records, shared.result.mapping),
+                    sampleCount: 0,
+                    llmModel: 'inflight-dedup',
+                },
+                error: null,
+            };
         }
+        return shared; // propagate the error from the original call
     }
 
-    // 2. Call LLM
-    const userPrompt = buildUserPrompt(samples);
-    let llmResponse: string;
+    const inferencePromise = (async () => {
+        // 1. Sample records (limit JSON size to avoid token bloat)
+        const sampleCount = Math.min(SAMPLE_SIZE, records.length);
+        let samples = records.slice(0, sampleCount);
 
-    try {
-        llmResponse = await llm.complete(SYSTEM_PROMPT, userPrompt);
-    } catch (err) {
-        return { result: null, error: `LLM call failed: ${(err as Error).message}` };
-    }
+        // Truncate if samples are too large
+        let samplesJson = JSON.stringify(samples, null, 2);
+        if (samplesJson.length > MAX_SAMPLE_JSON_LENGTH) {
+            samples = records.slice(0, 3);
+            samplesJson = JSON.stringify(samples, null, 2);
+            if (samplesJson.length > MAX_SAMPLE_JSON_LENGTH) {
+                samples = samples.map((r) => {
+                    const truncated: Record<string, unknown> = {};
+                    let charCount = 0;
+                    for (const [k, v] of Object.entries(r)) {
+                        const valStr = JSON.stringify(v);
+                        charCount += k.length + valStr.length;
+                        if (charCount > 1500) break;
+                        truncated[k] = v;
+                    }
+                    return truncated;
+                });
+            }
+        }
 
-    // 3. Parse LLM response
-    let parsedResponse: unknown;
-    try {
-        // Strip markdown code fences if present
-        const cleaned = llmResponse
-            .replace(/^```(?:json)?\s*/i, '')
-            .replace(/\s*```\s*$/i, '')
-            .trim();
-        parsedResponse = JSON.parse(cleaned);
-    } catch {
-        return { result: null, error: `LLM returned invalid JSON: ${llmResponse.slice(0, 200)}` };
-    }
+        // 2. Call LLM
+        const userPrompt = buildUserPrompt(samples);
+        let llmResponse: string;
+        try {
+            llmResponse = await llm.complete(SYSTEM_PROMPT, userPrompt);
+        } catch (err) {
+            return { result: null, error: `LLM call failed: ${(err as Error).message}` };
+        }
 
-    // 4. Validate mapping structure
-    const { mapping, error: validationError } = validateMapping(parsedResponse);
-    if (!mapping) {
-        return { result: null, error: `Invalid mapping: ${validationError}` };
-    }
+        // 3. Parse LLM response
+        let parsedResponse: unknown;
+        try {
+            const cleaned = llmResponse
+                .replace(/^```(?:json)?\s*/i, '')
+                .replace(/\s*```\s*$/i, '')
+                .trim();
+            parsedResponse = JSON.parse(cleaned);
+        } catch {
+            return { result: null, error: `LLM returned invalid JSON: ${llmResponse.slice(0, 200)}` };
+        }
 
-    // 5. Spot-check against real data
-    const spotCheck = spotCheckMapping(mapping, records.slice(0, sampleCount));
-    if (!spotCheck.valid) {
-        return { result: null, error: `Mapping spot-check failed: ${spotCheck.error}` };
-    }
+        // 4. Validate mapping structure
+        const { mapping, error: validationError } = validateMapping(parsedResponse);
+        if (!mapping) {
+            return { result: null, error: `Invalid mapping: ${validationError}` };
+        }
 
-    // 6. Cache the mapping for future uploads with the same schema shape
-    if (mappingCache.size >= MAX_CACHE_SIZE) {
-        // Evict oldest entry
-        const firstKey = mappingCache.keys().next().value;
-        if (firstKey) mappingCache.delete(firstKey);
-    }
-    mappingCache.set(fingerprint, mapping);
+        // 5. Spot-check against real data
+        const spotCheck = spotCheckMapping(mapping, records.slice(0, sampleCount));
+        if (!spotCheck.valid) {
+            return { result: null, error: `Mapping spot-check failed: ${spotCheck.error}` };
+        }
 
-    // 7. Apply mapping to ALL records (deterministic, no LLM)
-    const mappedRecords = applyMapping(records, mapping);
+        // 6. Populate LRU cache for future requests.
+        if (mappingCache.size >= MAX_CACHE_SIZE) {
+            const lruKey = mappingCache.keys().next().value;
+            if (lruKey) mappingCache.delete(lruKey);
+        }
+        mappingCache.set(fingerprint, mapping);
 
-    return {
-        result: {
-            mapping,
-            mappedRecords,
-            sampleCount,
-            llmModel: llm.modelId,
-        },
-        error: null,
-    };
+        // 7. Apply mapping to THIS request's records (deterministic, no LLM)
+        const mappedRecords = applyMapping(records, mapping);
+        return {
+            result: { mapping, mappedRecords, sampleCount, llmModel: llm.modelId },
+            error: null,
+        };
+    })().finally(() => {
+        // Remove from in-flight map once settled so the next cold-start
+        // goes through the LRU cache path (not another in-flight wait).
+        inflightCalls.delete(fingerprint);
+    });
+
+    inflightCalls.set(fingerprint, inferencePromise);
+    return inferencePromise;
 }
 
 // ── Quick Check: Does standard parsing already work? ──────────

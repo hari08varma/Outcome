@@ -40,7 +40,6 @@ import { sanitizeString } from '../lib/sanitize.js';
 import { isLangChainTrace, flattenLangChainTrace } from '../lib/adapters/langchain-adapter.js';
 import { isLangGraphTrace, flattenLangGraphTrace } from '../lib/adapters/langgraph-adapter.js';
 import { inferSchemaAndMap, standardFieldsPresent } from '../lib/schema-inferrer.js';
-import type { NormalizedOutcomeRow } from '../lib/ingest-core.js';
 
 export const importRouter = new Hono();
 
@@ -1255,7 +1254,7 @@ importRouter.post('/', async (c) => {
     //   3. An LLM API key is configured (SCHEMA_INFERRER_API_KEY)
     let inferredMapping: Record<string, string | null> | null = null;
 
-    if (adapterRows === null && !standardFieldsPresent(records)) {
+    if (ENABLE_IMPORT_INFERENCE && adapterRows === null && !standardFieldsPresent(records)) {
         const { result: inferResult, error: inferError } = await inferSchemaAndMap(records);
 
         if (inferResult) {
