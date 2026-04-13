@@ -137,6 +137,85 @@ MOCK_DISCREPANCY_SUMMARY_RESPONSE = {
 }
 
 
+class TestExtractContext:
+    """Tests for the _extract_context module-level helper."""
+
+    def _dummy(self, amount, card_type, customer_tier='standard'):
+        return None
+
+    def test_binning_numeric(self):
+        from layerinfinite.client import _extract_context
+
+        ctx = _extract_context(self._dummy, (750, 'visa'), {})
+        assert ctx['amount'] == '500-1k'
+        assert ctx['card_type'] == 'visa'
+
+    def test_pii_scrubbed_by_name(self):
+        from layerinfinite.client import _extract_context
+
+        def fn(email, amount):
+            return None
+
+        ctx = _extract_context(fn, ('user@x.com', 100), {})
+        assert 'email' not in ctx
+        assert ctx['amount'] == '50-200'
+
+    def test_self_excluded(self):
+        from layerinfinite.client import _extract_context
+
+        ctx = _extract_context(TestExtractContext._dummy, (self, 50, 'amex'), {})
+        assert 'self' not in ctx
+        assert ctx['amount'] == '50-200'
+
+    def test_default_applied(self):
+        from layerinfinite.client import _extract_context
+
+        ctx = _extract_context(self._dummy, (50, 'amex'), {})
+        assert ctx.get('customer_tier') == 'standard'
+
+    def test_callable_arg_skipped(self):
+        from layerinfinite.client import _extract_context
+
+        def fn(callback, amount):
+            return None
+
+        ctx = _extract_context(fn, (lambda: None, 100), {})
+        assert 'callback' not in ctx
+        assert ctx['amount'] == '50-200'
+
+    def test_empty_on_error(self):
+        from layerinfinite.client import _extract_context
+
+        def fn(x):
+            return None
+
+        ctx = _extract_context(fn, (), {})
+        assert ctx == {}
+
+    def test_string_truncated(self):
+        from layerinfinite.client import _extract_context
+
+        def fn(label):
+            return None
+
+        ctx = _extract_context(fn, ('x' * 100,), {})
+        assert len(ctx['label']) == 64
+
+    def test_token_like_string_skipped(self):
+        from layerinfinite.client import _extract_context
+
+        def fn(region, token_value):
+            return None
+
+        ctx = _extract_context(
+            fn,
+            ('us-east', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abc'),
+            {},
+        )
+        assert 'region' in ctx
+        assert 'token_value' not in ctx
+
+
 # ── Test 1: get_scores returns typed GetScoresResponse ────────
 @respx.mock
 def test_get_scores_returns_typed_response():
@@ -740,6 +819,61 @@ def test_action_wrapper_logs_response_ms_payload(monkeypatch):
     assert 'response_ms' in captured_payload
     assert isinstance(captured_payload['response_ms'], int)
     assert 'latency_ms' not in captured_payload
+
+
+def test_action_wrapper_auto_captures_raw_context(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        auto_register=False,
+        log_async=False,
+    )
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    @client.action('payment_failed')
+    def retry_payment(amount, card_type, customer_tier='standard'):
+        return {'ok': True, 'amount': amount, 'card_type': card_type, 'tier': customer_tier}
+
+    retry_payment(750, 'visa', customer_tier='premium')
+
+    assert 'raw_context' in captured_payload
+    assert captured_payload['raw_context']['amount'] == '500-1k'
+    assert captured_payload['raw_context']['card_type'] == 'visa'
+    assert captured_payload['raw_context']['customer_tier'] == 'premium'
+
+
+def test_action_wrapper_omits_empty_raw_context(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        auto_register=False,
+        log_async=False,
+    )
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    @client.action('payment_failed')
+    def run_sensitive(password, token):
+        return {'ok': True}
+
+    run_sensitive('hunter2', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abc')
+
+    assert 'raw_context' not in captured_payload
 
 
 @respx.mock

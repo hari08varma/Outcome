@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import os
+import re as _re
 import threading
 import time
 import uuid
@@ -58,6 +59,129 @@ _DEFAULT_PENDING_OUTCOMES_FILE = os.path.join(
     "pending_outcomes.jsonl",
 )
 _PENDING_REPLAY_INTERVAL_SECONDS = 5
+
+_PII_SCRUB = _re.compile(
+    r'(^|[^a-z0-9])(password|passwd|token|secret|api[_-]?key|auth|ssn|cvv|card[_-]?number'
+    r'|credit[_-]?card|email|phone|mobile|address|ip[_-]?addr|dob|birth)([^a-z0-9]|$)',
+    _re.IGNORECASE,
+)
+_TOKENISH_VALUE = _re.compile(r'^[A-Za-z0-9+/=_\-]{20,}$')
+_NUMERIC_BINS = [
+    (-float('inf'), 0, '<0'),
+    (0, 10, '0-10'),
+    (10, 50, '10-50'),
+    (50, 200, '50-200'),
+    (200, 500, '200-500'),
+    (500, 1000, '500-1k'),
+    (1000, 5000, '1k-5k'),
+    (5000, float('inf'), '5k+'),
+]
+_MAX_CONTEXT_FIELDS = 20
+_MAX_CONTEXT_DICT_KEYS = 5
+_MAX_CONTEXT_STRING_LEN = 64
+
+
+def _looks_token_like(value: str) -> bool:
+    candidate = value.strip()
+    if len(candidate) < 20 or not _TOKENISH_VALUE.match(candidate):
+        return False
+
+    has_digit = any(ch.isdigit() for ch in candidate)
+    has_symbol = any(ch in '+/=_-' for ch in candidate)
+    has_case_mix = any(ch.islower() for ch in candidate) and any(ch.isupper() for ch in candidate)
+
+    return has_digit or has_symbol or has_case_mix
+
+
+def _bin_numeric(value: float) -> str:
+    if value != value:
+        return 'nan'
+    if value == float('inf'):
+        return 'inf'
+    if value == float('-inf'):
+        return '-inf'
+
+    for low, high, label in _NUMERIC_BINS:
+        if low <= value < high:
+            return label
+
+    return 'unknown'
+
+
+def _extract_context(fn: Callable[..., Any], args: tuple, kwargs: dict) -> Dict[str, Any]:
+    """
+    Extract a sanitized context dict from a function's live call arguments.
+
+    The extractor is intentionally best-effort and never raises.
+    """
+    try:
+        sig = inspect.signature(fn)
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        raw = dict(bound.arguments)
+    except Exception:
+        return {}
+
+    result: Dict[str, Any] = {}
+
+    for key, value in raw.items():
+        if len(result) >= _MAX_CONTEXT_FIELDS:
+            break
+
+        try:
+            if not isinstance(key, str):
+                continue
+
+            normalized_key = key.strip()
+            if not normalized_key or normalized_key in ('self', 'cls'):
+                continue
+            if _PII_SCRUB.search(normalized_key):
+                continue
+            if callable(value) or hasattr(value, 'read'):
+                continue
+
+            if value is None:
+                result[normalized_key] = None
+            elif isinstance(value, bool):
+                result[normalized_key] = value
+            elif isinstance(value, (int, float)):
+                result[normalized_key] = _bin_numeric(float(value))
+            elif isinstance(value, str):
+                trimmed = value.strip()
+                if _looks_token_like(trimmed):
+                    continue
+                result[normalized_key] = trimmed[:_MAX_CONTEXT_STRING_LEN]
+            elif isinstance(value, (list, tuple, set)):
+                result[normalized_key] = f'list[{len(value)}]'
+            elif isinstance(value, dict):
+                safe_dict: Dict[str, Any] = {}
+                safe_keys = sorted((k for k in value.keys() if isinstance(k, str)))
+                for nested_key in safe_keys[:_MAX_CONTEXT_DICT_KEYS]:
+                    nested_value = value[nested_key]
+                    normalized_nested_key = nested_key.strip()
+                    if not normalized_nested_key or _PII_SCRUB.search(normalized_nested_key):
+                        continue
+                    if callable(nested_value) or hasattr(nested_value, 'read'):
+                        continue
+
+                    if nested_value is None:
+                        safe_dict[normalized_nested_key] = None
+                    elif isinstance(nested_value, bool):
+                        safe_dict[normalized_nested_key] = nested_value
+                    elif isinstance(nested_value, (int, float)):
+                        safe_dict[normalized_nested_key] = _bin_numeric(float(nested_value))
+                    elif isinstance(nested_value, str):
+                        trimmed_nested = nested_value.strip()
+                        if _looks_token_like(trimmed_nested):
+                            continue
+                        safe_dict[normalized_nested_key] = trimmed_nested[:_MAX_CONTEXT_STRING_LEN]
+
+                if safe_dict:
+                    result[normalized_key] = safe_dict
+        except Exception:
+            continue
+
+    return result
 
 
 class Layerinfinite:
@@ -402,6 +526,7 @@ class Layerinfinite:
                 error_msg: str | None = None
                 outcome_score: float | None = None
                 result: Any = None
+                raw_context: Dict[str, Any] = _extract_context(fn, args, kwargs)
 
                 try:
                     result = fn(*args, **kwargs)
@@ -451,6 +576,7 @@ class Layerinfinite:
                         decision_id=decision_id,
                         episode_id=episode_id,
                         error=error_msg,
+                        raw_context=raw_context if raw_context else None,
                     )
 
             wrapper._li_task = task
@@ -1391,6 +1517,7 @@ class Layerinfinite:
         decision_id: str | None = None,
         episode_id: str | None = None,
         error: str | None = None,
+        raw_context: Dict[str, Any] | None = None,
     ) -> None:
         """
         POST /v1/log-outcome.
@@ -1421,6 +1548,8 @@ class Layerinfinite:
             payload["episode_id"] = episode_id
         if error:
             payload["metadata"] = {"error": error}
+        if raw_context:
+            payload['raw_context'] = raw_context
 
         # Fix 1: Increment observation count immediately (before async send)
         # so exploration floor decisions see up-to-date counts.
