@@ -554,7 +554,10 @@ export default function RecommendationsPage(): React.ReactElement {
         void (async () => {
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
-                const response = await agentFetch(`${API_BASE}/v1/recommendations/agent-summary`, { signal: controller.signal });
+                const response = await agentFetch(
+                    `${API_BASE}/v1/recommendations/agent-summary?t=${Date.now()}`,
+                    { signal: controller.signal, cache: 'no-store' },
+                );
 
                 if (response.ok) {
                     const json = await response.json() as { agents: AgentListItem[] };
@@ -621,13 +624,16 @@ export default function RecommendationsPage(): React.ReactElement {
             try {
                 const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
                 const response = await agentFetch(
-                    `${API_BASE}/v1/recommendations/agent-summary?agent_id=${encodeURIComponent(selectedAgentId)}`,
-                    { signal: controller.signal },
+                    `${API_BASE}/v1/recommendations/agent-summary?agent_id=${encodeURIComponent(selectedAgentId)}&t=${Date.now()}`,
+                    { signal: controller.signal, cache: 'no-store' },
                 );
 
                 if (response.ok) {
                     const json = await response.json() as AgentSummary;
                     if (token !== latestSummaryToken.current) return;
+                    if (json.agent_id !== selectedAgentId) {
+                        throw new Error('Agent summary response mismatch; ignoring stale response.');
+                    }
                     setAgentSummary(json);
                     if (json.tasks.length > 0) {
                         setSelectedTask(json.tasks[0]?.task_name ?? null);
@@ -656,7 +662,8 @@ export default function RecommendationsPage(): React.ReactElement {
         try {
             const agentFetch = createAgentFetch(apiKey, handleAuthFailure);
             const response = await agentFetch(
-                `${API_BASE}/v1/recommendations?task=${encodeURIComponent(taskName)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=1`,
+                `${API_BASE}/v1/recommendations?task=${encodeURIComponent(taskName)}&agent_id=${encodeURIComponent(selectedAgentId)}&strict_agent_scope=1&t=${Date.now()}`,
+                { cache: 'no-store' },
             );
 
             if (!response.ok) {

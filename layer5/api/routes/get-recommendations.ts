@@ -39,16 +39,30 @@ async function fetchDataSources(
     quality_score: number | null;
 }> {
     try {
-        const { data } = await supabase
-            .from('fact_outcomes')
-            .select('ingestion_source, data_quality')
-            .eq('customer_id', customerId)
-            .eq('agent_id', agentId)
-            .eq('task_name', taskName)
-            .eq('is_synthetic', false)
-            .eq('is_deleted', false);
+        const normalizedTask = normalizeTaskSlug(taskName);
+        const candidates = normalizedTask && normalizedTask !== taskName
+            ? [taskName, normalizedTask]
+            : [taskName];
 
-        if (!data || data.length === 0) {
+        let rows: Array<{ ingestion_source: unknown; data_quality: unknown }> = [];
+
+        for (const candidate of candidates) {
+            const { data } = await supabase
+                .from('fact_outcomes')
+                .select('ingestion_source, data_quality')
+                .eq('customer_id', customerId)
+                .eq('agent_id', agentId)
+                .eq('task_name', candidate)
+                .eq('is_synthetic', false)
+                .eq('is_deleted', false);
+
+            if (data && data.length > 0) {
+                rows = data as Array<{ ingestion_source: unknown; data_quality: unknown }>;
+                break;
+            }
+        }
+
+        if (rows.length === 0) {
             return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
         }
 
@@ -57,7 +71,7 @@ async function fetchDataSources(
         let qualitySum = 0;
         let qualityCount = 0;
 
-        for (const row of data) {
+        for (const row of rows) {
             if (row.ingestion_source === 'import') uploaded++;
             else sdk++;
             if (typeof row.data_quality === 'number') {
@@ -325,87 +339,112 @@ async function fetchAgentTaskActionPerformance(params: {
     }>;
     total_outcomes: number;
 }> {
-    const aggregates = new Map<string, AgentTaskActionAggregate>();
+    const queryForTask = async (taskName: string): Promise<{
+        actions: Array<{
+            action_id: string;
+            action_name: string;
+            total_count: number;
+            effective_sample_count: number;
+            resolution_rate: number;
+            last_seen_at: string | null;
+        }>;
+        total_outcomes: number;
+    }> => {
+        const aggregates = new Map<string, AgentTaskActionAggregate>();
 
-    for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
-        const query = supabase
-            .from('fact_outcomes')
-            .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, dim_actions!inner(action_name)')
-            .eq('customer_id', params.customerId)
-            .eq('agent_id', params.agentId)
-            .eq('task_name', params.taskName)
-            .eq('is_synthetic', false)
-            .eq('is_deleted', false)
-            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+        for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+            const query = supabase
+                .from('fact_outcomes')
+                .select('action_id, outcome_score, outcome_score_raw, success, execution_status, timestamp, dim_actions!inner(action_name)')
+                .eq('customer_id', params.customerId)
+                .eq('agent_id', params.agentId)
+                .eq('task_name', taskName)
+                .eq('is_synthetic', false)
+                .eq('is_deleted', false)
+                .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
 
-        const { data, error } = await query;
-        if (error) {
-            throw new Error(`[get-recommendations] action performance query failed: ${error.message}`);
-        }
-
-        const page = (data ?? []) as AgentTaskActionRow[];
-
-        for (const row of page) {
-            const actionId = row.action_id ?? '';
-            if (!actionId) continue;
-
-            const relation = Array.isArray(row.dim_actions)
-                ? row.dim_actions[0]
-                : row.dim_actions;
-            const actionName = relation?.action_name ?? actionId;
-
-            const existing = aggregates.get(actionName) ?? {
-                action_id: actionId,
-                action_name: actionName,
-                total_count: 0,
-                score_sum: 0,
-                score_count: 0,
-                last_seen_at: null,
-            };
-
-            existing.total_count += 1;
-
-            const score = deriveResolutionScore(row);
-            if (score !== null) {
-                existing.score_sum += score;
-                existing.score_count += 1;
+            const { data, error } = await query;
+            if (error) {
+                throw new Error(`[get-recommendations] action performance query failed: ${error.message}`);
             }
 
-            existing.last_seen_at = latestTimestamp(existing.last_seen_at, row.timestamp ?? null);
+            const page = (data ?? []) as AgentTaskActionRow[];
 
-            aggregates.set(actionName, existing);
+            for (const row of page) {
+                const actionId = row.action_id ?? '';
+                if (!actionId) continue;
+
+                const relation = Array.isArray(row.dim_actions)
+                    ? row.dim_actions[0]
+                    : row.dim_actions;
+                const actionName = relation?.action_name ?? actionId;
+
+                const existing = aggregates.get(actionName) ?? {
+                    action_id: actionId,
+                    action_name: actionName,
+                    total_count: 0,
+                    score_sum: 0,
+                    score_count: 0,
+                    last_seen_at: null,
+                };
+
+                existing.total_count += 1;
+
+                const score = deriveResolutionScore(row);
+                if (score !== null) {
+                    existing.score_sum += score;
+                    existing.score_count += 1;
+                }
+
+                existing.last_seen_at = latestTimestamp(existing.last_seen_at, row.timestamp ?? null);
+
+                aggregates.set(actionName, existing);
+            }
+
+            if (page.length < SUPABASE_PAGE_SIZE) {
+                break;
+            }
         }
 
-        if (page.length < SUPABASE_PAGE_SIZE) {
-            break;
-        }
+        const actions = Array.from(aggregates.values())
+            .map((entry) => ({
+                action_id: entry.action_id,
+                action_name: entry.action_name,
+                total_count: entry.total_count,
+                effective_sample_count: entry.total_count,
+                resolution_rate: entry.score_count > 0
+                    ? Number((entry.score_sum / entry.score_count).toFixed(4))
+                    : 0,
+                last_seen_at: entry.last_seen_at,
+            }))
+            .sort((a, b) => {
+                if (b.total_count !== a.total_count) return b.total_count - a.total_count;
+                return b.resolution_rate - a.resolution_rate;
+            });
+
+        const totalOutcomes = actions.reduce((sum, action) => sum + action.total_count, 0);
+
+        return { actions, total_outcomes: totalOutcomes };
+    };
+
+    const exactResult = await queryForTask(params.taskName);
+    if (exactResult.total_outcomes > 0) {
+        return exactResult;
     }
 
-    const actions = Array.from(aggregates.values())
-        .map((entry) => ({
-            action_id: entry.action_id,
-            action_name: entry.action_name,
-            total_count: entry.total_count,
-            effective_sample_count: entry.total_count,
-            resolution_rate: entry.score_count > 0
-                ? Number((entry.score_sum / entry.score_count).toFixed(4))
-                : 0,
-            last_seen_at: entry.last_seen_at,
-        }))
-        .sort((a, b) => {
-            if (b.total_count !== a.total_count) return b.total_count - a.total_count;
-            return b.resolution_rate - a.resolution_rate;
-        });
+    const normalizedTask = normalizeTaskSlug(params.taskName);
+    if (!normalizedTask || normalizedTask === params.taskName) {
+        return exactResult;
+    }
 
-    const totalOutcomes = actions.reduce((sum, action) => sum + action.total_count, 0);
-
-    return { actions, total_outcomes: totalOutcomes };
+    return queryForTask(normalizedTask);
 }
 
 // GET /agent-summary — per-agent stats + per-task outcome counts
 // Uses fact_outcomes directly (all-time) so agent/task totals reflect everything logged.
 // Returns tasks only for the requested agent.
 getRecommendationsRouter.get('/agent-summary', async (c) => {
+    c.header('Cache-Control', 'no-store');
     const customerId = c.get('customer_id') as string | undefined;
     if (!customerId) {
         return c.json({ error: 'Unauthorized' }, 401);
@@ -481,6 +520,7 @@ getRecommendationsRouter.get('/agent-summary', async (c) => {
 // Uses mv_task_action_performance with automatic fallback to fact_outcomes.
 // Must be registered before '/' so Hono matches it first
 getRecommendationsRouter.get('/tasks', async (c) => {
+    c.header('Cache-Control', 'no-store');
     const customerId = c.get('customer_id') as string | undefined;
     if (!customerId) {
         return c.json({ error: 'Unauthorized' }, 401);
@@ -498,6 +538,7 @@ getRecommendationsRouter.get('/tasks', async (c) => {
 });
 
 getRecommendationsRouter.get('/', async (c) => {
+    c.header('Cache-Control', 'no-store');
     const customerId = c.get('customer_id') as string | undefined;
 
     if (!customerId) {
