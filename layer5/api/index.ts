@@ -106,6 +106,7 @@ app.use('*', async (c, next) => {
         {
             op: 'http.server',
             name: `${c.req.method} ${c.req.path}`,
+            forceTransaction: true,
             attributes: {
                 'http.method': c.req.method,
                 'http.route': c.req.path,
