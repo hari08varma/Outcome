@@ -182,6 +182,9 @@ function flattenCheckpoints(
                 feedback_signal: 'immediate',
                 signal_source: 'explicit',
                 retry_attempt: cp.metadata?.step ?? index,
+                raw_context: {
+                    channel_values: cp.channel_values,
+                },
             };
         });
 }
@@ -214,6 +217,7 @@ function flattenEvents(
                 environment: 'production',
                 feedback_signal: 'immediate',
                 signal_source: 'explicit',
+                raw_context: ev.data ?? ev,
             };
         });
 }

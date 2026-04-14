@@ -26,6 +26,7 @@ interface LangChainRun {
     id?: string;
     name?: string;
     run_type?: string;
+    tags?: unknown;
     parent_run_id?: string | null;
     inputs?: Record<string, unknown>;
     outputs?: Record<string, unknown> | null;
@@ -217,6 +218,12 @@ export function flattenLangChainTrace(
             environment: 'production',
             feedback_signal: 'immediate',
             signal_source: 'explicit',
+            raw_context: {
+                inputs: run.inputs,
+                outputs: run.outputs,
+                tags: run.tags,
+                extra: run.extra,
+            },
         };
     });
 }

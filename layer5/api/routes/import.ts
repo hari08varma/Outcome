@@ -36,7 +36,7 @@ import {
     type NormalizedOutcomeRow,
 } from '../lib/ingest-core.js';
 import { normalizeActionName } from '../middleware/validate-action.js';
-import { sanitizeString } from '../lib/sanitize.js';
+import { sanitizeString, sanitizeContext } from '../lib/sanitize.js';
 import { isLangChainTrace, flattenLangChainTrace } from '../lib/adapters/langchain-adapter.js';
 import { isLangGraphTrace, flattenLangGraphTrace } from '../lib/adapters/langgraph-adapter.js';
 import { inferSchemaAndMap, standardFieldsPresent } from '../lib/schema-inferrer.js';
@@ -800,6 +800,15 @@ export function dryRunParse(
             inferenceConfidence: null,
         });
 
+        // Preserve nested framework payloads for SDK/import parity while
+        // constraining depth and key count to prevent unbounded JSON growth.
+        const originalRecord = rec as Record<string, unknown> & {
+            _original?: unknown;
+            raw_context?: unknown;
+        };
+        const rawPayload = originalRecord._original ?? originalRecord.raw_context ?? rec;
+        const safeContext = sanitizeContext(rawPayload, 5, 50);
+
         totalQuality += quality;
         if (inconsistency.isInconsistent) inconsistentCount++;
         if (outcomeScore !== null) providedScoreCount++;
@@ -819,6 +828,7 @@ export function dryRunParse(
                 feedback_signal: 'immediate',
                 environment,
                 task_name: taskResult.task,
+                raw_context: safeContext,
                 task_mapping_confidence: taskResult.confidence,
                 task_mapping_tier: taskResult.tier,
                 idempotency_key: idempotencyKey,
@@ -1233,6 +1243,7 @@ importRouter.post('/', async (c) => {
             resource_cost_units: row.resource_cost_units,
             resource_cost_type: row.resource_cost_type,
             retry_attempt: row.retry_attempt,
+            raw_context: row.raw_context,
         }));
     } else {
         // Standard parse: JSON / JSONL / CSV / key=value

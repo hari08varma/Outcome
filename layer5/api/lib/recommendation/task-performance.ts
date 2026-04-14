@@ -29,8 +29,37 @@ const DEGRADED_CLASS_SIGNAL_WEIGHT = clampWeight(
     0.75,
 );
 
-function sourceSignalWeight(ingestionSource: unknown): number {
-    return ingestionSource === 'import' ? IMPORT_SIGNAL_WEIGHT : 1.0;
+function parsePositiveNumber(raw: string | undefined, fallback: number): number {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+}
+
+const IMPORT_WARM_START_FRESH_DAYS = parsePositiveNumber(
+    process.env.LI_IMPORT_WARM_START_FRESH_DAYS,
+    10,
+);
+const IMPORT_WARM_START_HISTORICAL_DAYS = Math.max(
+    IMPORT_WARM_START_FRESH_DAYS + 1,
+    parsePositiveNumber(process.env.LI_IMPORT_WARM_START_HISTORICAL_DAYS, 60),
+);
+
+function sourceSignalWeight(ingestionSource: unknown, timestamp: string | null): number {
+    if (ingestionSource !== 'import') return 1.0;
+
+    if (!timestamp) return IMPORT_SIGNAL_WEIGHT;
+
+    const ts = Date.parse(timestamp);
+    if (!Number.isFinite(ts)) return IMPORT_SIGNAL_WEIGHT;
+
+    const ageDays = Math.max(0, (Date.now() - ts) / (24 * 60 * 60 * 1000));
+    if (ageDays <= IMPORT_WARM_START_FRESH_DAYS) return 1.0;
+    if (ageDays >= IMPORT_WARM_START_HISTORICAL_DAYS) return IMPORT_SIGNAL_WEIGHT;
+
+    const ratio = (ageDays - IMPORT_WARM_START_FRESH_DAYS)
+        / (IMPORT_WARM_START_HISTORICAL_DAYS - IMPORT_WARM_START_FRESH_DAYS);
+    const blended = 1.0 - (ratio * (1.0 - IMPORT_SIGNAL_WEIGHT));
+    return Math.max(IMPORT_SIGNAL_WEIGHT, Math.min(1.0, blended));
 }
 
 function reliabilitySignalWeight(params: {
@@ -390,7 +419,7 @@ function aggregateResolutionRows(
         const recencyWeight = computeOutcomeEffectiveWeightForScore(score, timestamp);
         const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
         const qualityMultiplier = rawQuality !== null ? Math.max(0, Math.min(1, rawQuality)) : 1.0;
-        const sourceMultiplier = sourceSignalWeight(row.ingestion_source);
+        const sourceMultiplier = sourceSignalWeight(row.ingestion_source, timestamp);
         const reliabilityMultiplier = reliabilitySignalWeight({
             isInconsistent: row.is_inconsistent,
             outcomeClass: row.outcome_class,
@@ -649,7 +678,7 @@ async function queryTaskPerformanceFromFacts(
         const qualityMultiplier = rawQuality !== null
             ? Math.max(0, Math.min(1, rawQuality))
             : 1.0;
-        const sourceMultiplier = sourceSignalWeight(row.ingestion_source);
+        const sourceMultiplier = sourceSignalWeight(row.ingestion_source, ts);
         const reliabilityMultiplier = reliabilitySignalWeight({
             isInconsistent: row.is_inconsistent,
             outcomeClass: row.outcome_class,
