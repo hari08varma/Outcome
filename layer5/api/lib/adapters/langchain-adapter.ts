@@ -203,10 +203,18 @@ export function flattenLangChainTrace(
         const tokenCost = extractTokenUsage(run);
         const errorMessage = extractErrorMessage(run);
 
+        let resolvedIssue = issueType;
+        if (run.inputs && typeof run.inputs === 'object') {
+            const ri = run.inputs as Record<string, unknown>;
+            if (typeof ri.issue_type === 'string' && ri.issue_type.trim()) resolvedIssue = ri.issue_type.trim();
+            else if (typeof ri.task_name === 'string' && ri.task_name.trim()) resolvedIssue = ri.task_name.trim();
+            else if (typeof ri.task === 'string' && ri.task.trim()) resolvedIssue = ri.task.trim();
+        }
+
         return {
             agent_id: agentId,
             action_name: normalizeActionName(run.name),
-            issue_type: issueType,
+            issue_type: resolvedIssue,
             success,
             response_time_ms: responseMs,
             error_message: errorMessage,

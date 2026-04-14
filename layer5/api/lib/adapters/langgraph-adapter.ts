@@ -168,11 +168,20 @@ function flattenCheckpoints(
         .map((cp, index): NormalizedOutcomeRow => {
             const nodeName = cp.node ?? cp.metadata?.source ?? 'unknown_node';
             const errored = hasError(cp);
+            
+            // Dynamic context extraction for tasks
+            let resolvedIssue = issueType;
+            if (cp.channel_values && typeof cp.channel_values === 'object') {
+                const cv = cp.channel_values as Record<string, unknown>;
+                if (typeof cv.issue_type === 'string' && cv.issue_type.trim()) resolvedIssue = cv.issue_type.trim();
+                else if (typeof cv.task_name === 'string' && cv.task_name.trim()) resolvedIssue = cv.task_name.trim();
+                else if (typeof cv.task === 'string' && cv.task.trim()) resolvedIssue = cv.task.trim();
+            }
 
             return {
                 agent_id: agentId,
                 action_name: normalizeNodeName(nodeName),
-                issue_type: issueType,
+                issue_type: resolvedIssue,
                 success: !errored,
                 error_message: extractErrorMessage(cp),
                 error_code: errored ? 'node_error' : null,
@@ -207,10 +216,20 @@ function flattenEvents(
             const hasOutput = ev.data?.output !== null && ev.data?.output !== undefined;
             const errored = !hasOutput;
 
+            let resolvedIssue = issueType;
+            if (ev.data && typeof ev.data === 'object') {
+                const ed = ev.data as Record<string, unknown>;
+                if (typeof ed.issue_type === 'string' && ed.issue_type.trim()) resolvedIssue = ed.issue_type.trim();
+                else if (typeof ed.task_name === 'string' && ed.task_name.trim()) resolvedIssue = ed.task_name.trim();
+            } else if (ev.metadata && typeof ev.metadata === 'object') {
+                const md = ev.metadata as Record<string, unknown>;
+                if (typeof md.issue_type === 'string' && md.issue_type.trim()) resolvedIssue = md.issue_type.trim();
+            }
+
             return {
                 agent_id: agentId,
                 action_name: normalizeNodeName(ev.name),
-                issue_type: issueType,
+                issue_type: resolvedIssue,
                 success: !errored,
                 episode_id: ev.metadata?.thread_id ?? ev.run_id ?? null,
                 session_id: ev.run_id ?? null,
