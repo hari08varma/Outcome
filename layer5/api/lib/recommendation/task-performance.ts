@@ -1,4 +1,5 @@
 import { supabase } from '../supabase.js';
+import { linearRegression } from '../predictive-drift.js';
 import { computeOutcomeEffectiveWeightForScore } from './outcome-weighting.js';
 
 export const ZERO_UUID_AGENT_ID = '00000000-0000-0000-0000-000000000000';
@@ -35,6 +36,12 @@ function parsePositiveNumber(raw: string | undefined, fallback: number): number 
     return parsed;
 }
 
+function parseFiniteNumber(raw: string | undefined, fallback: number): number {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    return parsed;
+}
+
 const IMPORT_WARM_START_FRESH_DAYS = parsePositiveNumber(
     process.env.LI_IMPORT_WARM_START_FRESH_DAYS,
     10,
@@ -44,22 +51,68 @@ const IMPORT_WARM_START_HISTORICAL_DAYS = Math.max(
     parsePositiveNumber(process.env.LI_IMPORT_WARM_START_HISTORICAL_DAYS, 60),
 );
 
-function sourceSignalWeight(ingestionSource: unknown, timestamp: string | null): number {
+const IMPORT_DRIFT_PENALTY_THRESHOLD = parseFiniteNumber(
+    process.env.LI_IMPORT_DRIFT_PENALTY_THRESHOLD,
+    -0.03,
+);
+const IMPORT_DRIFT_PENALTY_STRENGTH = Math.max(
+    1,
+    parsePositiveNumber(process.env.LI_IMPORT_DRIFT_PENALTY_STRENGTH, 7),
+);
+const IMPORT_DRIFT_PENALTY_MIN_WEIGHT = clampWeight(
+    Number(process.env.LI_IMPORT_DRIFT_PENALTY_MIN_WEIGHT ?? 0.03),
+    0.03,
+);
+const IMPORT_SOURCE_MIN_WEIGHT = clampWeight(
+    Number(process.env.LI_IMPORT_SOURCE_MIN_WEIGHT ?? 0.03),
+    0.03,
+);
+const IMPORT_DRIFT_MIN_SAMPLES = Math.max(
+    3,
+    Math.floor(parsePositiveNumber(process.env.LI_IMPORT_DRIFT_MIN_SAMPLES, 3)),
+);
+const IMPORT_SAMPLE_CONFIDENCE_IDEAL_SAMPLES = Math.max(
+    1,
+    parsePositiveNumber(process.env.LI_IMPORT_SAMPLE_CONFIDENCE_IDEAL_SAMPLES, 100),
+);
+
+function sourceSignalWeight(
+    ingestionSource: unknown,
+    timestamp: string | null,
+    driftSlope = 0,
+    dynamicImportFloor = IMPORT_SIGNAL_WEIGHT,
+): number {
     if (ingestionSource !== 'import') return 1.0;
 
-    if (!timestamp) return IMPORT_SIGNAL_WEIGHT;
+    const boundedFloor = clampWeight(dynamicImportFloor, IMPORT_SIGNAL_WEIGHT);
+    let blended = boundedFloor;
 
-    const ts = Date.parse(timestamp);
-    if (!Number.isFinite(ts)) return IMPORT_SIGNAL_WEIGHT;
+    if (timestamp) {
+        const ts = Date.parse(timestamp);
+        if (Number.isFinite(ts)) {
+            const ageDays = Math.max(0, (Date.now() - ts) / (24 * 60 * 60 * 1000));
+            if (ageDays <= IMPORT_WARM_START_FRESH_DAYS) {
+                blended = 1.0;
+            } else if (ageDays >= IMPORT_WARM_START_HISTORICAL_DAYS) {
+                blended = boundedFloor;
+            } else {
+                const ratio = (ageDays - IMPORT_WARM_START_FRESH_DAYS)
+                    / (IMPORT_WARM_START_HISTORICAL_DAYS - IMPORT_WARM_START_FRESH_DAYS);
+                blended = 1.0 - (ratio * (1.0 - boundedFloor));
+            }
+        }
+    }
 
-    const ageDays = Math.max(0, (Date.now() - ts) / (24 * 60 * 60 * 1000));
-    if (ageDays <= IMPORT_WARM_START_FRESH_DAYS) return 1.0;
-    if (ageDays >= IMPORT_WARM_START_HISTORICAL_DAYS) return IMPORT_SIGNAL_WEIGHT;
+    if (Number.isFinite(driftSlope) && driftSlope < IMPORT_DRIFT_PENALTY_THRESHOLD) {
+        const slopeDelta = Math.abs(driftSlope - IMPORT_DRIFT_PENALTY_THRESHOLD);
+        const penalty = Math.max(
+            IMPORT_DRIFT_PENALTY_MIN_WEIGHT,
+            Math.min(1.0, Math.exp(-slopeDelta * IMPORT_DRIFT_PENALTY_STRENGTH)),
+        );
+        blended *= penalty;
+    }
 
-    const ratio = (ageDays - IMPORT_WARM_START_FRESH_DAYS)
-        / (IMPORT_WARM_START_HISTORICAL_DAYS - IMPORT_WARM_START_FRESH_DAYS);
-    const blended = 1.0 - (ratio * (1.0 - IMPORT_SIGNAL_WEIGHT));
-    return Math.max(IMPORT_SIGNAL_WEIGHT, Math.min(1.0, blended));
+    return Math.max(IMPORT_SOURCE_MIN_WEIGHT, Math.min(1.0, blended));
 }
 
 function reliabilitySignalWeight(params: {
@@ -109,6 +162,28 @@ interface TaskResolutionStats {
     resolutionRate: number;
     effectiveSamples: number;
     semanticClusterConvergence: number;
+}
+
+interface ResolutionSignalRow {
+    score: number;
+    timestamp: string | null;
+    ingestionSource: unknown;
+    qualityMultiplier: number;
+    reliabilityMultiplier: number;
+    sequence: number;
+}
+
+interface ResolutionAggregationBucket {
+    total: number;
+    success_count: number;
+    score_sum: number;
+    weighted_score_sum: number;
+    weight_total: number;
+    cluster_counts: Map<string, number>;
+    cluster_samples: number;
+    cluster_confidence_sum: number;
+    cluster_confidence_count: number;
+    signal_rows: ResolutionSignalRow[];
 }
 
 // Minimum number of context-specific outcomes required before we trust
@@ -213,6 +288,47 @@ function computeSemanticClusterConvergence(params: {
 
     const convergence = clamp01((dominantShare * 0.7) + (avgConfidence * 0.3));
     return Number(convergence.toFixed(4));
+}
+
+function computeDynamicImportFloor(successCount: number, totalCount: number): number {
+    if (totalCount <= 0) return IMPORT_SIGNAL_WEIGHT;
+    const successRate = clamp01(successCount / totalCount);
+    const variance = successRate * (1 - successRate);
+    const dynamicFloor = 0.5 - (variance * 1.6);
+    return Math.max(0.1, Math.min(0.5, dynamicFloor));
+}
+
+function computeSampleConfidence(totalCount: number): number {
+    if (totalCount <= 0) return 0.1;
+    const numerator = Math.log10(1 + totalCount);
+    const denominator = Math.log10(1 + IMPORT_SAMPLE_CONFIDENCE_IDEAL_SAMPLES);
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+        return 0.1;
+    }
+    const confidence = numerator / denominator;
+    return Math.max(0.1, Math.min(1, confidence));
+}
+
+function computeActionDriftSlope(signalRows: ResolutionSignalRow[]): number {
+    const chronologicalScores = signalRows
+        .filter((row) => row.ingestionSource !== 'import')
+        .map((row) => ({
+            score: row.score,
+            time: parseIso(row.timestamp),
+            sequence: row.sequence,
+        }));
+
+    if (chronologicalScores.length < IMPORT_DRIFT_MIN_SAMPLES) {
+        return 0;
+    }
+
+    chronologicalScores.sort((a, b) => {
+        if (a.time === b.time) return a.sequence - b.sequence;
+        return a.time - b.time;
+    });
+
+    const regression = linearRegression(chronologicalScores.map((point) => point.score));
+    return Number.isFinite(regression.slope) ? regression.slope : 0;
 }
 
 async function queryTaskPerformanceFromMV(
@@ -371,27 +487,10 @@ function scoreFromExecutionStatus(value: unknown): number | null {
 // Processes a flat array of fact_outcomes rows into per-action resolution stats.
 function aggregateResolutionRows(
     data: Array<Record<string, unknown>>,
-): Map<string, {
-    total: number;
-    score_sum: number;
-    weighted_score_sum: number;
-    weight_total: number;
-    cluster_counts: Map<string, number>;
-    cluster_samples: number;
-    cluster_confidence_sum: number;
-    cluster_confidence_count: number;
-}> {
-    const grouped = new Map<string, {
-        total: number;
-        score_sum: number;
-        weighted_score_sum: number;
-        weight_total: number;
-        cluster_counts: Map<string, number>;
-        cluster_samples: number;
-        cluster_confidence_sum: number;
-        cluster_confidence_count: number;
-    }>();
+): Map<string, ResolutionAggregationBucket> {
+    const grouped = new Map<string, ResolutionAggregationBucket>();
 
+    let sequence = 0;
     for (const row of data) {
         const actionId = typeof row.action_id === 'string' ? row.action_id : null;
         if (!actionId) continue;
@@ -401,9 +500,21 @@ function aggregateResolutionRows(
         const statusScore = scoreFromExecutionStatus(row.execution_status);
         const fallbackScore = statusScore ?? (row.success === true ? 1 : 0);
         const score = explicitScore ?? fallbackScore;
+        const derivedSuccess = statusScore !== null
+            ? statusScore >= 0.5
+            : (typeof row.success === 'boolean' ? row.success : score >= 0.5);
+
+        const timestamp = typeof row.timestamp === 'string' ? row.timestamp : null;
+        const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
+        const qualityMultiplier = rawQuality !== null ? Math.max(0, Math.min(1, rawQuality)) : 1.0;
+        const reliabilityMultiplier = reliabilitySignalWeight({
+            isInconsistent: row.is_inconsistent,
+            outcomeClass: row.outcome_class,
+        });
 
         const current = grouped.get(actionId) ?? {
             total: 0,
+            success_count: 0,
             score_sum: 0,
             weighted_score_sum: 0,
             weight_total: 0,
@@ -411,24 +522,22 @@ function aggregateResolutionRows(
             cluster_samples: 0,
             cluster_confidence_sum: 0,
             cluster_confidence_count: 0,
+            signal_rows: [],
         };
         current.total += 1;
+        if (derivedSuccess) {
+            current.success_count += 1;
+        }
         current.score_sum += score;
 
-        const timestamp = typeof row.timestamp === 'string' ? row.timestamp : null;
-        const recencyWeight = computeOutcomeEffectiveWeightForScore(score, timestamp);
-        const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
-        const qualityMultiplier = rawQuality !== null ? Math.max(0, Math.min(1, rawQuality)) : 1.0;
-        const sourceMultiplier = sourceSignalWeight(row.ingestion_source, timestamp);
-        const reliabilityMultiplier = reliabilitySignalWeight({
-            isInconsistent: row.is_inconsistent,
-            outcomeClass: row.outcome_class,
+        current.signal_rows.push({
+            score,
+            timestamp,
+            ingestionSource: row.ingestion_source,
+            qualityMultiplier,
+            reliabilityMultiplier,
+            sequence: sequence++,
         });
-        const effectiveWeight = recencyWeight * qualityMultiplier * sourceMultiplier * reliabilityMultiplier;
-        if (effectiveWeight > 0) {
-            current.weight_total += effectiveWeight;
-            current.weighted_score_sum += score * effectiveWeight;
-        }
 
         const clusterKey = typeof row.semantic_cluster_key === 'string' ? row.semantic_cluster_key.trim() : '';
         if (clusterKey.length > 0) {
@@ -443,20 +552,41 @@ function aggregateResolutionRows(
         grouped.set(actionId, current);
     }
 
+    for (const bucket of grouped.values()) {
+        const dynamicImportFloor = computeDynamicImportFloor(bucket.success_count, bucket.total);
+        const sampleConfidence = computeSampleConfidence(bucket.total);
+        const driftSlope = computeActionDriftSlope(bucket.signal_rows);
+        bucket.weight_total = 0;
+        bucket.weighted_score_sum = 0;
+
+        for (const signalRow of bucket.signal_rows) {
+            const recencyWeight = computeOutcomeEffectiveWeightForScore(
+                signalRow.score,
+                signalRow.timestamp,
+            );
+            const sourceMultiplier = sourceSignalWeight(
+                signalRow.ingestionSource,
+                signalRow.timestamp,
+                driftSlope,
+                dynamicImportFloor,
+            );
+            const effectiveWeight = recencyWeight
+                * signalRow.qualityMultiplier
+                * sourceMultiplier
+                * signalRow.reliabilityMultiplier
+                * sampleConfidence;
+            if (effectiveWeight > 0) {
+                bucket.weight_total += effectiveWeight;
+                bucket.weighted_score_sum += signalRow.score * effectiveWeight;
+            }
+        }
+    }
+
     return grouped;
 }
 
 function groupedToStats(
-    grouped: Map<string, {
-        total: number;
-        score_sum: number;
-        weighted_score_sum: number;
-        weight_total: number;
-        cluster_counts: Map<string, number>;
-        cluster_samples: number;
-        cluster_confidence_sum: number;
-        cluster_confidence_count: number;
-    }>,
+    grouped: Map<string, ResolutionAggregationBucket>,
 ): Map<string, TaskResolutionStats & { effectiveSampleCount: number }> {
     const out = new Map<string, TaskResolutionStats & { effectiveSampleCount: number }>();
     for (const [actionId, stats] of grouped.entries()) {
@@ -610,17 +740,12 @@ async function queryTaskPerformanceFromFacts(
         action_name: string;
         total_count: number;
         success_count: number;
-        resolution_score_total: number;
-        resolution_weighted_score_total: number;
-        resolution_weight_total: number;
-        cluster_counts: Map<string, number>;
-        cluster_samples: number;
-        cluster_confidence_sum: number;
-        cluster_confidence_count: number;
         last_seen_at: string | null;
     }>();
 
-    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    const factRows = (data ?? []) as Array<Record<string, unknown>>;
+
+    for (const row of factRows) {
         const actionId = typeof row.action_id === 'string' ? row.action_id : null;
         if (!actionId) continue;
 
@@ -645,13 +770,6 @@ async function queryTaskPerformanceFromFacts(
             action_name: actionName,
             total_count: 0,
             success_count: 0,
-            resolution_score_total: 0,
-            resolution_weighted_score_total: 0,
-            resolution_weight_total: 0,
-            cluster_counts: new Map<string, number>(),
-            cluster_samples: 0,
-            cluster_confidence_sum: 0,
-            cluster_confidence_count: 0,
             last_seen_at: null,
         };
 
@@ -660,53 +778,14 @@ async function queryTaskPerformanceFromFacts(
             existing.success_count += 1;
         }
 
-        // Prefer outcome_score_raw (exact developer signal) over the potentially
-        // inferred outcome_score. Falls back to execution_status polarity, then
-        // legacy success if status is unavailable.
-        const rawScore = parseBoundedScore(row.outcome_score_raw);
-        const explicitScore = rawScore ?? parseBoundedScore(row.outcome_score);
-        const statusScore = scoreFromExecutionStatus(row.execution_status);
-        const fallbackScore = statusScore ?? (row.success === true ? 1 : 0);
-        const score = explicitScore ?? fallbackScore;
-        existing.resolution_score_total += score;
-
         const ts = typeof row.timestamp === 'string' ? row.timestamp : null;
-        const recencyWeight = computeOutcomeEffectiveWeightForScore(score, ts);
-
-        // data_quality: NULL on pre-migration rows → default to 1.0 (no penalty).
-        const rawQuality = typeof row.data_quality === 'number' ? row.data_quality : null;
-        const qualityMultiplier = rawQuality !== null
-            ? Math.max(0, Math.min(1, rawQuality))
-            : 1.0;
-        const sourceMultiplier = sourceSignalWeight(row.ingestion_source, ts);
-        const reliabilityMultiplier = reliabilitySignalWeight({
-            isInconsistent: row.is_inconsistent,
-            outcomeClass: row.outcome_class,
-        });
-
-        const effectiveWeight = recencyWeight * qualityMultiplier * sourceMultiplier * reliabilityMultiplier;
-        if (effectiveWeight > 0) {
-            existing.resolution_weight_total += effectiveWeight;
-            existing.resolution_weighted_score_total += score * effectiveWeight;
-        }
-
-        const clusterKey = typeof row.semantic_cluster_key === 'string'
-            ? row.semantic_cluster_key.trim()
-            : '';
-        if (clusterKey.length > 0) {
-            existing.cluster_counts.set(clusterKey, (existing.cluster_counts.get(clusterKey) ?? 0) + 1);
-            existing.cluster_samples += 1;
-        }
-
-        if (typeof row.semantic_cluster_confidence === 'number') {
-            existing.cluster_confidence_sum += clamp01(row.semantic_cluster_confidence);
-            existing.cluster_confidence_count += 1;
-        }
 
         existing.last_seen_at = latestTimestamp(existing.last_seen_at, ts);
 
         grouped.set(key, existing);
     }
+
+    const resolutionStatsByAction = groupedToStats(aggregateResolutionRows(factRows));
 
     const actionIds = Array.from(
         new Set(Array.from(grouped.values()).map((row) => row.action_id)),
@@ -717,11 +796,11 @@ async function queryTaskPerformanceFromFacts(
         const successRate = row.total_count > 0
             ? Number((row.success_count / row.total_count).toFixed(4))
             : 0;
+        const resolutionStats = resolutionStatsByAction.get(row.action_id);
         const resolutionRate = row.total_count > 0
             ? Number((
-                row.resolution_weight_total > 0
-                    ? row.resolution_weighted_score_total / row.resolution_weight_total
-                    : row.resolution_score_total / row.total_count
+                resolutionStats?.resolutionRate
+                ?? successRate
             ).toFixed(4))
             : successRate;
 
@@ -730,19 +809,13 @@ async function queryTaskPerformanceFromFacts(
             action_name: row.action_name,
             total_count: row.total_count,
             effective_sample_count: Number((
-                row.resolution_weight_total > 0
-                    ? row.resolution_weight_total
-                    : row.total_count
+                resolutionStats?.effectiveSamples
+                ?? row.total_count
             ).toFixed(4)),
             success_count: row.success_count,
             success_rate: successRate,
             resolution_rate: resolutionRate,
-            semantic_cluster_convergence: computeSemanticClusterConvergence({
-                clusterCounts: row.cluster_counts,
-                clusterSamples: row.cluster_samples,
-                clusterConfidenceSum: row.cluster_confidence_sum,
-                clusterConfidenceCount: row.cluster_confidence_count,
-            }),
+            semantic_cluster_convergence: resolutionStats?.semanticClusterConvergence ?? 0.5,
             ml_score: mlScoreByAction.get(row.action_id) ?? null,
             last_seen_at: row.last_seen_at,
         };
