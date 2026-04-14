@@ -145,6 +145,7 @@ async function generateOpenAIEmbedding(text: string): Promise<number[] | null> {
             body: JSON.stringify({
                 input: text,
                 model: 'text-embedding-3-small',
+                dimensions: EXPECTED_CONTEXT_VECTOR_DIMENSION,
             }),
         });
 

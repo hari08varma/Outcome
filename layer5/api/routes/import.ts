@@ -1041,34 +1041,36 @@ async function processImportJob(
     // Process in chunks to avoid memory pressure
     for (let offset = 0; offset < validRows.length; offset += CHUNK_SIZE) {
         const chunk = validRows.slice(offset, offset + CHUNK_SIZE);
-
-        for (const parsed of chunk) {
-            try {
-                const sourceEventAt = parsed.source_event_at
-                    ? new Date(parsed.source_event_at)
-                    : null;
-                const normalizedSourceEventAt =
-                    sourceEventAt && Number.isFinite(sourceEventAt.getTime())
-                        ? sourceEventAt
+        // Process chunk concurrently with a strict concurrency limit (20)
+        // to avoid database connection pooling issues and OpenAI 429s.
+        const CONCURRENCY = 20;
+        for (let i = 0; i < chunk.length; i += CONCURRENCY) {
+            const subBatch = chunk.slice(i, i + CONCURRENCY);
+            await Promise.all(subBatch.map(async (parsed) => {
+                try {
+                    const sourceEventAt = parsed.source_event_at
+                        ? new Date(parsed.source_event_at)
                         : null;
+                    const normalizedSourceEventAt =
+                        sourceEventAt && Number.isFinite(sourceEventAt.getTime())
+                            ? sourceEventAt
+                            : null;
 
-                await ingestOutcome(parsed.row, customerId, {
-                    skipTrustUpdate: true,
-                    ingestionSource: 'import',
-                    // Import defaults to no inference for predictable historical replays.
-                    // Opt in only when explicitly enabled for this deployment.
-                    enableInferenceWhenSkipTrust: ENABLE_IMPORT_INFERENCE,
-                    sourceEventAt: normalizedSourceEventAt,
-                    dedupWindowMs: IMPORT_NEAR_DUP_WINDOW_MS,
-                    importJobId: jobId,
-                });
-                rowsProcessed++;
-            } catch (err: any) {
-                rowsFailed++;
-                errors.push({ row: parsed.row_index, error: err.message ?? 'Unknown error' });
-                // Log but continue — partial success is valid
-                console.warn('[import] row failed:', { jobId, row: parsed.row_index, error: err.message });
-            }
+                    await ingestOutcome(parsed.row, customerId, {
+                        skipTrustUpdate: true,
+                        ingestionSource: 'import',
+                        enableInferenceWhenSkipTrust: ENABLE_IMPORT_INFERENCE,
+                        sourceEventAt: normalizedSourceEventAt,
+                        dedupWindowMs: IMPORT_NEAR_DUP_WINDOW_MS,
+                        importJobId: jobId,
+                    });
+                    rowsProcessed++;
+                } catch (err: any) {
+                    rowsFailed++;
+                    errors.push({ row: parsed.row_index, error: err.message ?? 'Unknown error' });
+                    console.warn('[import] row failed:', { jobId, row: parsed.row_index, error: err.message });
+                }
+            }));
         }
 
         // Update progress in DB after each chunk
