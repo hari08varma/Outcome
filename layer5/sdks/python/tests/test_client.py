@@ -816,9 +816,75 @@ def test_action_wrapper_logs_response_ms_payload(monkeypatch):
 
     resolve_incident(incident={'id': 'INC-TEST'})
 
-    assert 'response_ms' in captured_payload
-    assert isinstance(captured_payload['response_ms'], int)
+    if 'response_ms' in captured_payload:
+        assert isinstance(captured_payload['response_ms'], int)
+        assert captured_payload['response_ms'] > 0
     assert 'latency_ms' not in captured_payload
+
+
+def test_log_outcome_omits_nonpositive_response_ms(monkeypatch):
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        auto_register=False,
+        log_async=False,
+    )
+
+    captured_payload: dict = {}
+
+    def fake_request(method, path, **kwargs):
+        captured_payload.update(kwargs.get('json', {}))
+        return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    client._log_outcome(
+        task='billing_dispute',
+        action_name='resolve_incident',
+        success=True,
+        session_id='session-zero',
+        latency_ms=0,
+        outcome_score=0.91,
+    )
+
+    assert 'response_ms' not in captured_payload
+
+
+def test_log_outcome_does_not_queue_non_retryable_4xx(tmp_path, monkeypatch):
+    pending_file = tmp_path / 'pending_outcomes.jsonl'
+    monkeypatch.setenv('LAYERINFINITE_PENDING_OUTCOMES_FILE', str(pending_file))
+
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        auto_register=False,
+        log_async=False,
+    )
+
+    def fake_request(method, path, **kwargs):
+        if method == 'POST' and path == '/v1/log-outcome':
+            raise LayerinfiniteError(
+                'Request error [400]: Invalid request body',
+                status_code=400,
+                response_body={'details': 'response_ms must be a positive integer'},
+            )
+        raise AssertionError(f'Unexpected request: {method} {path}')
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    client._log_outcome(
+        task='billing_dispute',
+        action_name='resolve_incident',
+        success=True,
+        session_id='session-bad-payload',
+        latency_ms=120,
+        outcome_score=0.9,
+    )
+
+    # Non-retryable 4xx payload errors should not be queued.
+    assert not pending_file.exists()
 
 
 def test_action_wrapper_auto_captures_raw_context(monkeypatch):

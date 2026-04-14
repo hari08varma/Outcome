@@ -303,7 +303,9 @@ const LogOutcomeBody = z.object({
     ),
     response_time_ms: z.preprocess(
         (val) => {
-            if (typeof val === 'number') return val;
+            if (typeof val === 'number') {
+                return Number.isFinite(val) && val > 0 ? Math.round(val) : undefined;
+            }
             if (typeof val === 'string') {
                 const parsed = Number(val);
                 return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined;
@@ -314,7 +316,9 @@ const LogOutcomeBody = z.object({
     ),
     response_ms: z.preprocess(
         (val) => {
-            if (typeof val === 'number') return val;
+            if (typeof val === 'number') {
+                return Number.isFinite(val) && val > 0 ? Math.round(val) : undefined;
+            }
             if (typeof val === 'string') {
                 const parsed = Number(val);
                 return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined;

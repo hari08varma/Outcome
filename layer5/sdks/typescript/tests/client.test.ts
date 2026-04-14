@@ -430,6 +430,61 @@ describe('LayerinfiniteClient', () => {
         expect(body.action_id_input).toBe('act-uuid-no-score');
     });
 
+    it('Test 4e: internal logging omits response_ms when latency is zero', async () => {
+        fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_LOG_OUTCOME_BODY));
+
+        const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL });
+        await (client as any).logOutcomeInternal({
+            task: 'billing_dispute',
+            actionName: 'escalate_to_senior',
+            success: true,
+            sessionId: 'session-zero',
+            latencyMs: 0,
+        });
+
+        const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body)) as { response_ms?: number };
+        expect(body.response_ms).toBeUndefined();
+    });
+
+    it('Test 4f: internal logging does not queue non-retryable 4xx errors', async () => {
+        const fs = await import('node:fs/promises');
+        const os = await import('node:os');
+        const path = await import('node:path');
+
+        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'li-ts-queue-'));
+        const pendingFile = path.join(tempDir, 'pending_outcomes.jsonl');
+        process.env.LAYERINFINITE_PENDING_OUTCOMES_FILE = pendingFile;
+
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        fetchSpy.mockResolvedValueOnce(
+            mockResponse({ error: 'Invalid request body', details: 'response_ms must be positive' }, 400),
+        );
+
+        try {
+            const client = new LayerinfiniteClient({ apiKey: API_KEY, agentId: 'my-agent', baseUrl: BASE_URL, maxRetries: 0 });
+            await (client as any).logOutcomeInternal({
+                task: 'billing_dispute',
+                actionName: 'escalate_to_senior',
+                success: true,
+                sessionId: 'session-bad-request',
+                latencyMs: 0,
+            });
+
+            const warnedNotQueued = warnSpy.mock.calls.some((call) =>
+                String(call[0] ?? '').includes('not queued')
+            );
+            expect(warnedNotQueued).toBe(true);
+
+            const exists = await fs.access(pendingFile).then(() => true).catch(() => false);
+            expect(exists).toBe(false);
+        } finally {
+            warnSpy.mockRestore();
+            delete process.env.LAYERINFINITE_PENDING_OUTCOMES_FILE;
+            await fs.rm(tempDir, { recursive: true, force: true });
+        }
+    });
+
     // ── Test 5 ─────────────────────────────────────────────────
     it('Test 5: health check sends no X-API-Key header', async () => {
         fetchSpy.mockResolvedValueOnce(

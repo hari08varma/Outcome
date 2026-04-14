@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import os
+import random
 import re as _re
 import threading
 import time
@@ -52,6 +53,8 @@ _BASE_URLS_ENV = "LAYERINFINITE_BASE_URLS"
 _SCORES_CACHE_TTL_SECONDS = 15 * 60
 _RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60
 _OBSERVE_CACHE_TTL_SECONDS = 10 * 60
+_MIN_REQUEST_INTERVAL_SECONDS_ENV = "LAYERINFINITE_MIN_REQUEST_INTERVAL_SECONDS"
+_RATE_LIMIT_JITTER_SECONDS_ENV = "LAYERINFINITE_RATE_LIMIT_JITTER_SECONDS"
 _PENDING_OUTCOMES_FILE_ENV = "LAYERINFINITE_PENDING_OUTCOMES_FILE"
 _DEFAULT_PENDING_OUTCOMES_FILE = os.path.join(
     os.path.expanduser("~"),
@@ -106,6 +109,17 @@ def _bin_numeric(value: float) -> str:
             return label
 
     return 'unknown'
+
+
+def _env_non_negative_float(name: str, fallback: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        parsed = float(raw)
+    except Exception:
+        return fallback
+    return parsed if parsed >= 0 else fallback
 
 
 def _extract_context(fn: Callable[..., Any], args: tuple, kwargs: dict) -> Dict[str, Any]:
@@ -291,6 +305,17 @@ class Layerinfinite:
         self._pending_outcomes_lock = threading.Lock()
         self._pending_replay_interval_seconds = _PENDING_REPLAY_INTERVAL_SECONDS
         self._last_pending_replay_attempt = 0.0
+        self._request_gate_lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._rate_limit_cooldown_until = 0.0
+        self._min_request_interval_seconds = _env_non_negative_float(
+            _MIN_REQUEST_INTERVAL_SECONDS_ENV,
+            0.05,
+        )
+        self._rate_limit_jitter_seconds = _env_non_negative_float(
+            _RATE_LIMIT_JITTER_SECONDS_ENV,
+            0.25,
+        )
 
         self._actions: Dict[str, Dict[str, ActionEntry]] = {}
         self._registry_lock = threading.Lock()
@@ -345,6 +370,35 @@ class Layerinfinite:
         with self._endpoint_lock:
             idx = self._active_endpoint_index
         return idx, self._http_clients[idx], self._base_urls[idx]
+
+    def _wait_for_request_slot(self) -> None:
+        if self._min_request_interval_seconds <= 0:
+            with self._request_gate_lock:
+                cooldown_until = self._rate_limit_cooldown_until
+            now = time.monotonic()
+            if cooldown_until > now:
+                time.sleep(cooldown_until - now)
+            return
+
+        while True:
+            with self._request_gate_lock:
+                now = time.monotonic()
+                target = max(self._next_request_at, self._rate_limit_cooldown_until)
+                if now >= target:
+                    self._next_request_at = now + self._min_request_interval_seconds
+                    return
+                wait_for = max(0.01, min(target - now, 1.0))
+            time.sleep(wait_for)
+
+    def _set_rate_limit_cooldown(self, retry_after: int) -> float:
+        retry_after_seconds = max(0, int(retry_after))
+        jitter_seconds = random.uniform(0, self._rate_limit_jitter_seconds) if self._rate_limit_jitter_seconds > 0 else 0.0
+        wait_seconds = retry_after_seconds + jitter_seconds
+        with self._request_gate_lock:
+            cooldown_until = time.monotonic() + wait_seconds
+            if cooldown_until > self._rate_limit_cooldown_until:
+                self._rate_limit_cooldown_until = cooldown_until
+        return wait_seconds
 
     def _rotate_endpoint(self, reason: str) -> None:
         if len(self._http_clients) <= 1:
@@ -457,6 +511,25 @@ class Layerinfinite:
                 try:
                     self._request("POST", "/v1/log-outcome", json=payload)
                     sent += 1
+                except LayerinfiniteError as exc:
+                    status = exc.status_code
+                    # Drop invalid queued payloads so one bad row doesn't block all replay.
+                    if status is not None and 400 <= status < 500 and status != 429:
+                        details = exc.response_body.get("details") if isinstance(exc.response_body, dict) else None
+                        logger.warning(
+                            "[layerinfinite] Dropping invalid queued outcome (status=%s): %s%s",
+                            status,
+                            exc,
+                            f" | details={details}" if details else "",
+                        )
+                        continue
+                    logger.warning(
+                        "[layerinfinite] Pending outcome replay paused (%d sent): %s",
+                        sent,
+                        exc,
+                    )
+                    remaining.extend(queued[idx:])
+                    break
                 except Exception as exc:
                     logger.warning(
                         "[layerinfinite] Pending outcome replay paused (%d sent): %s",
@@ -480,6 +553,10 @@ class Layerinfinite:
 
     def _maybe_replay_pending_outcomes(self) -> tuple[int, int]:
         now = time.monotonic()
+        with self._request_gate_lock:
+            cooldown_until = self._rate_limit_cooldown_until
+        if now < cooldown_until:
+            return (0, 0)
         if (now - self._last_pending_replay_attempt) < self._pending_replay_interval_seconds:
             return (0, 0)
 
@@ -1533,13 +1610,16 @@ class Layerinfinite:
             "issue_type": task,
             "success": success,
             "session_id": session_id,
-            "response_ms": latency_ms,  # backend alias: response_ms → response_time_ms
             "idempotency_key": str(uuid.uuid4()),
             # Auto-captured from LI_ENVIRONMENT env var (default: "production").
             # Ensures the API creates a context_id scoped to the right environment,
             # so staging outcomes don't pollute production recommendations.
             "environment": self._environment,
         }
+        # response_ms is optional but must be > 0 when present.
+        # Very fast local handlers can measure as 0ms; omit field in that case.
+        if latency_ms > 0:
+            payload["response_ms"] = latency_ms  # backend alias: response_ms → response_time_ms
         if outcome_score is not None:
             payload["outcome_score"] = outcome_score
         if decision_id:
@@ -1579,6 +1659,35 @@ class Layerinfinite:
                     action_name,
                     exc,
                 )
+            except LayerinfiniteError as exc:
+                # 4xx (except 429) are non-retryable payload/contract issues.
+                if exc.status_code is not None and 400 <= exc.status_code < 500 and exc.status_code != 429:
+                    details = exc.response_body.get("details") if isinstance(exc.response_body, dict) else None
+                    logger.warning(
+                        "[layerinfinite] Failed to log outcome for %s/%s due to non-retryable request error %s: %s%s",
+                        task,
+                        action_name,
+                        exc.status_code,
+                        exc,
+                        f" | details={details}" if details else "",
+                    )
+                    return
+                try:
+                    self._enqueue_pending_outcome(payload)
+                    logger.warning(
+                        "[layerinfinite] Failed to log outcome for %s/%s: %s. Queued for replay.",
+                        task,
+                        action_name,
+                        exc,
+                    )
+                except Exception as queue_exc:
+                    logger.warning(
+                        "[layerinfinite] Failed to log outcome for %s/%s: %s (queue write failed: %s)",
+                        task,
+                        action_name,
+                        exc,
+                        queue_exc,
+                    )
             except Exception as exc:
                 try:
                     self._enqueue_pending_outcome(payload)
@@ -1859,6 +1968,7 @@ class Layerinfinite:
         total_attempts = self._max_retries + 1
 
         for attempt in range(total_attempts):
+            self._wait_for_request_slot()
             endpoint_idx, client, endpoint_base_url = self._current_http_client()
             try:
                 logger.debug(
@@ -1871,14 +1981,19 @@ class Layerinfinite:
                 resp = client.request(method, path, **kwargs)
 
                 if resp.status_code == 429 and attempt < self._max_retries:
-                    retry_after = int(resp.headers.get("Retry-After", 60))
+                    retry_after_raw = resp.headers.get("Retry-After", "60")
+                    try:
+                        retry_after = int(float(retry_after_raw))
+                    except Exception:
+                        retry_after = 60
+                    wait_seconds = self._set_rate_limit_cooldown(retry_after)
                     logger.warning(
                         "[layerinfinite] Rate limited. Waiting %ds (attempt %d/%d).",
-                        retry_after,
+                        int(round(wait_seconds)),
                         attempt + 1,
                         total_attempts,
                     )
-                    time.sleep(retry_after)
+                    time.sleep(wait_seconds)
                     continue
 
                 if (
@@ -1961,7 +2076,11 @@ class Layerinfinite:
                 response_body=body,
             )
         if code == 429:
-            retry_after = int(resp.headers.get("Retry-After", 60))
+            retry_after_raw = resp.headers.get("Retry-After", "60")
+            try:
+                retry_after = int(float(retry_after_raw))
+            except Exception:
+                retry_after = 60
             raise LayerinfiniteRateLimitError(
                 f"Rate limit exceeded. Retry after {retry_after}s.",
                 status_code=code,

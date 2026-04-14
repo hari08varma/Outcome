@@ -240,6 +240,10 @@ export interface LayerinfiniteConfig {
     timeout?: number;
     /** Max retries on 429/5xx/timeouts/network errors. Default: 3. */
     maxRetries?: number;
+    /** Minimum spacing between outbound requests in ms (client-side burst smoothing). Default: 50. */
+    minRequestIntervalMs?: number;
+    /** Extra random delay added after Retry-After for herd-avoidance in ms. Default: 250. */
+    rateLimitJitterMs?: number;
 }
 
 // ── Action Registry ────────────────────────────────────────────────

@@ -146,6 +146,18 @@ describe('SDK Schema Coercion', () => {
         expect(body.response_time_ms).toBeNull();
     });
 
+    it('response_time_ms/response_ms: 0 → null (gracefully dropped)', async () => {
+        const c = makeContext({
+            action_name: 'retry_payment',
+            issue_type: 'billing',
+            success: true,
+            response_time_ms: 0,
+            response_ms: 0,
+        });
+        const body = await parseAndSanitizeRequest(c);
+        expect(body.response_time_ms).toBeNull();
+    });
+
     // ── success coercion ──────────────────────────────────────
 
     it('success: "true" → coerced to true', async () => {

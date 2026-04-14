@@ -46,6 +46,8 @@ const SDK_VERSION = '0.3.2';
 const VALID_MODES = ['recommend', 'assist', 'auto'] as const;
 const TRUST_STATUSES: readonly TrustStatus[] = ['trusted', 'probation', 'sandbox', 'suspended', 'new'];
 const PENDING_REPLAY_INTERVAL_MS = 5_000;
+const MIN_REQUEST_INTERVAL_MS_ENV = 'LAYERINFINITE_MIN_REQUEST_INTERVAL_MS';
+const RATE_LIMIT_JITTER_MS_ENV = 'LAYERINFINITE_RATE_LIMIT_JITTER_MS';
 
 // ── Pending outcome queue (Node.js only) ─────────────────────────────
 // Uses dynamic import so the SDK stays importable in browser/edge envs.
@@ -97,7 +99,20 @@ async function flushPendingOutcomes(
                 const payload = JSON.parse(lines[i]!) as Record<string, unknown>;
                 await poster(payload);
                 sent++;
-            } catch {
+            } catch (err) {
+                const liErr = err instanceof LayerinfiniteError ? err : null;
+                const status = liErr?.statusCode;
+                // Drop permanently invalid payloads so one bad row does not block replay.
+                if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
+                    const details = (() => {
+                        const body = liErr?.responseBody as Record<string, unknown> | undefined;
+                        return body && typeof body['details'] === 'string' ? body['details'] : undefined;
+                    })();
+                    console.warn(
+                        `[layerinfinite] Dropping invalid queued outcome (status=${status}): ${String(err)}${details ? ` | details=${details}` : ''}`
+                    );
+                    continue;
+                }
                 // Stop replaying on first failure — keep the rest
                 remaining.push(...lines.slice(i));
                 break;
@@ -130,7 +145,7 @@ interface InternalLogPayload {
     issue_type: string;
     success: boolean;
     session_id: string;
-    response_ms: number;
+    response_ms?: number;
     idempotency_key: string;
     decision_id?: string;
     episode_id?: string;
@@ -143,6 +158,25 @@ function sleep(ms: number): Promise<void> {
 
 function normalizeBaseUrl(value: string): string {
     return value.trim().replace(/\/+$/, '');
+}
+
+function normalizeNonNegativeNumber(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return fallback;
+    }
+    return parsed;
+}
+
+function readEnvNonNegativeNumber(name: string, fallback: number): number {
+    if (typeof process === 'undefined' || !process.env) {
+        return fallback;
+    }
+    const raw = process.env[name];
+    if (raw === undefined) {
+        return fallback;
+    }
+    return normalizeNonNegativeNumber(raw, fallback);
 }
 
 function readBaseUrlsFromEnv(): string[] {
@@ -169,8 +203,12 @@ export class Layerinfinite {
     private readonly baseUrls: string[];
     private readonly timeout: number;
     private readonly maxRetries: number;
+    private readonly minRequestIntervalMs: number;
+    private readonly rateLimitJitterMs: number;
     private activeEndpointIndex: number;
     private lastPendingReplayAt: number = 0;
+    private nextRequestAt: number = 0;
+    private rateLimitCooldownUntil: number = 0;
     private activeRunDecisionContext: {
         task: string;
         actionName: string;
@@ -216,6 +254,14 @@ export class Layerinfinite {
         this.baseUrls = this.resolveBaseUrls(primaryBaseUrl, config.baseUrls ?? []);
         this.timeout = config.timeout ?? DEFAULT_TIMEOUT_MS;
         this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+        this.minRequestIntervalMs = normalizeNonNegativeNumber(
+            config.minRequestIntervalMs,
+            readEnvNonNegativeNumber(MIN_REQUEST_INTERVAL_MS_ENV, 50),
+        );
+        this.rateLimitJitterMs = normalizeNonNegativeNumber(
+            config.rateLimitJitterMs,
+            readEnvNonNegativeNumber(RATE_LIMIT_JITTER_MS_ENV, 250),
+        );
         this.activeEndpointIndex = 0;
     }
 
@@ -1078,6 +1124,35 @@ export class Layerinfinite {
         return headers;
     }
 
+    private getRateLimitCooldownRemainingMs(): number {
+        return Math.max(0, this.rateLimitCooldownUntil - Date.now());
+    }
+
+    private setRateLimitCooldown(retryAfterSeconds: number): number {
+        const baseMs = Math.max(0, Math.round(retryAfterSeconds * 1000));
+        const jitterMs = this.rateLimitJitterMs > 0
+            ? Math.floor(Math.random() * (this.rateLimitJitterMs + 1))
+            : 0;
+        const waitMs = baseMs + jitterMs;
+        const until = Date.now() + waitMs;
+        if (until > this.rateLimitCooldownUntil) {
+            this.rateLimitCooldownUntil = until;
+        }
+        return waitMs;
+    }
+
+    private async waitForRequestSlot(): Promise<void> {
+        while (true) {
+            const now = Date.now();
+            const target = Math.max(this.nextRequestAt, this.rateLimitCooldownUntil);
+            if (now >= target) {
+                this.nextRequestAt = now + this.minRequestIntervalMs;
+                return;
+            }
+            await sleep(Math.min(Math.max(target - now, 10), 1000));
+        }
+    }
+
     // ── Private: internal outcome logging ────────────────────────
 
     /**
@@ -1101,9 +1176,13 @@ export class Layerinfinite {
             issue_type: params.task,
             success: params.success,
             session_id: params.sessionId,
-            response_ms: params.latencyMs,
             idempotency_key: crypto.randomUUID(),
         };
+        // response_ms is optional but must be > 0 when present.
+        // Fast in-process actions can resolve in 0ms; omit instead of sending invalid payload.
+        if (params.latencyMs > 0) {
+            payload.response_ms = params.latencyMs;
+        }
         if (params.decisionId) {
             payload.decision_id = params.decisionId;
         }
@@ -1116,7 +1195,10 @@ export class Layerinfinite {
 
         // Replay pending outcomes from previous failed calls (throttled to once per 5s)
         const now = Date.now();
-        if (now - this.lastPendingReplayAt >= PENDING_REPLAY_INTERVAL_MS) {
+        if (
+            now - this.lastPendingReplayAt >= PENDING_REPLAY_INTERVAL_MS
+            && this.getRateLimitCooldownRemainingMs() <= 0
+        ) {
             this.lastPendingReplayAt = now;
             flushPendingOutcomes(async (queued) => {
                 await this.fetchWithRetry(
@@ -1146,6 +1228,15 @@ export class Layerinfinite {
                 // Auth errors are permanent — do not queue (retrying won't help)
                 console.warn(
                     `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName} — auth error, not queued: ${err}`
+                );
+            } else if (err instanceof LayerinfiniteError && err.statusCode !== undefined && err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 429) {
+                // Payload/contract errors are non-retryable — do not poison pending queue.
+                const details = (() => {
+                    const body = err.responseBody as Record<string, unknown> | undefined;
+                    return body && typeof body['details'] === 'string' ? body['details'] : undefined;
+                })();
+                console.warn(
+                    `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName} — non-retryable request error ${err.statusCode}, not queued: ${err}${details ? ` | details=${details}` : ''}`
                 );
             } else {
                 // Network/server errors — queue for replay on next call
@@ -1332,6 +1423,7 @@ export class Layerinfinite {
         let lastErr: unknown;
 
         for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            await this.waitForRequestSlot();
             const { baseUrl } = this.currentEndpoint();
             const url = this.buildEndpointUrl(baseUrl, path);
             const controller = new AbortController();
@@ -1343,7 +1435,11 @@ export class Layerinfinite {
                 // 429 — wait Retry-After then retry
                 if (response.status === 429 && attempt < this.maxRetries) {
                     const retryAfter = parseInt(response.headers.get('Retry-After') ?? '60', 10);
-                    await sleep(retryAfter * 1000);
+                    const waitMs = this.setRateLimitCooldown(retryAfter);
+                    console.warn(
+                        `[layerinfinite] Rate limited. Waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${this.maxRetries + 1}).`
+                    );
+                    await sleep(waitMs);
                     continue;
                 }
 
