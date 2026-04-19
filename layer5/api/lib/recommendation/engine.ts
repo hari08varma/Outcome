@@ -485,7 +485,9 @@ async function fetchCounterfactualShadowSignals(
         chunks.push(decisionIds.slice(idx, idx + SHADOW_DECISION_CHUNK_SIZE));
     }
 
-    const chunkRows = await Promise.all(chunks.map(async (chunk, chunkIndex) => {
+    const chunkRows: CounterfactualSignalRow[] = [];
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        const chunk = chunks[chunkIndex];
         const { data, error } = await supabase
             .from('fact_outcome_counterfactuals')
             .select('unchosen_action_id, counterfactual_est, ips_weight, created_at')
@@ -501,14 +503,16 @@ async function fetchCounterfactualShadowSignals(
                 '| chunk:',
                 chunkIndex,
             );
-            return [] as CounterfactualSignalRow[];
+            continue;
         }
 
-        return (data ?? []) as CounterfactualSignalRow[];
-    }));
+        if (data) {
+            chunkRows.push(...(data as CounterfactualSignalRow[]));
+        }
+    }
 
     const dedupedRows = new Map<string, CounterfactualSignalRow>();
-    for (const row of chunkRows.flat()) {
+    for (const row of chunkRows) {
         if (!row.unchosen_action_id || !row.created_at) continue;
         const key = `${row.unchosen_action_id}:${row.created_at}`;
         if (!dedupedRows.has(key)) dedupedRows.set(key, row);

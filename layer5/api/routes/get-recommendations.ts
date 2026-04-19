@@ -48,47 +48,61 @@ async function fetchDataSources(
             ? [taskName, normalizedTask]
             : [taskName];
 
-        let rows: Array<{ ingestion_source: unknown; data_quality: unknown }> = [];
+        let finalCandidate = candidates[0];
+        let importedCount = 0;
+        let sdkCount = 0;
 
         for (const candidate of candidates) {
-            const { data } = await supabase
+            const baseQuery = supabase
                 .from('fact_outcomes')
-                .select('ingestion_source, data_quality')
+                .select('*', { count: 'exact', head: true })
                 .eq('customer_id', customerId)
                 .eq('agent_id', agentId)
                 .eq('task_name', candidate)
                 .eq('is_synthetic', false)
                 .eq('is_deleted', false);
 
-            if (data && data.length > 0) {
-                rows = data as Array<{ ingestion_source: unknown; data_quality: unknown }>;
+            const [importRes, sdkRes] = await Promise.all([
+                baseQuery.eq('ingestion_source', 'import'),
+                baseQuery.eq('ingestion_source', 'api')
+            ]);
+            
+            // If we found data using this slug, stick with it.
+            if ((importRes.count ?? 0) > 0 || (sdkRes.count ?? 0) > 0) {
+                importedCount = importRes.count ?? 0;
+                sdkCount = sdkRes.count ?? 0;
+                finalCandidate = candidate;
                 break;
             }
         }
 
-        if (rows.length === 0) {
+        const total = importedCount + sdkCount;
+        if (total === 0) {
             return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
         }
 
-        let uploaded = 0;
-        let sdk = 0;
-        let qualitySum = 0;
-        let qualityCount = 0;
+        // Fetch just a 1000-row sample for the average quality to prevent OOM
+        const { data: qualityRows } = await supabase
+            .from('fact_outcomes')
+            .select('data_quality')
+            .eq('customer_id', customerId)
+            .eq('agent_id', agentId)
+            .eq('task_name', finalCandidate)
+            .eq('is_synthetic', false)
+            .eq('is_deleted', false)
+            .not('data_quality', 'is', 'null')
+            .order('timestamp', { ascending: false })
+            .limit(1000);
 
-        for (const row of rows) {
-            if (row.ingestion_source === 'import') uploaded++;
-            else sdk++;
-            if (typeof row.data_quality === 'number') {
-                qualitySum += row.data_quality;
-                qualityCount++;
-            }
+        let qualityScore = null;
+        if (qualityRows && qualityRows.length > 0) {
+            const sum = qualityRows.reduce((acc, row) => acc + (Number(row.data_quality) || 0), 0);
+            qualityScore = Math.round((sum / qualityRows.length) * 10000) / 10000;
         }
 
-        const total = uploaded + sdk;
-        const uploadShare = total > 0 ? Math.round((uploaded / total) * 10000) / 10000 : 0;
-        const qualityScore = qualityCount > 0 ? Math.round((qualitySum / qualityCount) * 10000) / 10000 : null;
+        const uploadShare = Math.round((importedCount / total) * 10000) / 10000;
 
-        return { uploaded_outcomes: uploaded, sdk_outcomes: sdk, total, upload_share: uploadShare, quality_score: qualityScore };
+        return { uploaded_outcomes: importedCount, sdk_outcomes: sdkCount, total, upload_share: uploadShare, quality_score: qualityScore };
     } catch {
         return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
     }
