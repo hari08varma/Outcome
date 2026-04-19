@@ -105,6 +105,19 @@ function createFeedbackApp(customerId = 'cust-test') {
     return app;
 }
 
+function createNoopChain() {
+    const c: any = {};
+    for (const m of ['select', 'eq', 'order', 'limit', 'insert', 'update', 'upsert', 'maybeSingle', 'single']) {
+        c[m] = vi.fn().mockReturnValue(c);
+    }
+    c.maybeSingle.mockResolvedValue({ data: null, error: null });
+    c.single.mockResolvedValue({ data: null, error: null });
+    c.insert.mockResolvedValue({ data: null, error: null });
+    c.update.mockResolvedValue({ data: null, error: null });
+    c.upsert.mockResolvedValue({ data: null, error: null });
+    return c;
+}
+
 // ══════════════════════════════════════════════════════════════
 // Pure function tests — computeEffectiveScore
 // ══════════════════════════════════════════════════════════════
@@ -144,7 +157,11 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
     });
 
     it('with outcome_score=0.7 stores 0.7 in insert', async () => {
-        // Two from() calls: dim_contexts lookup, fact_outcomes insert
+        // from() calls are table-routed so idempotency lookup cannot shadow context lookup.
+        const idempotencyChain = buildChain();
+        idempotencyChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+        idempotencyChain.insert.mockResolvedValue({ data: null, error: null });
+
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -157,17 +174,21 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
             error: null,
         });
 
-        let callIdx = 0;
-        vi.mocked(supabase.from).mockImplementation(() => {
-            callIdx++;
-            return (callIdx === 1 ? ctxChain : insertChain) as any;
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
+            if (table === 'fact_outcome_idempotency') return idempotencyChain as any;
+            if (table === 'dim_contexts') return ctxChain as any;
+            if (table === 'fact_outcomes') return insertChain as any;
+            return createNoopChain() as any;
         });
 
         const app = createLogOutcomeApp();
         const res = await app.fetch(
             new Request('http://localhost/log-outcome', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-li-outcome-worker': '1',
+                },
                 body: JSON.stringify({ ...validBody, outcome_score: 0.7 }),
             })
         );
@@ -182,6 +203,10 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
     });
 
     it('without outcome_score infers 1.0 for success=true', async () => {
+        const idempotencyChain = buildChain();
+        idempotencyChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+        idempotencyChain.insert.mockResolvedValue({ data: null, error: null });
+
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -194,17 +219,21 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
             error: null,
         });
 
-        let callIdx = 0;
-        vi.mocked(supabase.from).mockImplementation(() => {
-            callIdx++;
-            return (callIdx === 1 ? ctxChain : insertChain) as any;
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
+            if (table === 'fact_outcome_idempotency') return idempotencyChain as any;
+            if (table === 'dim_contexts') return ctxChain as any;
+            if (table === 'fact_outcomes') return insertChain as any;
+            return createNoopChain() as any;
         });
 
         const app = createLogOutcomeApp();
         const res = await app.fetch(
             new Request('http://localhost/log-outcome', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-li-outcome-worker': '1',
+                },
                 body: JSON.stringify(validBody),
             })
         );
@@ -219,6 +248,10 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
     });
 
     it('without outcome_score infers 0.0 for success=false', async () => {
+        const idempotencyChain = buildChain();
+        idempotencyChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+        idempotencyChain.insert.mockResolvedValue({ data: null, error: null });
+
         const ctxChain = buildChain();
         ctxChain.maybeSingle.mockResolvedValue({
             data: { context_id: 'ctx-1' },
@@ -231,17 +264,21 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
             error: null,
         });
 
-        let callIdx = 0;
-        vi.mocked(supabase.from).mockImplementation(() => {
-            callIdx++;
-            return (callIdx === 1 ? ctxChain : insertChain) as any;
+        vi.mocked(supabase.from).mockImplementation((table: string) => {
+            if (table === 'fact_outcome_idempotency') return idempotencyChain as any;
+            if (table === 'dim_contexts') return ctxChain as any;
+            if (table === 'fact_outcomes') return insertChain as any;
+            return createNoopChain() as any;
         });
 
         const app = createLogOutcomeApp();
         const res = await app.fetch(
             new Request('http://localhost/log-outcome', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-li-outcome-worker': '1',
+                },
                 body: JSON.stringify({ ...validBody, success: false }),
             })
         );
@@ -259,7 +296,10 @@ describe('POST /v1/log-outcome — outcome scoring', () => {
         const res = await app.fetch(
             new Request('http://localhost/log-outcome', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-li-outcome-worker': '1',
+                },
                 body: JSON.stringify({ ...validBody, outcome_score: 1.5 }),
             })
         );
