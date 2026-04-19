@@ -165,13 +165,14 @@ function normalizeXAutoClaimReply(reply: unknown): OutcomeIngestClaimBatch {
 export type QueueMode = 'redis' | 'memory' | 'sync';
 
 export function getOutcomeQueueMode(): QueueMode {
-    if (process.env.LI_OUTCOME_QUEUE_MODE === 'memory') {
-        return 'memory';
+    if (process.env.LI_OUTCOME_QUEUE_MODE === 'sync') {
+        return 'sync';
     }
     if (parseBoolean(process.env[QUEUE_ENABLE_ENV]) && getRedisUrl().length > 0) {
         return 'redis';
     }
-    return 'sync';
+    // Default to lightning-fast array queue to permanently prevent connection exhaustion!
+    return 'memory';
 }
 
 export const localMemoryQueue: OutcomeIngestQueueEvent[] = [];
