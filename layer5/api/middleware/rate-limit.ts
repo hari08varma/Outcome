@@ -2,6 +2,7 @@ import { Context, Next } from 'hono';
 import crypto from 'node:crypto';
 
 import { supabase } from '../lib/supabase.js';
+import { OUTCOME_INGEST_WORKER_BYPASS_HEADER } from '../lib/outcome-ingest-queue.js';
 
 const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_MAX_REQUESTS = 300;
@@ -89,6 +90,13 @@ export function __resetRateLimitStateForTests(): void {
 }
 
 export const rateLimitMiddleware = async (c: Context, next: Next): Promise<Response | void> => {
+    // Internal Queue Loopback natively bypasses rate limiting, because the initial external request
+    // that populated the array was already organically authenticated and rate-limited.
+    if ((c.req.header(OUTCOME_INGEST_WORKER_BYPASS_HEADER) ?? '').trim() === '1') {
+        await next();
+        return;
+    }
+
     const customerId = c.get('customer_id') as string | undefined;
     const customerTier = normalizeTier(c.get('customer_tier') as string | undefined);
 
