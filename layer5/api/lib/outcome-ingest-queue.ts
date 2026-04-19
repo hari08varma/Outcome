@@ -26,6 +26,7 @@ export interface OutcomeIngestQueueEvent {
     enqueued_at: string;
     attempts: number;
     last_error?: string | null;
+    api_key?: string;
 }
 
 export interface OutcomeIngestStreamMessage {
@@ -161,12 +162,19 @@ function normalizeXAutoClaimReply(reply: unknown): OutcomeIngestClaimBatch {
     return { nextStartId, messages };
 }
 
-export function isOutcomeFastAcceptQueueEnabled(): boolean {
-    if (!parseBoolean(process.env[QUEUE_ENABLE_ENV])) {
-        return false;
+export type QueueMode = 'redis' | 'memory' | 'sync';
+
+export function getOutcomeQueueMode(): QueueMode {
+    if (process.env.LI_OUTCOME_QUEUE_MODE === 'memory') {
+        return 'memory';
     }
-    return getRedisUrl().length > 0;
+    if (parseBoolean(process.env[QUEUE_ENABLE_ENV]) && getRedisUrl().length > 0) {
+        return 'redis';
+    }
+    return 'sync';
 }
+
+export const localMemoryQueue: OutcomeIngestQueueEvent[] = [];
 
 export async function enqueueOutcomeIngestEvent(event: OutcomeIngestQueueEvent): Promise<string> {
     const redis = getRedis();
@@ -299,4 +307,31 @@ export async function closeOutcomeQueueRedis(): Promise<void> {
     const client = redisClient;
     redisClient = null;
     await client.quit();
+}
+
+export function startMemoryQueueWorker(app: any): void {
+    setInterval(async () => {
+        if (localMemoryQueue.length === 0) return;
+        const batch = localMemoryQueue.splice(0, 50);
+        
+        for (const item of batch) {
+            try {
+                // Loopback directly into Hono's API flow. Bypasses actual TCP/IP completely
+                // but perfectly retains all auth/validation middleware checks!
+                const res = await app.request('/v1/log-outcome', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        [OUTCOME_INGEST_WORKER_BYPASS_HEADER]: '1',
+                        'Authorization': item.api_key ?? '',
+                    },
+                    body: JSON.stringify(item.body)
+                });
+                
+                await res.text();
+            } catch (err: unknown) {
+                console.error('[memory-queue] Background loopback error:', err instanceof Error ? err.message : String(err));
+            }
+        }
+    }, 1500);
 }

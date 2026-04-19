@@ -9,7 +9,7 @@ import {
     closeOutcomeQueueRedis,
     enqueueOutcomeIngestEvent,
     ensureOutcomeIngestConsumerGroup,
-    isOutcomeFastAcceptQueueEnabled,
+    getOutcomeQueueMode,
     readOutcomeIngestBatch,
     writeOutcomeQuarantineRecord,
     type OutcomeIngestQueueEvent,
@@ -232,9 +232,9 @@ async function claimStaleMessages(
 }
 
 async function run(): Promise<void> {
-    if (!isOutcomeFastAcceptQueueEnabled()) {
+    if (getOutcomeQueueMode() !== 'redis') {
         console.error(
-            '[outcome-worker] Queue mode is disabled. Set LI_OUTCOME_FAST_ACCEPT_QUEUE_ENABLED=true and REDIS_URL/LI_OUTCOME_REDIS_URL.',
+            '[outcome-worker] Redis Queue mode is disabled. Use LI_OUTCOME_QUEUE_MODE=redis to run this external worker.',
         );
         process.exitCode = 1;
         return;

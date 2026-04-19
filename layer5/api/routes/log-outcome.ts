@@ -26,7 +26,8 @@ import {
 import {
     OUTCOME_INGEST_WORKER_BYPASS_HEADER,
     enqueueOutcomeIngestEvent,
-    isOutcomeFastAcceptQueueEnabled,
+    getOutcomeQueueMode,
+    localMemoryQueue,
 } from '../lib/outcome-ingest-queue.js';
 
 export const logOutcomeRouter = new Hono();
@@ -1067,17 +1068,38 @@ logOutcomeRouter.post('/', async (c) => {
         body.idempotency_key = body.idempotency_key ?? crypto.randomUUID();
 
         const queueBypass = (c.req.header(OUTCOME_INGEST_WORKER_BYPASS_HEADER) ?? '').trim() === '1';
-        const queueEnabled = isOutcomeFastAcceptQueueEnabled();
+        const queueMode = getOutcomeQueueMode();
 
-        // Fast-accept path: enqueue to Redis Stream and return immediately.
+        // Fast-accept path: enqueue to Redis Stream or In-Memory Queue and return immediately.
         // Worker consumers perform the full synchronous processing path.
-        if (queueEnabled && !queueBypass) {
+        if (queueMode !== 'sync' && !queueBypass) {
             const validatedAction = c.get('validated_action') as {
                 action_id?: string;
                 action_name?: string;
                 action_category?: string;
             } | null;
 
+            if (queueMode === 'memory') {
+                localMemoryQueue.push({
+                    agent_id: agentId,
+                    customer_id: customerId,
+                    body,
+                    validated_action: validatedAction,
+                    enqueued_at: new Date().toISOString(),
+                    attempts: 0,
+                    api_key: c.req.header('Authorization') ?? undefined
+                });
+
+                return c.json({
+                    accepted: true,
+                    queued: true,
+                    queue_backend: 'memory_array',
+                    idempotency_key: body.idempotency_key,
+                    message: 'Outcome accepted for local memory asynchronous ingestion.',
+                }, 202);
+            }
+
+            // Redis fallback
             try {
                 const queueMessageId = await enqueueOutcomeIngestEvent({
                     agent_id: agentId,

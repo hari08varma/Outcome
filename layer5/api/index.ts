@@ -20,6 +20,7 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import { prettyJSON } from 'hono/pretty-json';
 import { serve } from '@hono/node-server';
+import { getOutcomeQueueMode, startMemoryQueueWorker } from './lib/outcome-ingest-queue.js';
 
 const REQUIRED_ENV_VARS = [
     'SUPABASE_URL',
@@ -517,4 +518,9 @@ serve({
     console.log(`   Endpoints:  POST /v1/log-outcome | GET /v1/get-scores | GET /v1/get-patterns | GET /v1/audit`);
     console.log(`   Admin:      POST /v1/admin/register-action | GET /v1/admin/actions | POST /v1/admin/reinstate-agent`);
     console.log(`   Rate limit: 300/min per customer on log-outcome/get-scores\n`);
+    
+    if (getOutcomeQueueMode() === 'memory') {
+        console.log(`   [Queue]     In-Memory Async Batch Processor ENABLED`);
+        startMemoryQueueWorker(app);
+    }
 });
