@@ -221,6 +221,8 @@ export function useOverviewMetrics(): OverviewMetrics {
       return;
     }
 
+    let debounceTimer: number | null = null;
+
     const channel = supabase
       .channel(`overview-outcomes-${ctx.customerId}`)
       .on('postgres_changes', {
@@ -229,11 +231,15 @@ export function useOverviewMetrics(): OverviewMetrics {
         table: 'fact_outcomes',
         filter: `customer_id=eq.${ctx.customerId}`,
       }, () => {
-        setRefreshTick((v) => v + 1);
+        if (debounceTimer) window.clearTimeout(debounceTimer);
+        debounceTimer = window.setTimeout(() => {
+          setRefreshTick((v) => v + 1);
+        }, 2000);
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
       void channel.unsubscribe();
     };
   }, [ctx]);

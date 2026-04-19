@@ -63,65 +63,20 @@ export function useSuccessRateTrend(contextFilter?: string): UseSuccessRateTrend
         return;
       }
 
-      const startDate = subDays(new Date(), 29);
-      const endDate = new Date();
+      const { data: rows, error: rowsError } = await supabase.rpc('get_dashboard_success_trend', {
+        p_customer_id: customerId,
+        p_days_lookback: 30,
+        p_context_filter: contextFilter ?? null
+      });
 
-      let query = supabase
-        .from('fact_outcomes')
-        .select('timestamp, success, context_id')
-        .eq('customer_id', customerId)
-        .gte('timestamp', startDate.toISOString())
-        .lte('timestamp', endDate.toISOString());
-
-      if (contextFilter) {
-        const { data: contextRows, error: contextError } = await supabase
-          .from('dim_contexts')
-          .select('context_id')
-          .eq('issue_type', contextFilter);
-
-        if (contextError) {
-          throw new Error(contextError.message);
-        }
-
-        const contextIds = (contextRows ?? []).map((row) => row.context_id as string);
-        if (contextIds.length === 0) {
-          setData(eachDayOfInterval({ start: startDate, end: endDate }).map((day) => ({
-            date: format(day, 'yyyy-MM-dd'),
-            rate: null,
-          })));
-          setLoading(false);
-          return;
-        }
-
-        query = query.in('context_id', contextIds);
-      }
-
-      const { data: rows, error: rowsError } = await query;
       if (rowsError) {
         throw new Error(rowsError.message);
       }
 
-      const grouped = new Map<string, { total: number; success: number }>();
-
-      ((rows ?? []) as FactOutcomeTrendRow[]).forEach((row) => {
-        const dayKey = format(new Date(row.timestamp), 'yyyy-MM-dd');
-        const existing = grouped.get(dayKey) ?? { total: 0, success: 0 };
-        existing.total += 1;
-        if (row.success) {
-          existing.success += 1;
-        }
-        grouped.set(dayKey, existing);
-      });
-
-      const points: SuccessRatePoint[] = eachDayOfInterval({ start: startDate, end: endDate }).map((day) => {
-        const key = format(day, 'yyyy-MM-dd');
-        const bucket = grouped.get(key);
-        if (!bucket || bucket.total === 0) {
-          return { date: key, rate: null };
-        }
-        const rate = Number(((bucket.success / bucket.total) * 100).toFixed(1));
-        return { date: key, rate };
-      });
+      const points: SuccessRatePoint[] = (rows ?? []).map((row: any) => ({
+        date: format(new Date(row.trend_date), 'yyyy-MM-dd'),
+        rate: row.success_rate !== null ? Number(row.success_rate) : null
+      }));
 
       setData(points);
     } catch (err) {
