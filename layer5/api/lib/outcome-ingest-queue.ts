@@ -317,7 +317,6 @@ export function startMemoryQueueWorker(app: any): void {
         
         for (const item of batch) {
             try {
-                // Loopback directly into Hono's API flow using an absolute URL (required by modern Fetch API)
                 const res = await app.request('http://localhost/v1/log-outcome', {
                     method: 'POST',
                     headers: {
@@ -328,7 +327,10 @@ export function startMemoryQueueWorker(app: any): void {
                     body: JSON.stringify(item.body)
                 });
                 
-                await res.text();
+                if (!res.ok) {
+                    const text = await res.text();
+                    console.error('[memory-queue] Background loopback failed!', res.status, text);
+                }
             } catch (err: unknown) {
                 console.error('[memory-queue] Background loopback error:', err instanceof Error ? err.message : String(err));
             }

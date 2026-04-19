@@ -552,7 +552,7 @@ export async function parseAndSanitizeRequest(c: Context) {
     }
 
     // Normalize response_ms (SDK alias) → response_time_ms
-    (body as any).response_time_ms = body.response_time_ms ?? (body as any).response_ms ?? null;
+    (body as any).response_time_ms = body.response_time_ms ?? (body as any).response_ms ?? undefined;
 
     if (body.raw_context) body.raw_context = sanitizeContext(body.raw_context);
     if (body.error_message) body.error_message = sanitizeString(body.error_message, 1000);
