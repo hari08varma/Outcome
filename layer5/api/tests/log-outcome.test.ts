@@ -30,7 +30,17 @@ vi.mock('../lib/verifier.js', () => ({
     })),
 }));
 
+vi.mock('../lib/outcome-ingest-queue.js', () => ({
+    OUTCOME_INGEST_WORKER_BYPASS_HEADER: 'x-li-outcome-worker',
+    enqueueOutcomeIngestEvent: vi.fn().mockResolvedValue('stream-id-1'),
+    isOutcomeFastAcceptQueueEnabled: vi.fn(() => false),
+}));
+
 import { supabase } from '../lib/supabase.js';
+import {
+    enqueueOutcomeIngestEvent,
+    isOutcomeFastAcceptQueueEnabled,
+} from '../lib/outcome-ingest-queue.js';
 import { logOutcomeRouter, parseAndSanitizeRequest } from '../routes/log-outcome.js';
 
 function createLogOutcomeApp(): Hono {
@@ -152,5 +162,30 @@ describe('POST /v1/log-outcome smoke tests', () => {
 
         const json = await res.json() as any;
         expect(json.idempotency_replayed).toBe(true);
+    });
+
+    it('Fast-accept queue mode returns 202 and does not hit sync ingest path', async () => {
+        (isOutcomeFastAcceptQueueEnabled as any).mockReturnValue(true);
+        (enqueueOutcomeIngestEvent as any).mockResolvedValue('1713000000000-0');
+
+        const app = createLogOutcomeApp();
+
+        const res = await app.request('/v1/log-outcome', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                issue_type: 'test',
+                action_name: 'test',
+                success: true,
+            }),
+        });
+
+        expect(res.status).toBe(202);
+        const json = await res.json() as any;
+        expect(json.accepted).toBe(true);
+        expect(json.queued).toBe(true);
+        expect(json.queue_message_id).toBe('1713000000000-0');
+        expect(enqueueOutcomeIngestEvent).toHaveBeenCalledTimes(1);
+        expect(supabase.from).not.toHaveBeenCalled();
     });
 });

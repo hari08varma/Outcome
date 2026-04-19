@@ -505,6 +505,30 @@ def test_get_scores_fails_over_to_secondary_endpoint_on_dns_error(monkeypatch):
     assert secondary_route.called
 
 
+@respx.mock
+def test_get_scores_retries_http_408_before_success():
+    route = respx.get(f"{BASE_URL}/v1/get-scores").mock(
+        side_effect=[
+            httpx.Response(408, json={'error': 'Request Timeout'}),
+            httpx.Response(200, json=MOCK_GET_SCORES_RESPONSE),
+        ]
+    )
+
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        max_retries=1,
+    )
+
+    response = client.scores('billing_dispute')
+
+    assert isinstance(response, GetScoresResponse)
+    assert response.top_action is not None
+    assert response.top_action.action_name == 'escalate_to_senior'
+    assert route.call_count == 2
+
+
 def test_fetch_scores_uses_recent_cache_on_network_error(monkeypatch):
     client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
 
@@ -853,7 +877,9 @@ def test_log_outcome_omits_nonpositive_response_ms(monkeypatch):
 
 def test_log_outcome_does_not_queue_non_retryable_4xx(tmp_path, monkeypatch):
     pending_file = tmp_path / 'pending_outcomes.jsonl'
+    quarantine_file = tmp_path / 'quarantined_outcomes.jsonl'
     monkeypatch.setenv('LAYERINFINITE_PENDING_OUTCOMES_FILE', str(pending_file))
+    monkeypatch.setenv('LAYERINFINITE_QUARANTINED_OUTCOMES_FILE', str(quarantine_file))
 
     client = LayerinfiniteClient(
         api_key=API_KEY,
@@ -885,6 +911,16 @@ def test_log_outcome_does_not_queue_non_retryable_4xx(tmp_path, monkeypatch):
 
     # Non-retryable 4xx payload errors should not be queued.
     assert not pending_file.exists()
+    assert quarantine_file.exists()
+
+    quarantined = [
+        json.loads(line)
+        for line in quarantine_file.read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert len(quarantined) == 1
+    assert quarantined[0]['reason'] == 'non_retryable_request_error'
+    assert quarantined[0]['status_code'] == 400
 
 
 def test_action_wrapper_auto_captures_raw_context(monkeypatch):

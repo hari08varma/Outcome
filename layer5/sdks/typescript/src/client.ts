@@ -39,6 +39,7 @@ import type {
 const DEFAULT_BASE_URL = 'https://api.layerinfinite.app';
 const BASE_URLS_ENV = 'LAYERINFINITE_BASE_URLS';
 const PENDING_OUTCOMES_FILE_ENV = 'LAYERINFINITE_PENDING_OUTCOMES_FILE';
+const QUARANTINED_OUTCOMES_FILE_ENV = 'LAYERINFINITE_QUARANTINED_OUTCOMES_FILE';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
@@ -59,6 +60,41 @@ function getPendingOutcomesFile(): string {
     if (custom) return custom;
     const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/tmp';
     return `${home}/.layerinfinite/pending_outcomes.jsonl`;
+}
+
+function getQuarantinedOutcomesFile(): string {
+    if (typeof process === 'undefined' || !process.env) return '';
+    const custom = process.env[QUARANTINED_OUTCOMES_FILE_ENV];
+    if (custom) return custom;
+    const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/tmp';
+    return `${home}/.layerinfinite/quarantined_outcomes.jsonl`;
+}
+
+async function quarantineOutcome(
+    payload: Record<string, unknown>,
+    reason: string,
+    statusCode?: number,
+    details?: string,
+): Promise<void> {
+    const file = getQuarantinedOutcomesFile();
+    if (!file) return;
+
+    const record = {
+        quarantined_at: new Date().toISOString(),
+        reason,
+        status_code: statusCode,
+        details,
+        payload,
+    };
+
+    try {
+        const { appendFile, mkdir } = await import('node:fs/promises');
+        const path = await import('node:path');
+        await mkdir(path.dirname(file), { recursive: true });
+        await appendFile(file, JSON.stringify(record) + '\n', 'utf8');
+    } catch {
+        // Best-effort quarantine; do not fail caller.
+    }
 }
 
 async function enqueuePendingOutcome(payload: Record<string, unknown>): Promise<void> {
@@ -95,15 +131,16 @@ async function flushPendingOutcomes(
         let sent = 0;
         const remaining: string[] = [];
         for (let i = 0; i < lines.length; i++) {
+            let payload: Record<string, unknown> | null = null;
             try {
-                const payload = JSON.parse(lines[i]!) as Record<string, unknown>;
+                payload = JSON.parse(lines[i]!) as Record<string, unknown>;
                 await poster(payload);
                 sent++;
             } catch (err) {
                 const liErr = err instanceof LayerinfiniteError ? err : null;
                 const status = liErr?.statusCode;
                 // Drop permanently invalid payloads so one bad row does not block replay.
-                if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
+                if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429) {
                     const details = (() => {
                         const body = liErr?.responseBody as Record<string, unknown> | undefined;
                         return body && typeof body['details'] === 'string' ? body['details'] : undefined;
@@ -111,6 +148,7 @@ async function flushPendingOutcomes(
                     console.warn(
                         `[layerinfinite] Dropping invalid queued outcome (status=${status}): ${String(err)}${details ? ` | details=${details}` : ''}`
                     );
+                    await quarantineOutcome(payload ?? { raw_payload: lines[i]! }, 'invalid_queued_outcome', status, details);
                     continue;
                 }
                 // Stop replaying on first failure — keep the rest
@@ -1229,7 +1267,7 @@ export class Layerinfinite {
                 console.warn(
                     `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName} — auth error, not queued: ${err}`
                 );
-            } else if (err instanceof LayerinfiniteError && err.statusCode !== undefined && err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 429) {
+            } else if (err instanceof LayerinfiniteError && err.statusCode !== undefined && err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 408 && err.statusCode !== 429) {
                 // Payload/contract errors are non-retryable — do not poison pending queue.
                 const details = (() => {
                     const body = err.responseBody as Record<string, unknown> | undefined;
@@ -1237,6 +1275,12 @@ export class Layerinfinite {
                 })();
                 console.warn(
                     `[layerinfinite] Failed to log outcome for ${params.task}/${params.actionName} — non-retryable request error ${err.statusCode}, not queued: ${err}${details ? ` | details=${details}` : ''}`
+                );
+                await quarantineOutcome(
+                    payload as unknown as Record<string, unknown>,
+                    'non_retryable_request_error',
+                    err.statusCode,
+                    details,
                 );
             } else {
                 // Network/server errors — queue for replay on next call
@@ -1410,6 +1454,7 @@ export class Layerinfinite {
     /**
      * Native fetch with AbortController timeout + retry logic.
      *   - 429: wait Retry-After seconds, retry up to maxRetries
+        *   - 408: rotate endpoint and exponential backoff 1s→2s→4s
      *   - isRetryable(status): rotate endpoint and exponential backoff 1s→2s→4s
      *   - Timeout / network error: rotate endpoint and retry up to maxRetries
      *   - 401, 404: throw immediately (no retry)
@@ -1440,6 +1485,13 @@ export class Layerinfinite {
                         `[layerinfinite] Rate limited. Waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${this.maxRetries + 1}).`
                     );
                     await sleep(waitMs);
+                    continue;
+                }
+
+                // 408 — request timeout response from upstream
+                if (response.status === 408 && attempt < this.maxRetries) {
+                    this.rotateEndpoint('request timeout status 408');
+                    await sleep(Math.min(1000 * Math.pow(2, attempt), 8_000));
                     continue;
                 }
 

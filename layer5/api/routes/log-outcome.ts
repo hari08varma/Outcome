@@ -23,6 +23,11 @@ import {
     fetchActionBaseline,
     invalidateActionBaselineCache,
 } from '../lib/outcome-score-inference.js';
+import {
+    OUTCOME_INGEST_WORKER_BYPASS_HEADER,
+    enqueueOutcomeIngestEvent,
+    isOutcomeFastAcceptQueueEnabled,
+} from '../lib/outcome-ingest-queue.js';
 
 export const logOutcomeRouter = new Hono();
 
@@ -1057,6 +1062,46 @@ logOutcomeRouter.post('/', async (c) => {
     try {
         // 1. Parsing & Sanitization
         const body = await parseAndSanitizeRequest(c);
+
+        // Ensure all ingestion paths carry an idempotency key.
+        body.idempotency_key = body.idempotency_key ?? crypto.randomUUID();
+
+        const queueBypass = (c.req.header(OUTCOME_INGEST_WORKER_BYPASS_HEADER) ?? '').trim() === '1';
+        const queueEnabled = isOutcomeFastAcceptQueueEnabled();
+
+        // Fast-accept path: enqueue to Redis Stream and return immediately.
+        // Worker consumers perform the full synchronous processing path.
+        if (queueEnabled && !queueBypass) {
+            const validatedAction = c.get('validated_action') as {
+                action_id?: string;
+                action_name?: string;
+                action_category?: string;
+            } | null;
+
+            try {
+                const queueMessageId = await enqueueOutcomeIngestEvent({
+                    agent_id: agentId,
+                    customer_id: customerId,
+                    body,
+                    validated_action: validatedAction,
+                    enqueued_at: new Date().toISOString(),
+                    attempts: 0,
+                });
+
+                return c.json({
+                    accepted: true,
+                    queued: true,
+                    queue_backend: 'redis_stream',
+                    queue_message_id: queueMessageId,
+                    idempotency_key: body.idempotency_key,
+                    message: 'Outcome accepted for asynchronous ingestion.',
+                }, 202);
+            } catch (queueErr: any) {
+                // Safety fallback: if queue write fails, continue with sync ingestion
+                // so no outcomes are dropped.
+                console.error('[log-outcome] queue enqueue failed, falling back to sync ingest:', queueErr?.message ?? queueErr);
+            }
+        }
 
         // ── Task resolution (Decision Recommendation Engine) ──────
         // Apply BEFORE idempotency check so the task_name is part of the record.

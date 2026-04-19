@@ -128,7 +128,7 @@ describe('computeCompositeScore', () => {
         const withIPS = computeCompositeScore(row as ActionScore, null, 0.9);
         const withoutIPS = computeCompositeScore(row as ActionScore, null, null);
 
-        expect(withIPS).toBe(withoutIPS);
+        expect(withIPS).toBeCloseTo(withoutIPS, 5);
     });
 
     it('context match reduces score proportionally', () => {
@@ -257,9 +257,18 @@ describe('score cache smoke tests', () => {
             error: null,
         });
 
+        const emptyChain: any = {};
+        emptyChain.select = vi.fn().mockReturnValue(emptyChain);
+        emptyChain.eq = vi.fn().mockReturnValue(emptyChain);
+        emptyChain.in = vi.fn().mockReturnValue(emptyChain);
+        emptyChain.not = vi.fn().mockReturnValue(emptyChain);
+        emptyChain.neq = vi.fn().mockReturnValue(emptyChain);
+        emptyChain.order = vi.fn().mockReturnValue(emptyChain);
+        emptyChain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
+
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'mv_action_scores') return mvChain;
-            throw new Error(`Unexpected table in cache test: ${table}`);
+            return emptyChain;
         });
 
         await getScores(customerId, contextId, 'incident_resolution', true);

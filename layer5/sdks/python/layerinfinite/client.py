@@ -56,10 +56,19 @@ _OBSERVE_CACHE_TTL_SECONDS = 10 * 60
 _MIN_REQUEST_INTERVAL_SECONDS_ENV = "LAYERINFINITE_MIN_REQUEST_INTERVAL_SECONDS"
 _RATE_LIMIT_JITTER_SECONDS_ENV = "LAYERINFINITE_RATE_LIMIT_JITTER_SECONDS"
 _PENDING_OUTCOMES_FILE_ENV = "LAYERINFINITE_PENDING_OUTCOMES_FILE"
+_QUARANTINED_OUTCOMES_FILE_ENV = "LAYERINFINITE_QUARANTINED_OUTCOMES_FILE"
+_HTTP_MAX_CONNECTIONS_ENV = "LAYERINFINITE_HTTP_MAX_CONNECTIONS"
+_HTTP_MAX_KEEPALIVE_CONNECTIONS_ENV = "LAYERINFINITE_HTTP_MAX_KEEPALIVE_CONNECTIONS"
+_HTTP_KEEPALIVE_EXPIRY_SECONDS_ENV = "LAYERINFINITE_HTTP_KEEPALIVE_EXPIRY_SECONDS"
 _DEFAULT_PENDING_OUTCOMES_FILE = os.path.join(
     os.path.expanduser("~"),
     ".layerinfinite",
     "pending_outcomes.jsonl",
+)
+_DEFAULT_QUARANTINED_OUTCOMES_FILE = os.path.join(
+    os.path.expanduser("~"),
+    ".layerinfinite",
+    "quarantined_outcomes.jsonl",
 )
 _PENDING_REPLAY_INTERVAL_SECONDS = 5
 
@@ -120,6 +129,17 @@ def _env_non_negative_float(name: str, fallback: float) -> float:
     except Exception:
         return fallback
     return parsed if parsed >= 0 else fallback
+
+
+def _env_positive_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        parsed = int(raw)
+    except Exception:
+        return fallback
+    return parsed if parsed > 0 else fallback
 
 
 def _extract_context(fn: Callable[..., Any], args: tuple, kwargs: dict) -> Dict[str, Any]:
@@ -302,9 +322,16 @@ class Layerinfinite:
             os.getenv(_PENDING_OUTCOMES_FILE_ENV, "").strip()
             or _DEFAULT_PENDING_OUTCOMES_FILE
         )
+        self._quarantined_outcomes_file = (
+            os.getenv(_QUARANTINED_OUTCOMES_FILE_ENV, "").strip()
+            or _DEFAULT_QUARANTINED_OUTCOMES_FILE
+        )
         self._pending_outcomes_lock = threading.Lock()
         self._pending_replay_interval_seconds = _PENDING_REPLAY_INTERVAL_SECONDS
         self._last_pending_replay_attempt = 0.0
+        self._http_max_connections = _env_positive_int(_HTTP_MAX_CONNECTIONS_ENV, 100)
+        self._http_max_keepalive_connections = _env_positive_int(_HTTP_MAX_KEEPALIVE_CONNECTIONS_ENV, 20)
+        self._http_keepalive_expiry_seconds = _env_non_negative_float(_HTTP_KEEPALIVE_EXPIRY_SECONDS_ENV, 45.0)
         self._request_gate_lock = threading.Lock()
         self._next_request_at = 0.0
         self._rate_limit_cooldown_until = 0.0
@@ -341,9 +368,26 @@ class Layerinfinite:
             client.close()
 
     def _build_http_client(self, base_url: str, timeout: float, api_key: str) -> httpx.Client:
+        limits = httpx.Limits(
+            max_connections=self._http_max_connections,
+            max_keepalive_connections=self._http_max_keepalive_connections,
+            keepalive_expiry=self._http_keepalive_expiry_seconds,
+        )
+
+        # HTTP/2 is optional in httpx and requires the h2 extra.
+        # Fall back to HTTP/1.1 when h2 is unavailable so environments without
+        # extras still get pooled persistent connections.
+        http2_enabled = True
+        try:
+            import h2  # noqa: F401
+        except Exception:
+            http2_enabled = False
+
         return httpx.Client(
             base_url=base_url,
             timeout=timeout,
+            http2=http2_enabled,
+            limits=limits,
             headers={
                 "X-API-Key": api_key,
                 "User-Agent": f"layerinfinite-python-sdk/{_SDK_VERSION}",
@@ -485,6 +529,33 @@ class Layerinfinite:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, default=str) + "\n")
 
+    def _quarantine_outcome(
+        self,
+        payload: Dict[str, Any],
+        reason: str,
+        status_code: int | None = None,
+        details: str | None = None,
+    ) -> None:
+        if not payload:
+            return
+
+        record = {
+            "quarantined_at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "status_code": status_code,
+            "details": details,
+            "payload": payload,
+        }
+
+        path = self._quarantined_outcomes_file
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        with self._pending_outcomes_lock:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+
     def _flush_pending_outcomes(self) -> tuple[int, int]:
         path = self._pending_outcomes_file
         if not os.path.exists(path):
@@ -514,13 +585,19 @@ class Layerinfinite:
                 except LayerinfiniteError as exc:
                     status = exc.status_code
                     # Drop invalid queued payloads so one bad row doesn't block all replay.
-                    if status is not None and 400 <= status < 500 and status != 429:
+                    if status is not None and 400 <= status < 500 and status not in (408, 429):
                         details = exc.response_body.get("details") if isinstance(exc.response_body, dict) else None
                         logger.warning(
                             "[layerinfinite] Dropping invalid queued outcome (status=%s): %s%s",
                             status,
                             exc,
                             f" | details={details}" if details else "",
+                        )
+                        self._quarantine_outcome(
+                            payload,
+                            reason="invalid_queued_outcome",
+                            status_code=status,
+                            details=str(details) if details is not None else None,
                         )
                         continue
                     logger.warning(
@@ -1661,7 +1738,7 @@ class Layerinfinite:
                 )
             except LayerinfiniteError as exc:
                 # 4xx (except 429) are non-retryable payload/contract issues.
-                if exc.status_code is not None and 400 <= exc.status_code < 500 and exc.status_code != 429:
+                if exc.status_code is not None and 400 <= exc.status_code < 500 and exc.status_code not in (408, 429):
                     details = exc.response_body.get("details") if isinstance(exc.response_body, dict) else None
                     logger.warning(
                         "[layerinfinite] Failed to log outcome for %s/%s due to non-retryable request error %s: %s%s",
@@ -1670,6 +1747,12 @@ class Layerinfinite:
                         exc.status_code,
                         exc,
                         f" | details={details}" if details else "",
+                    )
+                    self._quarantine_outcome(
+                        payload,
+                        reason="non_retryable_request_error",
+                        status_code=exc.status_code,
+                        details=str(details) if details is not None else None,
                     )
                     return
                 try:
@@ -1958,7 +2041,8 @@ class Layerinfinite:
         """
         HTTP request with retry logic.
         - 429: wait Retry-After header seconds, retry up to max_retries
-                - 5xx: exponential backoff (1s, 2s, 4s), retry up to max_retries
+        - 408: exponential backoff (1s, 2s, 4s), retry up to max_retries
+        - 5xx: exponential backoff (1s, 2s, 4s), retry up to max_retries
                     unless retry_server_errors=False
         - Timeout: retry up to max_retries
         - Network error: retry up to max_retries
@@ -1994,6 +2078,19 @@ class Layerinfinite:
                         total_attempts,
                     )
                     time.sleep(wait_seconds)
+                    continue
+
+                if resp.status_code == 408 and attempt < self._max_retries:
+                    self._rotate_endpoint("request timeout status 408")
+                    wait = min(2**attempt, 8)
+                    logger.warning(
+                        "[layerinfinite] HTTP 408 via %s. Backing off %ds (attempt %d/%d).",
+                        endpoint_base_url,
+                        wait,
+                        attempt + 1,
+                        total_attempts,
+                    )
+                    time.sleep(wait)
                     continue
 
                 if (

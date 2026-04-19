@@ -454,7 +454,9 @@ describe('LayerinfiniteClient', () => {
 
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'li-ts-queue-'));
         const pendingFile = path.join(tempDir, 'pending_outcomes.jsonl');
+        const quarantineFile = path.join(tempDir, 'quarantined_outcomes.jsonl');
         process.env.LAYERINFINITE_PENDING_OUTCOMES_FILE = pendingFile;
+        process.env.LAYERINFINITE_QUARANTINED_OUTCOMES_FILE = quarantineFile;
 
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         fetchSpy.mockResolvedValueOnce(
@@ -478,11 +480,48 @@ describe('LayerinfiniteClient', () => {
 
             const exists = await fs.access(pendingFile).then(() => true).catch(() => false);
             expect(exists).toBe(false);
+
+            const quarantineRaw = await fs.readFile(quarantineFile, 'utf8');
+            const quarantineEntries = quarantineRaw
+                .split('\n')
+                .filter((line) => line.trim().length > 0)
+                .map((line) => JSON.parse(line) as { reason?: string; status_code?: number });
+
+            expect(quarantineEntries.length).toBe(1);
+            expect(quarantineEntries[0]?.reason).toBe('non_retryable_request_error');
+            expect(quarantineEntries[0]?.status_code).toBe(400);
         } finally {
             warnSpy.mockRestore();
             delete process.env.LAYERINFINITE_PENDING_OUTCOMES_FILE;
+            delete process.env.LAYERINFINITE_QUARANTINED_OUTCOMES_FILE;
             await fs.rm(tempDir, { recursive: true, force: true });
         }
+    });
+
+    it('Test 4g: logOutcome retries HTTP 408 before succeeding', async () => {
+        fetchSpy
+            .mockResolvedValueOnce(mockResponse({ error: 'Request Timeout' }, 408))
+            .mockResolvedValueOnce(mockResponse(MOCK_LOG_OUTCOME_BODY));
+
+        const client = new LayerinfiniteClient({
+            apiKey: API_KEY,
+            agentId: 'my-agent',
+            baseUrl: BASE_URL,
+            maxRetries: 1,
+        });
+
+        const response = await client.logOutcome({
+            agent_id: 'my-agent',
+            action_id: 'act-uuid-1',
+            context_id: 'ctx-uuid-1',
+            issue_type: 'billing_dispute',
+            success: true,
+            outcome_score: 0.9,
+            business_outcome: 'resolved',
+        });
+
+        expect(response.logged).toBe(true);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
 
     // ── Test 5 ─────────────────────────────────────────────────
