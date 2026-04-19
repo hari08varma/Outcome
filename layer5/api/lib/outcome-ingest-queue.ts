@@ -317,9 +317,8 @@ export function startMemoryQueueWorker(app: any): void {
         
         for (const item of batch) {
             try {
-                // Loopback directly into Hono's API flow. Bypasses actual TCP/IP completely
-                // but perfectly retains all auth/validation middleware checks!
-                const res = await app.request('/v1/log-outcome', {
+                // Loopback directly into Hono's API flow using an absolute URL (required by modern Fetch API)
+                const res = await app.request('http://localhost/v1/log-outcome', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
