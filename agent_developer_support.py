@@ -15,10 +15,10 @@ except ImportError:
     from layerinfinite import Layerinfinite, LogOutcomeRequest
     from layerinfinite.exceptions import LowConfidenceError
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your_openai_key")
-LI_API_KEY     = os.getenv("LI_API_KEY",     "layerinfinite_dev_agent_key")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+LI_API_KEY     = os.getenv("LI_API_KEY",     "layerinfinite_00269ae776661c4dbafeb13a36e37590")
 LI_AGENT_ID    = os.getenv("LI_AGENT_ID",    "dev_agent_2")
-LI_BASE_URL    = os.getenv("LI_BASE_URL",    "https://api.layerinfinite.app")
+LI_BASE_URL    = os.getenv("LI_BASE_URL",    "https://king-prawn-app-oiwpl.ondigitalocean.app")
 openai.api_key = OPENAI_API_KEY
 
 TICKET_TYPES = {
@@ -31,8 +31,6 @@ ALL_ACTIONS = list({a for rates in TICKET_TYPES.values() for a in rates})
 
 TEST_PLAN = [
     ("baseline", 100),
-    ("observe", 200),
-    ("recommend", 100),
     ("assist", 100),
     ("auto", 100),
 ]
@@ -51,7 +49,7 @@ def build_li(mode: str) -> Layerinfinite:
     return Layerinfinite(
         api_key=LI_API_KEY, agent_id=LI_AGENT_ID, mode=mode,
         base_url=LI_BASE_URL, timeout=10.0, max_retries=3, auto_fallback=True,
-        confidence_threshold=0.35, min_observations_per_action=20, auto_graduate=False
+        confidence_threshold=0.35
     )
 
 def register_actions(li: Layerinfinite):
@@ -135,19 +133,35 @@ def dispatch_auto(li: Layerinfinite, ticket_type: str):
     except Exception:
         return "auto_error", False, "li_error"
 
+import concurrent.futures
+
 def run_mode(mode: str, count: int) -> list:
-    print(f"\n[{mode.upper()}] Running {count} tickets...")
+    print(f"\n[{mode.upper()}] Running {count} tickets concurrently (aiming for 60 rpm)...")
     li = None if mode == "baseline" else build_li(mode)
     if li: register_actions(li)
     records = []
-    for i in range(count):
+    
+    def process_ticket(i):
         t = random.choice(list(TICKET_TYPES.keys()))
         if mode == "baseline": act, suc, src = dispatch_baseline(t)
         elif mode == "observe": act, suc, src = dispatch_observe(li, t)
         elif mode == "recommend": act, suc, src = dispatch_recommend(li, t)
         elif mode == "assist": act, suc, src = dispatch_assist(li, t)
         else: act, suc, src = dispatch_auto(li, t)
-        records.append({"ticket": t, "action": act, "success": suc, "source": src})
+        
+        # Enforce rate limits natively per thread
+        time.sleep(1.0 + random.uniform(0, 0.15))
+        return {"ticket": t, "action": act, "success": suc, "source": src}
+
+    # Use 3 concurrent workers to guarantee ~60 RPM despite OpenAI's latency
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(process_ticket, i) for i in range(count)]
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            records.append(future.result())
+            if (i + 1) % 25 == 0:
+                oks = sum(1 for r in records if r["success"])
+                print(f"    progress: {i + 1}/{count} ({(oks / (i + 1)) * 100:.1f}% win)")
+
     return records
 
 if __name__ == "__main__":

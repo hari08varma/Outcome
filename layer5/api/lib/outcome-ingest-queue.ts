@@ -324,6 +324,7 @@ export function startMemoryQueueWorker(app: any): void {
                         'Content-Type': 'application/json',
                         [OUTCOME_INGEST_WORKER_BYPASS_HEADER]: '1',
                         'Authorization': item.api_key ?? '',
+                        'X-API-Key': item.api_key ?? '',
                     },
                     body: JSON.stringify(item.body)
                 });

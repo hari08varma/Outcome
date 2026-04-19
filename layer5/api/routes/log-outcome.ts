@@ -1087,7 +1087,7 @@ logOutcomeRouter.post('/', async (c) => {
                     validated_action: validatedAction,
                     enqueued_at: new Date().toISOString(),
                     attempts: 0,
-                    api_key: c.req.header('Authorization') ?? undefined
+                    api_key: c.req.header('Authorization') ?? c.req.header('X-API-Key') ?? undefined
                 });
 
                 return c.json({
