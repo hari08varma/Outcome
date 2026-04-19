@@ -46,7 +46,7 @@ describe('log-outcome schema coercion (runtime tree)', () => {
         });
 
         const body = await parseAndSanitizeRequest(c);
-        expect(body.response_time_ms).toBeNull();
+        expect(body.response_time_ms).toBeUndefined();
     });
 
     it('preserves positive response_ms alias values', async () => {
