@@ -33,6 +33,11 @@ export interface OutcomeIngestStreamMessage {
     payload: string;
 }
 
+export interface OutcomeIngestClaimBatch {
+    nextStartId: string;
+    messages: OutcomeIngestStreamMessage[];
+}
+
 export interface OutcomeQuarantineRecord {
     reason: string;
     details?: string | null;
@@ -123,6 +128,39 @@ function normalizeXReadGroupReply(reply: unknown): OutcomeIngestStreamMessage[] 
     return messages;
 }
 
+function normalizeXAutoClaimReply(reply: unknown): OutcomeIngestClaimBatch {
+    if (!Array.isArray(reply)) {
+        return { nextStartId: '0-0', messages: [] };
+    }
+
+    const nextStartId = String(reply[0] ?? '0-0');
+    const entries = reply[1];
+
+    if (!Array.isArray(entries)) {
+        return { nextStartId, messages: [] };
+    }
+
+    const messages: OutcomeIngestStreamMessage[] = [];
+    for (const entry of entries) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+
+        const id = String(entry[0] ?? '');
+        const fields = entry[1];
+        if (!id || !Array.isArray(fields)) continue;
+
+        for (let i = 0; i < fields.length; i += 2) {
+            const key = String(fields[i] ?? '');
+            const value = String(fields[i + 1] ?? '');
+            if (key === 'payload') {
+                messages.push({ id, payload: value });
+                break;
+            }
+        }
+    }
+
+    return { nextStartId, messages };
+}
+
 export function isOutcomeFastAcceptQueueEnabled(): boolean {
     if (!parseBoolean(process.env[QUEUE_ENABLE_ENV])) {
         return false;
@@ -191,6 +229,33 @@ export async function readOutcomeIngestBatch(
     );
 
     return normalizeXReadGroupReply(reply);
+}
+
+export async function claimStaleOutcomeIngestMessages(
+    consumerName: string,
+    batchSize: number,
+    minIdleTimeMs: number,
+    startId = '0-0',
+): Promise<OutcomeIngestClaimBatch> {
+    const redis = getRedis();
+    const streamKey = getStreamKey();
+    const group = getStreamGroup();
+
+    const count = Math.max(1, Math.floor(batchSize));
+    const minIdle = Math.max(1, Math.floor(minIdleTimeMs));
+
+    const reply = await redis.call(
+        'XAUTOCLAIM',
+        streamKey,
+        group,
+        consumerName,
+        String(minIdle),
+        startId,
+        'COUNT',
+        String(count),
+    );
+
+    return normalizeXAutoClaimReply(reply);
 }
 
 export async function ackOutcomeIngestMessages(messageIds: string[]): Promise<void> {

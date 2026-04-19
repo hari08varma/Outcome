@@ -273,6 +273,7 @@ export function computeOutcomeDataQuality(params: {
     if (params.isInconsistent) score -= 0.20;
     if (params.mappingConfidence < 0.70) score -= 0.20;
     if (!params.businessOutcome) score -= 0.10;
+    
     return Number(Math.max(0.0, score).toFixed(4));
 }
 

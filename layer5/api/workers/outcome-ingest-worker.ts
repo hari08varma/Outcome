@@ -5,6 +5,7 @@ import { logOutcomeRouter } from '../routes/log-outcome.js';
 import {
     OUTCOME_INGEST_WORKER_BYPASS_HEADER,
     ackOutcomeIngestMessages,
+    claimStaleOutcomeIngestMessages,
     closeOutcomeQueueRedis,
     enqueueOutcomeIngestEvent,
     ensureOutcomeIngestConsumerGroup,
@@ -19,6 +20,8 @@ const WORKER_BLOCK_MS = Number.parseInt(process.env.LI_OUTCOME_WORKER_BLOCK_MS ?
 const WORKER_MAX_ATTEMPTS = Number.parseInt(process.env.LI_OUTCOME_WORKER_MAX_ATTEMPTS ?? '6', 10);
 const WORKER_BACKOFF_MAX_MS = Number.parseInt(process.env.LI_OUTCOME_WORKER_BACKOFF_MAX_MS ?? '30000', 10);
 const WORKER_BACKOFF_JITTER_MS = Number.parseInt(process.env.LI_OUTCOME_WORKER_BACKOFF_JITTER_MS ?? '500', 10);
+const WORKER_RECLAIM_MIN_IDLE_MS = Number.parseInt(process.env.LI_OUTCOME_WORKER_RECLAIM_MIN_IDLE_MS ?? '60000', 10);
+const WORKER_RECLAIM_SWEEP_LIMIT = Number.parseInt(process.env.LI_OUTCOME_WORKER_RECLAIM_SWEEP_LIMIT ?? '5', 10);
 const WORKER_CONSUMER_NAME = process.env.LI_OUTCOME_WORKER_CONSUMER_NAME
     ?? `${os.hostname()}-${process.pid}`;
 
@@ -157,9 +160,9 @@ async function processStreamMessage(messageId: string, payload: string): Promise
             return true;
         }
 
-        const delayMs = computeBackoffMs(attempts);
-        await sleep(delayMs);
-
+        // Fast re-queue: no sleep. Appending to the back of the Redis Stream
+        // acts as a natural delay under load. Under low load, max-attempts (6)
+        // prevents infinite spins.
         await enqueueOutcomeIngestEvent({
             ...event,
             attempts: attempts + 1,
@@ -175,9 +178,7 @@ async function processStreamMessage(messageId: string, payload: string): Promise
             return true;
         }
 
-        const delayMs = computeBackoffMs(attempts);
-        await sleep(delayMs);
-
+        // Fast re-queue
         try {
             await enqueueOutcomeIngestEvent({
                 ...event,
@@ -191,6 +192,43 @@ async function processStreamMessage(messageId: string, payload: string): Promise
             return true;
         }
     }
+}
+
+async function claimStaleMessages(
+    consumerName: string,
+    batchSize: number,
+): Promise<Array<{ id: string; payload: string }>> {
+    const reclaimLimit = Math.max(1, clampPositiveInt(WORKER_RECLAIM_SWEEP_LIMIT, 5));
+    const minIdleMs = Math.max(1, Number.isFinite(WORKER_RECLAIM_MIN_IDLE_MS) ? WORKER_RECLAIM_MIN_IDLE_MS : 60_000);
+
+    let cursor = '0-0';
+    const reclaimed: Array<{ id: string; payload: string }> = [];
+
+    for (let sweep = 0; sweep < reclaimLimit; sweep++) {
+        const claim = await claimStaleOutcomeIngestMessages(
+            consumerName,
+            batchSize,
+            minIdleMs,
+            cursor,
+        );
+
+        if (claim.messages.length === 0) {
+            break;
+        }
+
+        reclaimed.push(...claim.messages);
+        if (reclaimed.length >= batchSize) {
+            break;
+        }
+
+        if (!claim.nextStartId || claim.nextStartId === cursor) {
+            break;
+        }
+
+        cursor = claim.nextStartId;
+    }
+
+    return reclaimed.slice(0, batchSize);
 }
 
 async function run(): Promise<void> {
@@ -211,16 +249,28 @@ async function run(): Promise<void> {
     );
 
     while (!shuttingDown) {
-        const batch = await readOutcomeIngestBatch(WORKER_CONSUMER_NAME, batchSize, blockMs);
+        const staleBatch = await claimStaleMessages(WORKER_CONSUMER_NAME, batchSize);
+        const batch = staleBatch.length > 0
+            ? staleBatch
+            : await readOutcomeIngestBatch(WORKER_CONSUMER_NAME, batchSize, blockMs);
+
         if (batch.length === 0) {
             continue;
         }
 
+        const settled = await Promise.allSettled(
+            batch.map(async (message) => {
+                const shouldAck = await processStreamMessage(message.id, message.payload);
+                return shouldAck ? message.id : null;
+            }),
+        );
+
         const ackIds: string[] = [];
-        for (const message of batch) {
-            const shouldAck = await processStreamMessage(message.id, message.payload);
-            if (shouldAck) {
-                ackIds.push(message.id);
+        for (const result of settled) {
+            if (result.status === 'fulfilled' && result.value) {
+                ackIds.push(result.value);
+            } else if (result.status === 'rejected') {
+                console.error('[outcome-worker] Message processing promise rejected:', asErrorMessage(result.reason));
             }
         }
 

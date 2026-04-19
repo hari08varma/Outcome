@@ -39,12 +39,13 @@ const IGNORE_LINE_HINTS = [
     '***',
 ];
 
-function listTrackedFiles() {
-    const out = cp.execSync('git ls-files', { encoding: 'utf8' });
+function listCandidateFiles() {
+    const out = cp.execSync('git ls-files --cached --others --exclude-standard', { encoding: 'utf8' });
     return out
         .split(/\r?\n/)
         .map((s) => s.trim())
         .filter(Boolean)
+        .filter((file, index, arr) => arr.indexOf(file) === index)
         .filter((file) => !IGNORE_FILE_PARTS.some((part) => file.includes(part)));
 }
 
@@ -86,7 +87,7 @@ function scanFile(filePath) {
 }
 
 function main() {
-    const files = listTrackedFiles();
+    const files = listCandidateFiles();
     const findings = [];
 
     for (const file of files) {
