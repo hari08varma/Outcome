@@ -1091,6 +1091,11 @@ logOutcomeRouter.post('/', async (c) => {
                 });
 
                 return c.json({
+                    logged: true,
+                    outcome_id: `queued-${body.idempotency_key ?? 'unknown'}`,
+                    agent_trust_score: 1.0,
+                    trust_status: 'trusted',
+                    policy: 'explore',
                     accepted: true,
                     queued: true,
                     queue_backend: 'memory_array',

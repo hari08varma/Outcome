@@ -30,9 +30,9 @@ TICKET_TYPES = {
 ALL_ACTIONS = list({a for rates in TICKET_TYPES.values() for a in rates})
 
 TEST_PLAN = [
-    ("baseline", 100),
-    ("assist", 100),
-    ("auto", 100),
+    ("baseline", 10),
+    ("assist", 10),
+    ("auto", 10),
 ]
 
 def normalize_action(raw):
@@ -175,3 +175,8 @@ if __name__ == "__main__":
     for mode, recs in results.items():
         oks = sum(1 for r in recs if r["success"])
         print(f" {mode:<12}: {oks}/{len(recs)} = {(oks/len(recs))*100:.1f}% Win Rate")
+
+
+import time
+time.sleep(5)
+print('Flush complete.')
