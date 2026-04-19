@@ -480,36 +480,19 @@ async function fetchCounterfactualShadowSignals(
         return new Map<string, number>();
     }
 
-    const chunks: string[][] = [];
-    for (let idx = 0; idx < decisionIds.length; idx += SHADOW_DECISION_CHUNK_SIZE) {
-        chunks.push(decisionIds.slice(idx, idx + SHADOW_DECISION_CHUNK_SIZE));
+    const { data, error } = await supabase
+        .from('fact_outcome_counterfactuals')
+        .select('unchosen_action_id, counterfactual_est, ips_weight, created_at')
+        .in('decision_id', decisionIds)
+        .in('unchosen_action_id', uniqueActionIds)
+        .order('created_at', { ascending: false })
+        .limit(rolloutConfig.simulationShadowRecentPerAction * uniqueActionIds.length);
+
+    if (error) {
+        console.warn('[recommendation-engine] shadow counterfactual lookup failed:', error.message);
+        return new Map<string, number>();
     }
-
-    const chunkRows: CounterfactualSignalRow[] = [];
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-        const chunk = chunks[chunkIndex];
-        const { data, error } = await supabase
-            .from('fact_outcome_counterfactuals')
-            .select('unchosen_action_id, counterfactual_est, ips_weight, created_at')
-            .in('decision_id', chunk)
-            .in('unchosen_action_id', uniqueActionIds)
-            .order('created_at', { ascending: false })
-            .limit(rolloutConfig.simulationShadowRecentPerAction * uniqueActionIds.length);
-
-        if (error) {
-            console.warn(
-                '[recommendation-engine] shadow counterfactual lookup failed:',
-                error.message,
-                '| chunk:',
-                chunkIndex,
-            );
-            continue;
-        }
-
-        if (data) {
-            chunkRows.push(...(data as CounterfactualSignalRow[]));
-        }
-    }
+    const chunkRows = (data ?? []) as CounterfactualSignalRow[];
 
     const dedupedRows = new Map<string, CounterfactualSignalRow>();
     for (const row of chunkRows) {
