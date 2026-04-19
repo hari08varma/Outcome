@@ -17,7 +17,7 @@ except ImportError:
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-LI_API_KEY     = os.getenv("LI_API_KEY",     "layerinfinite_2c9d7ed5bc4ad49647cfbd4791479d75")
+LI_API_KEY     = os.getenv("LI_API_KEY",     "")
 LI_AGENT_ID    = os.getenv("LI_AGENT_ID",    "sagent")
 LI_BASE_URL    = os.getenv("LI_BASE_URL",    "https://king-prawn-app-oiwpl.ondigitalocean.app")
 

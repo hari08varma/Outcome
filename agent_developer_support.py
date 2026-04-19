@@ -16,7 +16,7 @@ except ImportError:
     from layerinfinite.exceptions import LowConfidenceError
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-LI_API_KEY     = os.getenv("LI_API_KEY",     "layerinfinite_00269ae776661c4dbafeb13a36e37590")
+LI_API_KEY     = os.getenv("LI_API_KEY",     "")
 LI_AGENT_ID    = os.getenv("LI_AGENT_ID",    "dev_agent_2")
 LI_BASE_URL    = os.getenv("LI_BASE_URL",    "https://king-prawn-app-oiwpl.ondigitalocean.app")
 openai.api_key = OPENAI_API_KEY
