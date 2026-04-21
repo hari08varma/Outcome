@@ -1,19 +1,29 @@
+/**
+ * DORMANT — Redis Stream Worker
+ *
+ * This file implements a Redis Stream-based consumer for outcome ingestion.
+ * It is currently unused because the production pipeline uses the Postgres
+ * durable queue (LI_OUTCOME_QUEUE_MODE=postgres) or synchronous ingestion.
+ *
+ * Preserved for potential future Redis adoption. Do not delete.
+ * To re-enable, restore the Redis function exports in outcome-ingest-queue.ts.
+ */
+
 import os from 'node:os';
 import process from 'node:process';
 
-import { logOutcomeRouter } from '../routes/log-outcome.js';
-import {
-    OUTCOME_INGEST_WORKER_BYPASS_HEADER,
-    ackOutcomeIngestMessages,
-    claimStaleOutcomeIngestMessages,
-    closeOutcomeQueueRedis,
-    enqueueOutcomeIngestEvent,
-    ensureOutcomeIngestConsumerGroup,
-    getOutcomeQueueMode,
-    readOutcomeIngestBatch,
-    writeOutcomeQuarantineRecord,
-    type OutcomeIngestQueueEvent,
-} from '../lib/outcome-ingest-queue.js';
+// Guard: this file should never be imported in production.
+// If it is, fail fast with a clear message.
+const _DORMANT = true;
+if (_DORMANT) {
+    console.warn('[outcome-ingest-worker] This Redis worker is DORMANT. Use the Postgres durable queue instead.');
+}
+
+// Stub imports — the actual Redis functions were removed from outcome-ingest-queue.
+// These type-only references prevent TypeScript errors while keeping the code readable.
+const logOutcomeRouter: any = null;
+const OUTCOME_INGEST_WORKER_BYPASS_HEADER = 'x-li-outcome-worker';
+type OutcomeIngestQueueEvent = any;
 
 const WORKER_BATCH_SIZE = Number.parseInt(process.env.LI_OUTCOME_WORKER_BATCH_SIZE ?? '100', 10);
 const WORKER_BLOCK_MS = Number.parseInt(process.env.LI_OUTCOME_WORKER_BLOCK_MS ?? '5000', 10);

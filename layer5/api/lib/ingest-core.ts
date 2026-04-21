@@ -752,8 +752,14 @@ export async function ingestOutcome(
         }
     }
 
-    // 3. Verification (import rows skip webhook verifier — signal_source=explicit)
-    const verification = resolveVerifiedSuccess(row.success, row.outcome_score ?? null, undefined);
+    // 3. Verification — reconstruct VerifierSignal from NormalizedOutcomeRow fields.
+    // The sync path gets verifier_signal from the SDK body directly (log-outcome.ts:1203).
+    // The queued path stores it as verifier_source/verifier_value in the NormalizedOutcomeRow.
+    // Both paths must apply the same hallucination correction logic.
+    const verifierSignal = row.verifier_source
+        ? { source: row.verifier_source as any, value: row.verifier_value ?? undefined }
+        : undefined;
+    const verification = resolveVerifiedSuccess(row.success, row.outcome_score ?? null, verifierSignal);
 
     const computedOutcomeScoreRaw: number | null =
         row.outcome_score !== undefined && row.outcome_score !== null

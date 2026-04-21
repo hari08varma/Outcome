@@ -82,7 +82,22 @@ END $$;
 -- ── RLS: service_role only (no user-facing access) ───────────
 ALTER TABLE queue_outcome_ingress ENABLE ROW LEVEL SECURITY;
 
+-- Allow full access ONLY to service_role (backend server key)
 CREATE POLICY queue_ingress_service_only ON queue_outcome_ingress
     FOR ALL
+    TO service_role
     USING (true)
     WITH CHECK (true);
+
+-- Explicitly deny anon and authenticated roles
+CREATE POLICY queue_ingress_deny_anon ON queue_outcome_ingress
+    FOR ALL
+    TO anon
+    USING (false)
+    WITH CHECK (false);
+
+CREATE POLICY queue_ingress_deny_authenticated ON queue_outcome_ingress
+    FOR ALL
+    TO authenticated
+    USING (false)
+    WITH CHECK (false);

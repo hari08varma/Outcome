@@ -985,7 +985,7 @@ async function computePolicyRecommendation(
 // If a developer followed a recommendation (switched to a new action) and
 // performance got WORSE, surface a warning alert in degradation_alert_events.
 // Fire-and-forget - never throws, never blocks outcome logging.
-async function checkRecommendationRegression(
+export async function checkRecommendationRegression(
     customerId: string,
     agentId: string,
     actionId: string,
@@ -1069,8 +1069,8 @@ logOutcomeRouter.post('/', async (c) => {
         const queueBypass = (c.req.header(OUTCOME_INGEST_WORKER_BYPASS_HEADER) ?? '').trim() === '1';
         const queueMode = getOutcomeQueueMode();
 
-        // Fast-accept path: enqueue to Redis Stream or In-Memory Queue and return immediately.
-        // Worker consumers perform the full synchronous processing path.
+        // Fast-accept path: enqueue to Postgres durable queue and return 202 immediately.
+        // Worker processes the full ingestion path asynchronously.
         if (queueMode !== 'sync' && !queueBypass) {
             const validatedAction = c.get('validated_action') as {
                 action_id?: string;
@@ -1107,31 +1107,6 @@ logOutcomeRouter.post('/', async (c) => {
                     // Safety: if Postgres queue INSERT fails, fall through to sync path.
                     console.error('[log-outcome] postgres queue enqueue failed, falling to sync:', pgQueueErr?.message ?? pgQueueErr);
                 }
-            }
-
-            // Redis fallback
-            try {
-                const queueMessageId = await enqueueOutcomeIngestEvent({
-                    agent_id: agentId,
-                    customer_id: customerId,
-                    body,
-                    validated_action: validatedAction,
-                    enqueued_at: new Date().toISOString(),
-                    attempts: 0,
-                });
-
-                return c.json({
-                    accepted: true,
-                    queued: true,
-                    queue_backend: 'redis_stream',
-                    queue_message_id: queueMessageId,
-                    idempotency_key: body.idempotency_key,
-                    message: 'Outcome accepted for asynchronous ingestion.',
-                }, 202);
-            } catch (queueErr: any) {
-                // Safety fallback: if queue write fails, continue with sync ingestion
-                // so no outcomes are dropped.
-                console.error('[log-outcome] queue enqueue failed, falling back to sync ingest:', queueErr?.message ?? queueErr);
             }
         }
 
@@ -1620,7 +1595,7 @@ async function refreshActionScores(customerId: string): Promise<void> {
     });
 }
 
-async function refreshTaskAggregation(customerId: string): Promise<void> {
+export async function refreshTaskAggregation(customerId: string): Promise<void> {
     await Promise.allSettled([
         refreshTaskPerformance(customerId),
         refreshActionScores(customerId),

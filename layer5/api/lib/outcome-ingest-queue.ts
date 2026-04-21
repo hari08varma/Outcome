@@ -2,6 +2,7 @@ import { Redis } from 'ioredis';
 import { supabase } from './supabase.js';
 import { ingestOutcome } from './ingest-core.js';
 import type { NormalizedOutcomeRow } from './ingest-core.js';
+import { checkRecommendationRegression, refreshTaskAggregation } from '../routes/log-outcome.js';
 import os from 'node:os';
 
 export const OUTCOME_INGEST_WORKER_BYPASS_HEADER = 'x-li-outcome-worker';
@@ -166,17 +167,13 @@ function normalizeXAutoClaimReply(reply: unknown): OutcomeIngestClaimBatch {
     return { nextStartId, messages };
 }
 
-export type QueueMode = 'redis' | 'postgres' | 'sync';
+export type QueueMode = 'postgres' | 'sync';
 
 export function getOutcomeQueueMode(): QueueMode {
     const explicit = (process.env.LI_OUTCOME_QUEUE_MODE ?? '').trim().toLowerCase();
     if (explicit === 'sync') return 'sync';
     if (explicit === 'postgres') return 'postgres';
-    if (parseBoolean(process.env[QUEUE_ENABLE_ENV]) && getRedisUrl().length > 0) {
-        return 'redis';
-    }
-    // Default to sync until durable queue is production-ready.
-    // This ensures zero data loss at the cost of slightly higher response latency.
+    // Default to sync — zero data loss, every outcome written before 200 response.
     // Set LI_OUTCOME_QUEUE_MODE=postgres once migration 124 is applied.
     return 'sync';
 }
@@ -277,12 +274,12 @@ async function claimDurableBatch(workerName: string, batchSize: number): Promise
     }
 
     // ── Claim batch ──────────────────────────────────────────
-    // Supabase JS client doesn't support FOR UPDATE SKIP LOCKED natively,
-    // so we use a two-step select+update approach.
-    // Since we're single-worker in DigitalOcean, this is race-free.
+    // Two-step select+update. The UPDATE uses .select() to return
+    // only the rows that were ACTUALLY claimed (status guard ensures
+    // rows already claimed by an overlapping tick are skipped).
     const { data: candidates, error: selectErr } = await supabase
         .from('queue_outcome_ingress')
-        .select('ingress_id, customer_id, agent_id, payload, validated_action, attempts, max_attempts')
+        .select('ingress_id')
         .in('status', ['pending', 'failed'])
         .lte('next_attempt_at', now)
         .order('next_attempt_at', { ascending: true })
@@ -294,8 +291,10 @@ async function claimDurableBatch(workerName: string, batchSize: number): Promise
 
     const ids = candidates.map((r: any) => r.ingress_id);
 
-    // Atomically mark as processing
-    const { error: updateErr } = await supabase
+    // Claim: update status to 'processing' and return only rows we actually claimed.
+    // The `.in('status', ['pending', 'failed'])` guard ensures rows already
+    // grabbed by an overlapping poll tick won't be returned.
+    const { data: claimed, error: updateErr } = await supabase
         .from('queue_outcome_ingress')
         .update({
             status: 'processing',
@@ -303,14 +302,15 @@ async function claimDurableBatch(workerName: string, batchSize: number): Promise
             locked_at: now,
         })
         .in('ingress_id', ids)
-        .in('status', ['pending', 'failed']); // guard: only claim if still claimable
+        .in('status', ['pending', 'failed']) // guard: only claim if still claimable
+        .select('ingress_id, customer_id, agent_id, payload, validated_action, attempts, max_attempts');
 
     if (updateErr) {
         console.error('[durable-queue] claim update failed:', updateErr.message);
         return [];
     }
 
-    return candidates as QueueRow[];
+    return (claimed ?? []) as QueueRow[];
 }
 
 /**
@@ -446,10 +446,23 @@ async function processDurableItem(row: QueueRow): Promise<void> {
         resource_cost_type: (payload.resource_cost_type as any) ?? undefined,
     };
 
-    await ingestOutcome(normalizedRow, row.customer_id, {
+    const result = await ingestOutcome(normalizedRow, row.customer_id, {
         skipTrustUpdate: false,
         ingestionSource: 'sdk',
     });
+
+    // Fire-and-forget side effects — parity with sync path.
+    // These must never throw or block the queue worker.
+    const actionId = normalizedRow.action_name;
+    refreshTaskAggregation(row.customer_id).catch(() => {});
+    checkRecommendationRegression(
+        row.customer_id,
+        row.agent_id,
+        actionId,
+        normalizedRow.action_name,
+        normalizedRow.task_name ?? null,
+        normalizedRow.success,
+    ).catch(() => {});
 }
 
 let durableWorkerTimer: ReturnType<typeof setInterval> | null = null;
@@ -497,9 +510,13 @@ async function maybePurgeSucceeded(): Promise<void> {
 export function startDurableQueueWorker(): void {
     if (durableWorkerTimer) return; // idempotent
 
+    let isProcessing = false; // in-flight guard — prevents overlapping poll ticks
+
     console.log(`[durable-queue] Worker started: name=${PG_WORKER_NAME} batch=${PG_WORKER_BATCH_SIZE} poll=${PG_WORKER_POLL_INTERVAL_MS}ms max_attempts=${PG_WORKER_MAX_ATTEMPTS}`);
 
     durableWorkerTimer = setInterval(async () => {
+        if (isProcessing) return; // previous tick still running
+        isProcessing = true;
         try {
             // Hourly cleanup of succeeded rows (replaces pg_cron on free tier)
             await maybePurgeSucceeded();
@@ -527,6 +544,8 @@ export function startDurableQueueWorker(): void {
             }
         } catch (err: unknown) {
             console.error('[durable-queue] Worker poll error:', err instanceof Error ? err.message : String(err));
+        } finally {
+            isProcessing = false;
         }
     }, PG_WORKER_POLL_INTERVAL_MS);
 
