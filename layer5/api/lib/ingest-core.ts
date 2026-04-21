@@ -138,6 +138,7 @@ export interface NormalizedOutcomeRow {
 
 export interface IngestCoreResult {
     outcomeId: string;
+    actionId: string;
     timestamp: string;
     ingestionQuality: {
         data_quality: number;
@@ -736,6 +737,7 @@ export async function ingestOutcome(
             // Return existing outcome — no duplicate insert
             return {
                 outcomeId: existing,
+                actionId: '', // Not available for idempotent replays
                 timestamp: new Date().toISOString(),
                 ingestionQuality: {
                     data_quality: 1.0,
@@ -971,6 +973,7 @@ export async function ingestOutcome(
             await saveIdempotencyRecord(row.idempotency_key, nearDuplicateOutcomeId, customerId);
             return {
                 outcomeId: nearDuplicateOutcomeId,
+                actionId,
                 timestamp: opts.sourceEventAt.toISOString(),
                 ingestionQuality: {
                     data_quality: dataQuality,
@@ -1097,6 +1100,7 @@ export async function ingestOutcome(
 
     return {
         outcomeId: insertedOutcome.outcomeId,
+        actionId,
         timestamp: insertedOutcome.timestamp,
         ingestionQuality: {
             data_quality: dataQuality,

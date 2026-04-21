@@ -453,16 +453,17 @@ async function processDurableItem(row: QueueRow): Promise<void> {
 
     // Fire-and-forget side effects — parity with sync path.
     // These must never throw or block the queue worker.
-    const actionId = normalizedRow.action_name;
     refreshTaskAggregation(row.customer_id).catch(() => {});
-    checkRecommendationRegression(
-        row.customer_id,
-        row.agent_id,
-        actionId,
-        normalizedRow.action_name,
-        normalizedRow.task_name ?? null,
-        normalizedRow.success,
-    ).catch(() => {});
+    if (result.actionId) {
+        checkRecommendationRegression(
+            row.customer_id,
+            row.agent_id,
+            result.actionId,
+            normalizedRow.action_name,
+            normalizedRow.task_name ?? null,
+            normalizedRow.success,
+        ).catch(() => {});
+    }
 }
 
 let durableWorkerTimer: ReturnType<typeof setInterval> | null = null;
