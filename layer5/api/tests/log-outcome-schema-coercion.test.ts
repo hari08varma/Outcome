@@ -142,8 +142,9 @@ describe('SDK Schema Coercion', () => {
         });
         const body = await parseAndSanitizeRequest(c);
         // Zod coercion drops invalid string to undefined, then
-        // parseAndSanitizeRequest maps undefined → null at line 475.
-        expect(body.response_time_ms).toBeNull();
+        // parseAndSanitizeRequest leaves it as undefined to prevent
+        // Zod re-serialization crashes in queue loopback.
+        expect(body.response_time_ms).toBeUndefined();
     });
 
     it('response_time_ms/response_ms: 0 → null (gracefully dropped)', async () => {
@@ -155,7 +156,7 @@ describe('SDK Schema Coercion', () => {
             response_ms: 0,
         });
         const body = await parseAndSanitizeRequest(c);
-        expect(body.response_time_ms).toBeNull();
+        expect(body.response_time_ms).toBeUndefined();
     });
 
     // ── success coercion ──────────────────────────────────────

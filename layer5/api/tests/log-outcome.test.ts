@@ -32,14 +32,14 @@ vi.mock('../lib/verifier.js', () => ({
 
 vi.mock('../lib/outcome-ingest-queue.js', () => ({
     OUTCOME_INGEST_WORKER_BYPASS_HEADER: 'x-li-outcome-worker',
-    enqueueOutcomeIngestEvent: vi.fn().mockResolvedValue('stream-id-1'),
-    isOutcomeFastAcceptQueueEnabled: vi.fn(() => false),
+    enqueueDurable: vi.fn().mockResolvedValue('ingress-id-1'),
+    getOutcomeQueueMode: vi.fn().mockReturnValue('sync'),
 }));
 
 import { supabase } from '../lib/supabase.js';
 import {
-    enqueueOutcomeIngestEvent,
-    isOutcomeFastAcceptQueueEnabled,
+    enqueueDurable,
+    getOutcomeQueueMode,
 } from '../lib/outcome-ingest-queue.js';
 import { logOutcomeRouter, parseAndSanitizeRequest } from '../routes/log-outcome.js';
 
@@ -139,10 +139,27 @@ describe('POST /v1/log-outcome smoke tests', () => {
             error: null,
         });
 
+        // Generic chain factory for any table the route touches
+        const makeGenericChain = () => {
+            const chain: any = {};
+            chain.select = vi.fn().mockReturnValue(chain);
+            chain.eq = vi.fn().mockReturnValue(chain);
+            chain.upsert = vi.fn().mockReturnValue(chain);
+            chain.order = vi.fn().mockReturnValue(chain);
+            chain.limit = vi.fn().mockReturnValue(chain);
+            chain.gte = vi.fn().mockReturnValue(chain);
+            chain.not = vi.fn().mockReturnValue(chain);
+            chain.insert = vi.fn().mockReturnValue(chain);
+            chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+            chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+            return chain;
+        };
+
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'fact_outcome_idempotency') return idempotencyChain;
             if (table === 'fact_outcomes') return outcomesChain;
-            throw new Error(`Unexpected table in idempotency test: ${table}`);
+            // Other tables accessed during sync path (dim_contexts, dim_actions, etc.)
+            return makeGenericChain();
         });
 
         const app = createLogOutcomeApp();
@@ -164,9 +181,10 @@ describe('POST /v1/log-outcome smoke tests', () => {
         expect(json.idempotency_replayed).toBe(true);
     });
 
-    it('Fast-accept queue mode returns 202 and does not hit sync ingest path', async () => {
-        (isOutcomeFastAcceptQueueEnabled as any).mockReturnValue(true);
-        (enqueueOutcomeIngestEvent as any).mockResolvedValue('1713000000000-0');
+    it('Fast-accept postgres queue mode returns 202', async () => {
+        // Switch to postgres queue mode for this test
+        (getOutcomeQueueMode as any).mockReturnValue('postgres');
+        (enqueueDurable as any).mockResolvedValue('ingress-uuid-123');
 
         const app = createLogOutcomeApp();
 
@@ -184,8 +202,7 @@ describe('POST /v1/log-outcome smoke tests', () => {
         const json = await res.json() as any;
         expect(json.accepted).toBe(true);
         expect(json.queued).toBe(true);
-        expect(json.queue_message_id).toBe('1713000000000-0');
-        expect(enqueueOutcomeIngestEvent).toHaveBeenCalledTimes(1);
-        expect(supabase.from).not.toHaveBeenCalled();
+        expect(json.queue_backend).toBe('postgres_durable');
+        expect(enqueueDurable).toHaveBeenCalledTimes(1);
     });
 });

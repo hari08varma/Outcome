@@ -20,7 +20,7 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import { prettyJSON } from 'hono/pretty-json';
 import { serve } from '@hono/node-server';
-import { getOutcomeQueueMode, startMemoryQueueWorker } from './lib/outcome-ingest-queue.js';
+import { getOutcomeQueueMode, startDurableQueueWorker, getDurableQueueHealth } from './lib/outcome-ingest-queue.js';
 
 const REQUIRED_ENV_VARS = [
     'SUPABASE_URL',
@@ -387,6 +387,27 @@ app.get('/health/deep', async (c) => {
         checks.schema_invariants = 'unknown';
     }
 
+    // ── Durable queue health ───────────────────────────────
+    const currentQueueMode = getOutcomeQueueMode();
+    checks.queue_mode = currentQueueMode;
+    if (currentQueueMode === 'postgres') {
+        try {
+            const queueHealth = await getDurableQueueHealth();
+            checks.queue_pending = String(queueHealth.pending);
+            checks.queue_failed = String(queueHealth.failed);
+            checks.queue_dead = String(queueHealth.dead);
+            checks.queue_processing = String(queueHealth.processing);
+            checks.queue_oldest_pending_age_seconds = queueHealth.oldest_pending_age_seconds !== null
+                ? `${queueHealth.oldest_pending_age_seconds}s`
+                : 'none';
+            if (queueHealth.dead > 0) {
+                checks.queue_dead_letter_warning = `warn: ${queueHealth.dead} dead-lettered items — inspect queue_outcome_ingress WHERE status='dead'`;
+            }
+        } catch {
+            checks.queue_health = 'error: unable to query queue table';
+        }
+    }
+
     // ── Overall status calculation ─────────────────────────
     const vals = Object.values(checks);
     if (vals.some(v =>
@@ -519,8 +540,13 @@ serve({
     console.log(`   Admin:      POST /v1/admin/register-action | GET /v1/admin/actions | POST /v1/admin/reinstate-agent`);
     console.log(`   Rate limit: 300/min per customer on log-outcome/get-scores\n`);
     
-    if (getOutcomeQueueMode() === 'memory') {
-        console.log(`   [Queue]     In-Memory Async Batch Processor ENABLED`);
-        startMemoryQueueWorker(app);
+    const queueMode = getOutcomeQueueMode();
+    console.log(`   [Queue]     Mode: ${queueMode}`);
+    
+    if (queueMode === 'postgres') {
+        console.log(`   [Queue]     Durable Postgres Queue Worker ENABLED (✅ zero-loss)`);
+        startDurableQueueWorker();
+    } else {
+        console.log(`   [Queue]     Sync mode — responses wait for DB write`);
     }
 });

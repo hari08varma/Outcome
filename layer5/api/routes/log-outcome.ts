@@ -25,9 +25,8 @@ import {
 } from '../lib/outcome-score-inference.js';
 import {
     OUTCOME_INGEST_WORKER_BYPASS_HEADER,
-    enqueueOutcomeIngestEvent,
+    enqueueDurable,
     getOutcomeQueueMode,
-    localMemoryQueue,
 } from '../lib/outcome-ingest-queue.js';
 
 export const logOutcomeRouter = new Hono();
@@ -1079,29 +1078,35 @@ logOutcomeRouter.post('/', async (c) => {
                 action_category?: string;
             } | null;
 
-            if (queueMode === 'memory') {
-                localMemoryQueue.push({
-                    agent_id: agentId,
-                    customer_id: customerId,
-                    body,
-                    validated_action: validatedAction,
-                    enqueued_at: new Date().toISOString(),
-                    attempts: 0,
-                    api_key: c.req.header('Authorization') ?? c.req.header('X-API-Key') ?? undefined
-                });
+            // ── Durable Postgres queue ────────────────────────────────
+            // Data is persisted to disk via INSERT before we return 202.
+            // Worker processes asynchronously via direct function call.
+            if (queueMode === 'postgres') {
+                try {
+                    const ingressId = await enqueueDurable({
+                        customerId,
+                        agentId,
+                        idempotencyKey: body.idempotency_key ?? null,
+                        payload: body as Record<string, unknown>,
+                        validatedAction: validatedAction as Record<string, unknown> | null,
+                    });
 
-                return c.json({
-                    logged: true,
-                    outcome_id: `queued-${body.idempotency_key ?? 'unknown'}`,
-                    agent_trust_score: 1.0,
-                    trust_status: 'trusted',
-                    policy: 'explore',
-                    accepted: true,
-                    queued: true,
-                    queue_backend: 'memory_array',
-                    idempotency_key: body.idempotency_key,
-                    message: 'Outcome accepted for local memory asynchronous ingestion.',
-                }, 202);
+                    return c.json({
+                        logged: true,
+                        outcome_id: ingressId,
+                        agent_trust_score: 1.0,
+                        trust_status: 'trusted',
+                        policy: 'explore',
+                        accepted: true,
+                        queued: true,
+                        queue_backend: 'postgres_durable',
+                        idempotency_key: body.idempotency_key,
+                        message: 'Outcome durably queued for asynchronous ingestion.',
+                    }, 202);
+                } catch (pgQueueErr: any) {
+                    // Safety: if Postgres queue INSERT fails, fall through to sync path.
+                    console.error('[log-outcome] postgres queue enqueue failed, falling to sync:', pgQueueErr?.message ?? pgQueueErr);
+                }
             }
 
             // Redis fallback

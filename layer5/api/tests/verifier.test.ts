@@ -34,6 +34,12 @@ vi.mock('../lib/outcome-orchestrator.js', () => ({
     orchestrateOutcome: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../lib/outcome-ingest-queue.js', () => ({
+    OUTCOME_INGEST_WORKER_BYPASS_HEADER: 'x-li-outcome-worker',
+    enqueueDurable: vi.fn().mockResolvedValue('ingress-id-1'),
+    getOutcomeQueueMode: vi.fn().mockReturnValue('sync'),
+}));
+
 /**
  * Production-grade mock factory for Supabase query chains.
  * Uses `Object.assign` so the chain object exists before any fn references it.
@@ -108,6 +114,7 @@ describe('Independent Verification Layer in log-outcome', () => {
         method: 'POST',
         url: 'http://localhost/v1/log-outcome',
         json: async () => bodyObj,
+        header: (name: string) => undefined,
     } as unknown as Request);
 
     const createContext = (req: Request, bodyObj: any) => ({

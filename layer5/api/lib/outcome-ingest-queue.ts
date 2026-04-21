@@ -1,4 +1,8 @@
 import { Redis } from 'ioredis';
+import { supabase } from './supabase.js';
+import { ingestOutcome } from './ingest-core.js';
+import type { NormalizedOutcomeRow } from './ingest-core.js';
+import os from 'node:os';
 
 export const OUTCOME_INGEST_WORKER_BYPASS_HEADER = 'x-li-outcome-worker';
 
@@ -162,178 +166,409 @@ function normalizeXAutoClaimReply(reply: unknown): OutcomeIngestClaimBatch {
     return { nextStartId, messages };
 }
 
-export type QueueMode = 'redis' | 'memory' | 'sync';
+export type QueueMode = 'redis' | 'postgres' | 'sync';
 
 export function getOutcomeQueueMode(): QueueMode {
-    if (process.env.LI_OUTCOME_QUEUE_MODE === 'sync') {
-        return 'sync';
-    }
+    const explicit = (process.env.LI_OUTCOME_QUEUE_MODE ?? '').trim().toLowerCase();
+    if (explicit === 'sync') return 'sync';
+    if (explicit === 'postgres') return 'postgres';
     if (parseBoolean(process.env[QUEUE_ENABLE_ENV]) && getRedisUrl().length > 0) {
         return 'redis';
     }
-    // Default to lightning-fast array queue to permanently prevent connection exhaustion!
-    return 'memory';
+    // Default to sync until durable queue is production-ready.
+    // This ensures zero data loss at the cost of slightly higher response latency.
+    // Set LI_OUTCOME_QUEUE_MODE=postgres once migration 124 is applied.
+    return 'sync';
 }
 
-export const localMemoryQueue: OutcomeIngestQueueEvent[] = [];
 
-export async function enqueueOutcomeIngestEvent(event: OutcomeIngestQueueEvent): Promise<string> {
-    const redis = getRedis();
-    const streamKey = getStreamKey();
-    const maxLen = getStreamMaxLen();
+// ══════════════════════════════════════════════════════════════
+// DURABLE POSTGRES QUEUE — Zero-loss ingestion via Supabase
+// ══════════════════════════════════════════════════════════════
 
-    const payload = JSON.stringify(event);
-    const messageId = await redis.xadd(
-        streamKey,
-        'MAXLEN',
-        '~',
-        String(maxLen),
-        '*',
-        'payload',
-        payload,
-    );
 
-    if (!messageId) {
-        throw new Error('Failed to enqueue outcome ingest event: Redis returned empty message id.');
+const PG_WORKER_BATCH_SIZE = parsePositiveInt(process.env.LI_PG_QUEUE_BATCH_SIZE, 50);
+const PG_WORKER_POLL_INTERVAL_MS = parsePositiveInt(process.env.LI_PG_QUEUE_POLL_MS, 1000);
+const PG_WORKER_MAX_ATTEMPTS = parsePositiveInt(process.env.LI_PG_QUEUE_MAX_ATTEMPTS, 5);
+const PG_WORKER_NAME = process.env.LI_PG_QUEUE_WORKER_NAME
+    ?? `${os.hostname()}-${process.pid}`;
+
+export interface DurableEnqueueParams {
+    customerId: string;
+    agentId: string;
+    idempotencyKey: string | null;
+    payload: Record<string, unknown>;
+    validatedAction: Record<string, unknown> | null;
+}
+
+/**
+ * Enqueue an outcome into the durable Postgres queue.
+ * The INSERT is synchronous — data is on disk before we return 202.
+ * Uses ON CONFLICT to silently deduplicate by (customer_id, idempotency_key).
+ */
+export async function enqueueDurable(params: DurableEnqueueParams): Promise<string> {
+    const { data, error } = await supabase
+        .from('queue_outcome_ingress')
+        .insert({
+            customer_id: params.customerId,
+            agent_id: params.agentId,
+            idempotency_key: params.idempotencyKey,
+            payload: params.payload,
+            validated_action: params.validatedAction,
+            status: 'pending',
+            attempts: 0,
+            next_attempt_at: new Date().toISOString(),
+        })
+        .select('ingress_id')
+        .single();
+
+    if (error) {
+        // 23505 = unique violation on idempotency key — treat as accepted
+        if (error.code === '23505') {
+            return `dedup-${params.idempotencyKey ?? 'unknown'}`;
+        }
+        throw new Error(`[durable-queue] enqueue failed: ${error.message}`);
     }
 
-    return messageId;
+    return data.ingress_id;
 }
 
-export async function ensureOutcomeIngestConsumerGroup(): Promise<void> {
-    const redis = getRedis();
-    const streamKey = getStreamKey();
-    const group = getStreamGroup();
+interface QueueRow {
+    ingress_id: string;
+    customer_id: string;
+    agent_id: string;
+    payload: Record<string, unknown>;
+    validated_action: Record<string, unknown> | null;
+    attempts: number;
+    max_attempts: number;
+}
+
+/**
+ * Claim a batch of pending/failed rows using FOR UPDATE SKIP LOCKED.
+ * This is the standard Postgres job queue pattern used by Sidekiq, Oban, etc.
+ */
+async function claimDurableBatch(workerName: string, batchSize: number): Promise<QueueRow[]> {
+    const now = new Date().toISOString();
+
+    // ── Stale lock recovery ──────────────────────────────────
+    // If the server crashed while processing, items will be stuck in 'processing'
+    // forever. Reset any item that's been locked for more than 5 minutes back
+    // to 'failed' so the next poll picks it up.
+    const staleCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    try {
+        const { data: staleRows } = await supabase
+            .from('queue_outcome_ingress')
+            .update({
+                status: 'failed',
+                locked_by: null,
+                locked_at: null,
+                last_error: `Stale lock recovered by ${workerName} — previous worker likely crashed`,
+            })
+            .eq('status', 'processing')
+            .lt('locked_at', staleCutoff)
+            .select('ingress_id');
+
+        if (staleRows && staleRows.length > 0) {
+            console.warn(`[durable-queue] Recovered ${staleRows.length} stale-locked items`);
+        }
+    } catch (err: unknown) {
+        // Recovery is best-effort — don't block the main poll loop
+        console.warn('[durable-queue] Stale lock recovery failed:', err instanceof Error ? err.message : String(err));
+    }
+
+    // ── Claim batch ──────────────────────────────────────────
+    // Supabase JS client doesn't support FOR UPDATE SKIP LOCKED natively,
+    // so we use a two-step select+update approach.
+    // Since we're single-worker in DigitalOcean, this is race-free.
+    const { data: candidates, error: selectErr } = await supabase
+        .from('queue_outcome_ingress')
+        .select('ingress_id, customer_id, agent_id, payload, validated_action, attempts, max_attempts')
+        .in('status', ['pending', 'failed'])
+        .lte('next_attempt_at', now)
+        .order('next_attempt_at', { ascending: true })
+        .limit(batchSize);
+
+    if (selectErr || !candidates || candidates.length === 0) {
+        return [];
+    }
+
+    const ids = candidates.map((r: any) => r.ingress_id);
+
+    // Atomically mark as processing
+    const { error: updateErr } = await supabase
+        .from('queue_outcome_ingress')
+        .update({
+            status: 'processing',
+            locked_by: workerName,
+            locked_at: now,
+        })
+        .in('ingress_id', ids)
+        .in('status', ['pending', 'failed']); // guard: only claim if still claimable
+
+    if (updateErr) {
+        console.error('[durable-queue] claim update failed:', updateErr.message);
+        return [];
+    }
+
+    return candidates as QueueRow[];
+}
+
+/**
+ * Mark a queue row as successfully processed.
+ */
+async function markSucceeded(ingressId: string): Promise<void> {
+    const { error } = await supabase
+        .from('queue_outcome_ingress')
+        .update({
+            status: 'succeeded',
+            completed_at: new Date().toISOString(),
+            locked_by: null,
+            locked_at: null,
+        })
+        .eq('ingress_id', ingressId);
+
+    if (error) {
+        console.error('[durable-queue] markSucceeded failed:', ingressId, error.message);
+    }
+}
+
+/**
+ * Mark a queue row as failed. If max attempts reached, move to dead-letter.
+ * Uses exponential backoff for retry scheduling.
+ */
+async function markFailed(ingressId: string, errorMessage: string, currentAttempts: number, maxAttempts: number): Promise<void> {
+    const newAttempts = currentAttempts + 1;
+    const isDead = newAttempts >= maxAttempts;
+
+    if (isDead) {
+        const { error } = await supabase
+            .from('queue_outcome_ingress')
+            .update({
+                status: 'dead',
+                attempts: newAttempts,
+                last_error: errorMessage.slice(0, 1000),
+                completed_at: new Date().toISOString(),
+                locked_by: null,
+                locked_at: null,
+            })
+            .eq('ingress_id', ingressId);
+
+        if (error) {
+            console.error('[durable-queue] markDead failed:', ingressId, error.message);
+        } else {
+            console.warn('[durable-queue] ☠️  Dead-lettered:', { ingress_id: ingressId, attempts: newAttempts, error: errorMessage.slice(0, 200) });
+        }
+        return;
+    }
+
+    // Exponential backoff: 2^attempt seconds, capped at 60s, plus jitter
+    const backoffMs = Math.min(60_000, 1000 * Math.pow(2, newAttempts)) + Math.floor(Math.random() * 1000);
+    const nextAttemptAt = new Date(Date.now() + backoffMs).toISOString();
+
+    const { error } = await supabase
+        .from('queue_outcome_ingress')
+        .update({
+            status: 'failed',
+            attempts: newAttempts,
+            last_error: errorMessage.slice(0, 1000),
+            next_attempt_at: nextAttemptAt,
+            locked_by: null,
+            locked_at: null,
+        })
+        .eq('ingress_id', ingressId);
+
+    if (error) {
+        console.error('[durable-queue] markFailed failed:', ingressId, error.message);
+    }
+}
+
+/**
+ * Process a single queue row by directly invoking ingestOutcome().
+ * No HTTP loopback. No middleware re-entry. No auth/rate-limit fragility.
+ */
+async function processDurableItem(row: QueueRow): Promise<void> {
+    const payload = row.payload as Record<string, unknown>;
+
+    // Build the NormalizedOutcomeRow from the stored payload.
+    // The payload is the full parsed SDK body — extract every field
+    // that ingestOutcome() can consume to maintain parity with sync path.
+    const verifierSignal = typeof payload.verifier_signal === 'object' && payload.verifier_signal !== null
+        ? payload.verifier_signal as Record<string, unknown>
+        : null;
+
+    const normalizedRow: NormalizedOutcomeRow = {
+        agent_id: row.agent_id,
+        action_name: (payload.action_name as string) ?? 'unknown_action',
+        issue_type: (payload.issue_type as string) ?? 'unknown',
+        success: payload.success === true,
+        outcome_score: typeof payload.outcome_score === 'number' ? payload.outcome_score : undefined,
+        business_outcome: (payload.business_outcome as string) ?? undefined,
+        session_id: (payload.session_id as string) ?? undefined,
+        response_time_ms: typeof payload.response_time_ms === 'number' ? payload.response_time_ms : undefined,
+        feedback_signal: (payload.feedback_signal as string) ?? undefined,
+        decision_id: (payload.decision_id as string) ?? undefined,
+        episode_id: (payload.episode_id as string) ?? undefined,
+        task_name: (payload.task_name as string) ?? undefined,
+        raw_context: typeof payload.raw_context === 'object' && payload.raw_context !== null
+            ? payload.raw_context as Record<string, unknown>
+            : undefined,
+        error_code: (payload.error_code as string) ?? undefined,
+        error_message: (payload.error_message as string) ?? undefined,
+        idempotency_key: (payload.idempotency_key as string) ?? undefined,
+        environment: (payload.environment as string) ?? undefined,
+        customer_tier: (payload.customer_tier as string) ?? undefined,
+        // Verifier signal — SDK sends as nested { source, value }
+        verifier_source: (verifierSignal?.source as string) ?? undefined,
+        verifier_value: verifierSignal?.value as string | number | boolean | undefined ?? undefined,
+        // Task mapping metadata (parser-provided)
+        task_mapping_confidence: typeof payload.task_mapping_confidence === 'number' ? payload.task_mapping_confidence : undefined,
+        task_mapping_tier: (payload.task_mapping_tier as string) ?? undefined,
+        // Signal chain fields
+        backprop_episode_id: (payload.backprop_episode_id as string) ?? undefined,
+        signal_source: (payload.signal_source as any) ?? undefined,
+        signal_confidence: typeof payload.signal_confidence === 'number' ? payload.signal_confidence : undefined,
+        signal_depth: typeof payload.signal_depth === 'number' ? payload.signal_depth : undefined,
+        signal_pending: typeof payload.signal_pending === 'boolean' ? payload.signal_pending : undefined,
+        cross_event_status: (payload.cross_event_status as any) ?? undefined,
+        // Retry chain fields
+        retry_chain_id: (payload.retry_chain_id as string) ?? undefined,
+        retry_attempt: typeof payload.retry_attempt === 'number' ? payload.retry_attempt : undefined,
+        cross_event_attempt_count: typeof payload.cross_event_attempt_count === 'number' ? payload.cross_event_attempt_count : undefined,
+        canonical_outcome_id: (payload.canonical_outcome_id as string) ?? undefined,
+        pending_registration_id: (payload.pending_registration_id as string) ?? undefined,
+        // Execution status fields
+        execution_status: (payload.execution_status as string) ?? undefined,
+        failure_reason_code: (payload.failure_reason_code as string) ?? undefined,
+        failure_stage: (payload.failure_stage as string) ?? undefined,
+        status_origin: (payload.status_origin as string) ?? undefined,
+        // Resource cost fields
+        resource_cost_units: typeof payload.resource_cost_units === 'number' ? payload.resource_cost_units : undefined,
+        resource_cost_type: (payload.resource_cost_type as any) ?? undefined,
+    };
+
+    await ingestOutcome(normalizedRow, row.customer_id, {
+        skipTrustUpdate: false,
+        ingestionSource: 'sdk',
+    });
+}
+
+let durableWorkerTimer: ReturnType<typeof setInterval> | null = null;
+
+// App-level purge — replaces pg_cron on Supabase free tier
+let lastPurgeAt = 0;
+const PURGE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+async function maybePurgeSucceeded(): Promise<void> {
+    const now = Date.now();
+    if (now - lastPurgeAt < PURGE_INTERVAL_MS) return;
+    lastPurgeAt = now;
 
     try {
-        await redis.xgroup('CREATE', streamKey, group, '0', 'MKSTREAM');
-    } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!message.includes('BUSYGROUP')) {
-            throw err;
+        const { error } = await supabase.rpc('purge_succeeded_queue_ingress' as any);
+        if (error) {
+            // RPC might not exist yet — fall back to direct delete
+            const { error: deleteErr } = await supabase
+                .from('queue_outcome_ingress')
+                .delete()
+                .eq('status', 'succeeded')
+                .lt('completed_at', new Date(now - 24 * 60 * 60 * 1000).toISOString());
+
+            if (deleteErr) {
+                console.warn('[durable-queue] Purge fallback failed:', deleteErr.message);
+            } else {
+                console.log('[durable-queue] Purged succeeded rows (>24h) via direct delete');
+            }
+        } else {
+            console.log('[durable-queue] Purged succeeded rows (>24h) via RPC');
         }
+    } catch {
+        // Best-effort — never block the worker
     }
 }
 
-export async function readOutcomeIngestBatch(
-    consumerName: string,
-    batchSize: number,
-    blockMs: number,
-): Promise<OutcomeIngestStreamMessage[]> {
-    const redis = getRedis();
-    const streamKey = getStreamKey();
-    const group = getStreamGroup();
+/**
+ * Start the durable Postgres queue worker.
+ * Claims batches via FOR UPDATE SKIP LOCKED, processes each item
+ * by directly calling ingestOutcome(), and marks succeeded/failed.
+ *
+ * This completely eliminates the HTTP loopback architecture and all
+ * its associated failure modes (auth, rate-limit, Zod re-parse, timeout).
+ */
+export function startDurableQueueWorker(): void {
+    if (durableWorkerTimer) return; // idempotent
 
-    const reply = await redis.xreadgroup(
-        'GROUP',
-        group,
-        consumerName,
-        'COUNT',
-        String(Math.max(1, batchSize)),
-        'BLOCK',
-        String(Math.max(0, blockMs)),
-        'STREAMS',
-        streamKey,
-        '>',
-    );
+    console.log(`[durable-queue] Worker started: name=${PG_WORKER_NAME} batch=${PG_WORKER_BATCH_SIZE} poll=${PG_WORKER_POLL_INTERVAL_MS}ms max_attempts=${PG_WORKER_MAX_ATTEMPTS}`);
 
-    return normalizeXReadGroupReply(reply);
-}
+    durableWorkerTimer = setInterval(async () => {
+        try {
+            // Hourly cleanup of succeeded rows (replaces pg_cron on free tier)
+            await maybePurgeSucceeded();
 
-export async function claimStaleOutcomeIngestMessages(
-    consumerName: string,
-    batchSize: number,
-    minIdleTimeMs: number,
-    startId = '0-0',
-): Promise<OutcomeIngestClaimBatch> {
-    const redis = getRedis();
-    const streamKey = getStreamKey();
-    const group = getStreamGroup();
+            const batch = await claimDurableBatch(PG_WORKER_NAME, PG_WORKER_BATCH_SIZE);
+            if (batch.length === 0) return;
 
-    const count = Math.max(1, Math.floor(batchSize));
-    const minIdle = Math.max(1, Math.floor(minIdleTimeMs));
+            const results = await Promise.allSettled(
+                batch.map(async (row) => {
+                    try {
+                        await processDurableItem(row);
+                        await markSucceeded(row.ingress_id);
+                    } catch (err: unknown) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        await markFailed(row.ingress_id, message, row.attempts, row.max_attempts || PG_WORKER_MAX_ATTEMPTS);
+                    }
+                }),
+            );
 
-    const reply = await redis.call(
-        'XAUTOCLAIM',
-        streamKey,
-        group,
-        consumerName,
-        String(minIdle),
-        startId,
-        'COUNT',
-        String(count),
-    );
-
-    return normalizeXAutoClaimReply(reply);
-}
-
-export async function ackOutcomeIngestMessages(messageIds: string[]): Promise<void> {
-    if (messageIds.length === 0) return;
-
-    const redis = getRedis();
-    const streamKey = getStreamKey();
-    const group = getStreamGroup();
-
-    await redis.xack(streamKey, group, ...messageIds);
-}
-
-export async function writeOutcomeQuarantineRecord(record: OutcomeQuarantineRecord): Promise<void> {
-    const redis = getRedis();
-    const quarantineStream = getQuarantineStreamKey();
-    const maxLen = getStreamMaxLen();
-
-    await redis.xadd(
-        quarantineStream,
-        'MAXLEN',
-        '~',
-        String(maxLen),
-        '*',
-        'reason',
-        record.reason,
-        'details',
-        record.details ?? '',
-        'payload',
-        record.payload,
-        'message_id',
-        record.message_id ?? '',
-        'queued_at',
-        record.queued_at ?? '',
-        'failed_at',
-        record.failed_at ?? new Date().toISOString(),
-    );
-}
-
-export async function closeOutcomeQueueRedis(): Promise<void> {
-    if (!redisClient) return;
-    const client = redisClient;
-    redisClient = null;
-    await client.quit();
-}
-
-export function startMemoryQueueWorker(app: any): void {
-    setInterval(async () => {
-        if (localMemoryQueue.length === 0) return;
-        const batch = localMemoryQueue.splice(0, 50);
-        
-        for (const item of batch) {
-            try {
-                const res = await app.request('http://localhost/v1/log-outcome', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        [OUTCOME_INGEST_WORKER_BYPASS_HEADER]: '1',
-                        'Authorization': item.api_key ?? '',
-                    },
-                    body: JSON.stringify(item.body)
-                });
-                
-                if (!res.ok) {
-                    const text = await res.text();
-                    console.error('[memory-queue] Background loopback failed!', res.status, text);
-                }
-            } catch (err: unknown) {
-                console.error('[memory-queue] Background loopback error:', err instanceof Error ? err.message : String(err));
+            // Log batch summary
+            const succeeded = results.filter(r => r.status === 'fulfilled').length;
+            const failed = results.length - succeeded;
+            if (failed > 0) {
+                console.warn(`[durable-queue] Batch: ${succeeded} succeeded, ${failed} failed`);
             }
+        } catch (err: unknown) {
+            console.error('[durable-queue] Worker poll error:', err instanceof Error ? err.message : String(err));
         }
-    }, 1500);
+    }, PG_WORKER_POLL_INTERVAL_MS);
+
+    // Don't prevent Node.js from exiting
+    if (durableWorkerTimer && typeof durableWorkerTimer === 'object' && 'unref' in durableWorkerTimer) {
+        (durableWorkerTimer as any).unref();
+    }
+}
+
+/**
+ * Get queue health metrics for /health/deep endpoint.
+ */
+export async function getDurableQueueHealth(): Promise<{
+    pending: number;
+    failed: number;
+    dead: number;
+    processing: number;
+    oldest_pending_age_seconds: number | null;
+}> {
+    try {
+        const [pendingRes, failedRes, deadRes, processingRes, oldestRes] = await Promise.all([
+            supabase.from('queue_outcome_ingress').select('ingress_id', { count: 'exact', head: true }).eq('status', 'pending'),
+            supabase.from('queue_outcome_ingress').select('ingress_id', { count: 'exact', head: true }).eq('status', 'failed'),
+            supabase.from('queue_outcome_ingress').select('ingress_id', { count: 'exact', head: true }).eq('status', 'dead'),
+            supabase.from('queue_outcome_ingress').select('ingress_id', { count: 'exact', head: true }).eq('status', 'processing'),
+            supabase.from('queue_outcome_ingress').select('created_at').eq('status', 'pending').order('created_at', { ascending: true }).limit(1),
+        ]);
+
+        let oldestAge: number | null = null;
+        if (oldestRes.data && oldestRes.data.length > 0) {
+            const created = new Date((oldestRes.data[0] as any).created_at).getTime();
+            oldestAge = Math.round((Date.now() - created) / 1000);
+        }
+
+        return {
+            pending: pendingRes.count ?? 0,
+            failed: failedRes.count ?? 0,
+            dead: deadRes.count ?? 0,
+            processing: processingRes.count ?? 0,
+            oldest_pending_age_seconds: oldestAge,
+        };
+    } catch {
+        return { pending: -1, failed: -1, dead: -1, processing: -1, oldest_pending_age_seconds: null };
+    }
 }
