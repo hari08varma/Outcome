@@ -32,6 +32,50 @@ interface TimedCacheEntry<T> {
 const agentTrustCache = new Map<string, TimedCacheEntry<AgentTrustScore>>();
 const customerConfigCache = new Map<string, TimedCacheEntry<CustomerPolicyConfig>>();
 
+// ── L1 Score-Result Cache ──────────────────────────────────
+// Full-response cache keyed by (customer, agent, issueType, env, tier).
+// 5s TTL — scores change on every ingested outcome, so longer staleness
+// could miss recent writes. Under burst traffic, 3 concurrent workers
+// hitting the same agent's scores → 1 DB call + 2 cache hits.
+const scoreResultCache = new Map<string, TimedCacheEntry<Record<string, unknown>>>();
+const SCORE_RESULT_CACHE_TTL_MS = readPositiveInt(
+    process.env.LI_SCORE_CACHE_TTL_MS,
+    5_000,
+);
+const SCORE_RESULT_CACHE_MAX_ENTRIES = 500;
+
+function buildScoreCacheKey(
+    customerId: string,
+    agentId: string | undefined,
+    issueType: string | undefined,
+    environment: string,
+    customerTier: string | undefined,
+): string {
+    return `${customerId}:${agentId ?? ''}:${issueType ?? ''}:${environment}:${customerTier ?? ''}`;
+}
+
+function pruneScoreResultCache(): void {
+    if (scoreResultCache.size <= SCORE_RESULT_CACHE_MAX_ENTRIES) return;
+    // Simple eviction: delete oldest expired first, then oldest entries
+    const now = Date.now();
+    for (const [key, entry] of scoreResultCache) {
+        if (entry.expiresAt <= now) scoreResultCache.delete(key);
+        if (scoreResultCache.size <= SCORE_RESULT_CACHE_MAX_ENTRIES * 0.8) return;
+    }
+    // Still over limit — evict oldest
+    const keys = [...scoreResultCache.keys()];
+    const toDelete = keys.slice(0, keys.length - Math.floor(SCORE_RESULT_CACHE_MAX_ENTRIES * 0.8));
+    for (const key of toDelete) scoreResultCache.delete(key);
+}
+
+// ── Deadline Propagation ───────────────────────────────────
+// Hard 4s budget for the entire handler. Sub-stages check remaining
+// time and degrade gracefully instead of blocking.
+const SCORE_ENDPOINT_DEADLINE_MS = readPositiveInt(
+    process.env.LI_SCORE_DEADLINE_MS,
+    4_000,
+);
+
 const POLICY_META_CACHE_TTL_MS_DEFAULT = 60 * 1000;
 const POLICY_META_CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -51,6 +95,7 @@ function getPolicyMetaCacheTtlMs(): number {
 export function __resetGetScoresRouteCachesForTests(): void {
     agentTrustCache.clear();
     customerConfigCache.clear();
+    scoreResultCache.clear();
 }
 
 setInterval(() => {
@@ -63,6 +108,11 @@ setInterval(() => {
     for (const [key, entry] of customerConfigCache.entries()) {
         if (entry.expiresAt <= now) {
             customerConfigCache.delete(key);
+        }
+    }
+    for (const [key, entry] of scoreResultCache.entries()) {
+        if (entry.expiresAt <= now) {
+            scoreResultCache.delete(key);
         }
     }
 }, POLICY_META_CACHE_CLEANUP_INTERVAL_MS).unref();
@@ -361,6 +411,9 @@ async function fetchRuntimeCounterfactualShadowSignals(
 
 // ── GET /v1/get-scores ────────────────────────────────────────
 getScoresRouter.get('/', async (c) => {
+    const deadlineStart = Date.now();
+    const remainingMs = () => Math.max(0, SCORE_ENDPOINT_DEADLINE_MS - (Date.now() - deadlineStart));
+
     const customerId = c.get('customer_id') as string;
 
     const agentId = c.get('agent_id') as string | undefined;
@@ -509,6 +562,15 @@ getScoresRouter.get('/', async (c) => {
         }
     }
 
+    // ── L1 cache check ───────────────────────────────────────
+    const scoreCacheKey = buildScoreCacheKey(customerId, agentId, issueType, requestedEnvironment, customerTier);
+    if (!forceRefresh) {
+        const cached = scoreResultCache.get(scoreCacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+            return c.json({ ...cached.value, served_from_cache: true });
+        }
+    }
+
     // ── Fetch and score actions ───────────────────────────────
     try {
         const result = await getScores(
@@ -570,7 +632,9 @@ getScoresRouter.get('/', async (c) => {
         const shadowWeightByActionId = new Map<string, number>();
         let simulationShadowAppliedCount = 0;
 
-        if (!forcedColdStartExplore && rolloutConfig.simulationShadowEnabled && ranked.length > 0) {
+        // Budget check: skip shadow sims if < 1500ms remaining (they do 2+ sequential DB queries)
+        const shadowBudgetOk = remainingMs() > 1500;
+        if (!forcedColdStartExplore && rolloutConfig.simulationShadowEnabled && ranked.length > 0 && shadowBudgetOk) {
             const shadowSignals = await fetchRuntimeCounterfactualShadowSignals(
                 ranked.map((action) => action.action_id),
                 customerId,
@@ -657,7 +721,8 @@ getScoresRouter.get('/', async (c) => {
             tier_explanation: string;
         } | null = null;
 
-        if (episodeHistory && episodeHistory.length > 0) {
+        // Budget check: skip sequence lookup if < 800ms remaining
+        if (episodeHistory && episodeHistory.length > 0 && remainingMs() > 800) {
             try {
                 const { data: seqData } = await supabase
                     .from('mv_sequence_scores')
@@ -707,7 +772,8 @@ getScoresRouter.get('/', async (c) => {
             is_bottleneck: boolean;
         } | null = null;
 
-        if (episodeHistory && topActionForResponse) {
+        // Budget check: skip step performance if < 600ms remaining
+        if (episodeHistory && topActionForResponse && remainingMs() > 600) {
             try {
                 // Fetch this specific step's performance
                 const { data: stepData } = await supabase
@@ -875,7 +941,7 @@ getScoresRouter.get('/', async (c) => {
                 : null,
         };
 
-        return c.json({
+        const responseBody = {
             ranked_actions: ranked,
             top_action: topActionForResponse,
             should_escalate: result.should_escalate,
@@ -943,7 +1009,17 @@ getScoresRouter.get('/', async (c) => {
             // to Causal Graph Tracking.
             signal_contract: null,
             is_ambiguous_task: isAmbiguousTask,
+            deadline_budget_ms: remainingMs(),
+        };
+
+        // Store in L1 cache (even cache misses get stored for burst collapse)
+        pruneScoreResultCache();
+        scoreResultCache.set(scoreCacheKey, {
+            value: responseBody,
+            expiresAt: Date.now() + SCORE_RESULT_CACHE_TTL_MS,
         });
+
+        return c.json({ ...responseBody, served_from_cache: false });
     } catch (err: any) {
         console.error('[get-scores] Error:', err.message);
         return c.json(

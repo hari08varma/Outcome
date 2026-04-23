@@ -19,6 +19,21 @@ const ENABLED = process.env.ENABLE_RECOMMENDATION_NARRATIVE === 'true';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const MODEL = process.env.RECOMMENDATION_NARRATIVE_MODEL ?? 'gpt-4o-mini';
 
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(raw ?? '', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return parsed;
+}
+
+const NARRATIVE_TIMEOUT_MS = parsePositiveInt(
+    process.env.RECOMMENDATION_NARRATIVE_TIMEOUT_MS,
+    1500,
+);
+const NARRATIVE_CACHE_TTL_MS = parsePositiveInt(
+    process.env.RECOMMENDATION_NARRATIVE_CACHE_TTL_MS,
+    60_000,
+);
+
 export interface NarrativeContext {
     // Core recommendation fields
     task: string;
@@ -135,6 +150,7 @@ function decision_type_label(type: NarrativeContext['decision_type']): string {
 
 // In-flight dedup: same context fingerprint → share one LLM promise
 const inflightCalls = new Map<string, Promise<NarrativeOutput | null>>();
+const responseCache = new Map<string, { value: NarrativeOutput; expiresAt: number }>();
 
 function contextFingerprint(ctx: NarrativeContext): string {
     return [
@@ -159,7 +175,7 @@ async function callOpenAI(prompt: string): Promise<NarrativeOutput | null> {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12_000);
+    const timeout = setTimeout(() => controller.abort(), NARRATIVE_TIMEOUT_MS);
 
     try {
         const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -292,14 +308,32 @@ export async function generateNarrative(
 
     const fingerprint = contextFingerprint(ctx);
 
+    const cached = responseCache.get(fingerprint);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+    }
+    if (cached && cached.expiresAt <= Date.now()) {
+        responseCache.delete(fingerprint);
+    }
+
     const existing = inflightCalls.get(fingerprint);
     if (existing) return existing;
 
     const prompt = buildPrompt(ctx);
 
-    const promise = callOpenAI(prompt).finally(() => {
-        inflightCalls.delete(fingerprint);
-    });
+    const promise = callOpenAI(prompt)
+        .then((output) => {
+            if (output) {
+                responseCache.set(fingerprint, {
+                    value: output,
+                    expiresAt: Date.now() + NARRATIVE_CACHE_TTL_MS,
+                });
+            }
+            return output;
+        })
+        .finally(() => {
+            inflightCalls.delete(fingerprint);
+        });
 
     inflightCalls.set(fingerprint, promise);
     return promise;

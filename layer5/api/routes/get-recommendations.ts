@@ -926,7 +926,17 @@ getRecommendationsRouter.get('/', async (c) => {
         );
         // Run cohort upsert, data sources, and LLM narrative in parallel.
         // LLM narrative is skipped when the agent is trust-blocked (no actions = no useful narrative).
+        // Data sources uses a 2s timeout — those COUNT(*) queries on raw fact_outcomes
+        // are the slowest under connection pool pressure, and they're only used for UI hints.
         const isTrustBlocked = !!(result as any)._trust_gate_blocked;
+
+        const dataSourcesPromise = scopedAgentId
+            ? Promise.race([
+                fetchDataSources(customerId, scopedAgentId, taskName),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+            ])
+            : Promise.resolve(null);
+
         const [cohortCycle, dataSources, narrative] = await Promise.all([
             upsertRecommendationCohortCycle({
                 customer_id: customerId,
@@ -938,9 +948,7 @@ getRecommendationsRouter.get('/', async (c) => {
                 confidence_source: confidenceSource,
                 confidence_source_reason: confidenceSourceReason,
             }),
-            scopedAgentId
-                ? fetchDataSources(customerId, scopedAgentId, taskName)
-                : Promise.resolve(null),
+            dataSourcesPromise.catch(() => null),
             // Skip LLM when trust-blocked — no actions means nothing meaningful to narrate.
             // Also skip when state is no_data to avoid burning tokens on empty responses.
             !isTrustBlocked && result.state !== 'no_data'

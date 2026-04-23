@@ -60,6 +60,11 @@ _QUARANTINED_OUTCOMES_FILE_ENV = "LAYERINFINITE_QUARANTINED_OUTCOMES_FILE"
 _HTTP_MAX_CONNECTIONS_ENV = "LAYERINFINITE_HTTP_MAX_CONNECTIONS"
 _HTTP_MAX_KEEPALIVE_CONNECTIONS_ENV = "LAYERINFINITE_HTTP_MAX_KEEPALIVE_CONNECTIONS"
 _HTTP_KEEPALIVE_EXPIRY_SECONDS_ENV = "LAYERINFINITE_HTTP_KEEPALIVE_EXPIRY_SECONDS"
+_SCORES_HOT_CACHE_SECONDS_ENV = "LAYERINFINITE_SCORES_HOT_CACHE_SECONDS"
+_READ_MAX_RETRIES_ENV = "LAYERINFINITE_READ_MAX_RETRIES"
+_SCORES_TIMEOUT_SECONDS_ENV = "LAYERINFINITE_SCORES_TIMEOUT_SECONDS"
+_RECOMMEND_TIMEOUT_SECONDS_ENV = "LAYERINFINITE_RECOMMEND_TIMEOUT_SECONDS"
+_OBSERVE_TIMEOUT_SECONDS_ENV = "LAYERINFINITE_OBSERVE_TIMEOUT_SECONDS"
 _DEFAULT_PENDING_OUTCOMES_FILE = os.path.join(
     os.path.expanduser("~"),
     ".layerinfinite",
@@ -140,6 +145,17 @@ def _env_positive_int(name: str, fallback: int) -> int:
     except Exception:
         return fallback
     return parsed if parsed > 0 else fallback
+
+
+def _env_non_negative_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        parsed = int(raw)
+    except Exception:
+        return fallback
+    return parsed if parsed >= 0 else fallback
 
 
 def _extract_context(fn: Callable[..., Any], args: tuple, kwargs: dict) -> Dict[str, Any]:
@@ -342,6 +358,29 @@ class Layerinfinite:
         self._rate_limit_jitter_seconds = _env_non_negative_float(
             _RATE_LIMIT_JITTER_SECONDS_ENV,
             0.25,
+        )
+        default_read_timeout_seconds = 4.0
+        if timeout > 0:
+            default_read_timeout_seconds = min(float(timeout), 4.0)
+        self._scores_hot_cache_seconds = _env_non_negative_float(
+            _SCORES_HOT_CACHE_SECONDS_ENV,
+            1.0,
+        )
+        self._read_max_retries = _env_non_negative_int(
+            _READ_MAX_RETRIES_ENV,
+            1,
+        )
+        self._scores_request_timeout_seconds = max(
+            0.5,
+            _env_non_negative_float(_SCORES_TIMEOUT_SECONDS_ENV, default_read_timeout_seconds),
+        )
+        self._recommend_request_timeout_seconds = max(
+            0.5,
+            _env_non_negative_float(_RECOMMEND_TIMEOUT_SECONDS_ENV, default_read_timeout_seconds),
+        )
+        self._observe_request_timeout_seconds = max(
+            0.5,
+            _env_non_negative_float(_OBSERVE_TIMEOUT_SECONDS_ENV, default_read_timeout_seconds),
         )
 
         self._actions: Dict[str, Dict[str, ActionEntry]] = {}
@@ -1115,6 +1154,8 @@ class Layerinfinite:
                 "GET",
                 f"/v1/recommendations?task={encoded}",
                 retry_server_errors=False,
+                timeout=self._recommend_request_timeout_seconds,
+                max_retries=self._read_max_retries,
             )
             data = resp.json()
             self._cache_snapshot(self._recommendation_cache, task, data)
@@ -1288,6 +1329,8 @@ class Layerinfinite:
                 "GET",
                 f"/v1/observe?task={encoded}",
                 retry_server_errors=False,
+                timeout=self._observe_request_timeout_seconds,
+                max_retries=self._read_max_retries,
             )
             data = resp.json()
             self._cache_snapshot(self._observe_cache, task, data)
@@ -1881,6 +1924,15 @@ class Layerinfinite:
         Fix 3: Emits a cold-start progress indicator when outcomes_needed > 0.
         """
         try:
+            if raw_context is None and self._scores_hot_cache_seconds > 0:
+                cached_scores, age_seconds = self._get_cached_scores(task)
+                if (
+                    cached_scores is not None
+                    and age_seconds is not None
+                    and age_seconds <= self._scores_hot_cache_seconds
+                ):
+                    return cached_scores
+
             params: Dict[str, Any] = {
                 "issue_type": task,
                 "environment": self._environment,
@@ -1893,6 +1945,8 @@ class Layerinfinite:
                 "GET",
                 "/v1/get-scores",
                 params=params,
+                timeout=self._scores_request_timeout_seconds,
+                max_retries=self._read_max_retries,
             )
             scores = GetScoresResponse.model_validate(resp.json())
 
@@ -2036,6 +2090,7 @@ class Layerinfinite:
         method: str,
         path: str,
         retry_server_errors: bool = True,
+        max_retries: int | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
         """
@@ -2049,7 +2104,8 @@ class Layerinfinite:
         - 401, 404, other 4xx: raise immediately (no retry)
         """
         last_exc: Exception | None = None
-        total_attempts = self._max_retries + 1
+        retry_budget = self._max_retries if max_retries is None else max(0, int(max_retries))
+        total_attempts = retry_budget + 1
 
         for attempt in range(total_attempts):
             self._wait_for_request_slot()
@@ -2064,7 +2120,7 @@ class Layerinfinite:
                 )
                 resp = client.request(method, path, **kwargs)
 
-                if resp.status_code == 429 and attempt < self._max_retries:
+                if resp.status_code == 429 and attempt < retry_budget:
                     retry_after_raw = resp.headers.get("Retry-After", "60")
                     try:
                         retry_after = int(float(retry_after_raw))
@@ -2080,7 +2136,7 @@ class Layerinfinite:
                     time.sleep(wait_seconds)
                     continue
 
-                if resp.status_code == 408 and attempt < self._max_retries:
+                if resp.status_code == 408 and attempt < retry_budget:
                     self._rotate_endpoint("request timeout status 408")
                     wait = min(2**attempt, 8)
                     logger.warning(
@@ -2096,7 +2152,7 @@ class Layerinfinite:
                 if (
                     retry_server_errors
                     and resp.status_code >= 500
-                    and attempt < self._max_retries
+                    and attempt < retry_budget
                 ):
                     self._rotate_endpoint(f"server error {resp.status_code}")
                     wait = 2**attempt
@@ -2117,7 +2173,7 @@ class Layerinfinite:
                 raise
             except (LayerinfiniteRateLimitError, LayerinfiniteServerError, LayerinfiniteError) as exc:
                 last_exc = exc
-                if attempt >= self._max_retries:
+                if attempt >= retry_budget:
                     raise
             except httpx.TimeoutException as exc:
                 last_exc = exc
@@ -2130,7 +2186,7 @@ class Layerinfinite:
                     total_attempts,
                     wait,
                 )
-                if attempt >= self._max_retries:
+                if attempt >= retry_budget:
                     raise LayerinfiniteError("Request timed out.") from exc
                 time.sleep(wait)
             except httpx.RequestError as exc:
@@ -2145,7 +2201,7 @@ class Layerinfinite:
                     total_attempts,
                     wait,
                 )
-                if attempt >= self._max_retries:
+                if attempt >= retry_budget:
                     raise LayerinfiniteError(f"Network error: {exc}") from exc
                 time.sleep(wait)
 
