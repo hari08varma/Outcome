@@ -531,6 +531,9 @@ def test_get_scores_retries_http_408_before_success():
 
 def test_fetch_scores_uses_recent_cache_on_network_error(monkeypatch):
     client = LayerinfiniteClient(api_key=API_KEY, agent_id='my-agent', base_url=BASE_URL)
+    # Disable the SDK's 1s hot cache so both calls reach _request.
+    # This test validates the error-recovery fallback cache, not the hot cache.
+    client._scores_hot_cache_seconds = 0
 
     calls = {'scores': 0}
 
