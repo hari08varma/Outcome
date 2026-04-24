@@ -24,87 +24,65 @@ export default function ProtectedRoute({ children }: Props) {
 
     useEffect(() => {
         let isMounted = true;
+        let timeoutId: NodeJS.Timeout;
 
-        async function fetchSession() {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (isMounted) setSession(session);
+        const checkProfile = async (userId: string, attempts: number = 0) => {
+            if (!isMounted) return;
+            
+            try {
+                const { data, error } = await supabase
+                    .from('user_profiles')
+                    .select('access_status, agent_type')
+                    .eq('id', userId)
+                    .single();
 
-            if (session) {
-                let retries = 5;
-                while (retries > 0 && isMounted) {
-                    const { data, error } = await supabase
-                        .from('user_profiles')
-                        .select('access_status, agent_type')
-                        .eq('id', session.user.id)
-                        .single();
-                    
-                    if (data) {
-                        if (isMounted) {
-                            setAccessStatus(data.access_status || 'pending');
-                            setHasCompletedSurvey(!!data.agent_type);
-                        }
-                        break;
-                    } else if (error) {
-                        if (error.code === 'PGRST116') {
-                            // Row not found yet (trigger race condition)
-                            await new Promise(r => setTimeout(r, 1000));
-                            retries--;
-                        } else {
-                            // Other error (e.g., column missing because migration wasn't run)
-                            console.error('Failed to fetch profile:', error);
-                            if (isMounted) {
-                                setAccessStatus('error');
-                                setHasCompletedSurvey(false);
-                            }
-                            break;
-                        }
+                if (!isMounted) return;
+
+                if (data) {
+                    setAccessStatus(data.access_status || 'pending');
+                    setHasCompletedSurvey(!!data.agent_type);
+                } else if (error && error.code === 'PGRST116') {
+                    if (attempts < 5) {
+                        timeoutId = setTimeout(() => checkProfile(userId, attempts + 1), 1000);
+                    } else {
+                        console.error('Profile creation timed out.');
+                        setAccessStatus('error');
                     }
-                }
-                
-                if (retries === 0 && isMounted) {
-                    console.error('Profile creation timed out.');
+                } else {
+                    console.error('Failed to fetch profile:', error);
                     setAccessStatus('error');
                 }
+            } catch (err) {
+                console.error('Unexpected error checking profile:', err);
+                if (isMounted) setAccessStatus('error');
             }
-        }
+        };
 
-        fetchSession();
-
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-            setSession(newSession);
-            if (newSession) {
-                let retries = 5;
-                while (retries > 0) {
-                    const { data, error } = await supabase
-                        .from('user_profiles')
-                        .select('access_status, agent_type')
-                        .eq('id', newSession.user.id)
-                        .single();
-                    if (data) {
-                        setAccessStatus(data.access_status || 'pending');
-                        setHasCompletedSurvey(!!data.agent_type);
-                        break;
-                    } else if (error) {
-                        if (error.code === 'PGRST116') {
-                            await new Promise(r => setTimeout(r, 1000));
-                            retries--;
-                        } else {
-                            console.error('Failed to fetch profile:', error);
-                            setAccessStatus('error');
-                            setHasCompletedSurvey(false);
-                            break;
-                        }
-                    }
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (isMounted) {
+                setSession(session);
+                if (session) {
+                    checkProfile(session.user.id, 0);
+                } else {
+                    setAccessStatus(null);
                 }
-                if (retries === 0) setAccessStatus('error');
-            } else {
-                setAccessStatus(null);
-                setHasCompletedSurvey(null);
+            }
+        });
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+            if (isMounted) {
+                setSession(newSession);
+                if (newSession) {
+                    checkProfile(newSession.user.id, 0);
+                } else {
+                    setAccessStatus(null);
+                }
             }
         });
 
         return () => {
             isMounted = false;
+            clearTimeout(timeoutId);
             subscription.unsubscribe();
         };
     }, []);
