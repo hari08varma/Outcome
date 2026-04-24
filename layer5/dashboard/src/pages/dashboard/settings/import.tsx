@@ -329,9 +329,9 @@ export default function ImportSettings(): React.ReactElement {
   // ── Render ─────────────────────────────────────────────────
   return (
     <div className="max-w-2xl">
-      <h2 className="text-lg font-semibold text-white mb-1">Import History</h2>
+      <h2 className="text-lg font-semibold text-white mb-1">Historical Data Imports</h2>
       <p className="text-sm text-[#a1a1aa] mb-6">
-        Upload historical agent logs to seed recommendations before SDK integration.
+        Upload historical agent logs to completely bypass the cold-start problem.
         Upload is locked until API key + agent name are verified to prevent routing to the wrong agent.
       </p>
 
