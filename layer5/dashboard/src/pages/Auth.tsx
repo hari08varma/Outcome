@@ -172,6 +172,9 @@ export default function Auth() {
     const [password, setPassword] = useState('');
     const [fullName, setFullName] = useState('');
     const [companyName, setCompanyName] = useState('');
+    const [agentType, setAgentType] = useState('');
+    const [useCase, setUseCase] = useState('');
+    const [estimatedVolume, setEstimatedVolume] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [fieldError, setFieldError] = useState<string | null>(null);
@@ -230,7 +233,13 @@ export default function Auth() {
             email,
             password,
             options: {
-                data: { full_name: fullName, company_name: companyName },
+                data: { 
+                    full_name: fullName, 
+                    company_name: companyName,
+                    agent_type: agentType,
+                    use_case: useCase,
+                    estimated_volume: estimatedVolume
+                },
                 emailRedirectTo: `${window.location.origin}/dashboard`,
             },
         });
@@ -448,6 +457,9 @@ export default function Auth() {
                                     <>
                                         <FormField label="Full Name" value={fullName} onChange={setFullName} placeholder="Jane Smith" type="text" />
                                         <FormField label="Company Name" value={companyName} onChange={setCompanyName} placeholder="Acme Corp" type="text" />
+                                        <FormField label="Type of Agent" value={agentType} onChange={setAgentType} placeholder="e.g. Copilot, Autonomous Task Agent" type="text" />
+                                        <FormField label="Why do you want to use LayerInfinite?" value={useCase} onChange={setUseCase} placeholder="e.g. I need to track which agent actions lead to user conversions" type="textarea" />
+                                        <FormField label="Estimated Daily Volume" value={estimatedVolume} onChange={setEstimatedVolume} placeholder="e.g. < 1k, 1k-10k, 10k+" type="text" />
                                     </>
                                 )}
                                 <FormField label="Work Email" value={email} onChange={setEmail} placeholder="you@company.com" type="email"
@@ -576,6 +588,21 @@ function FormField({ label, value, onChange, placeholder, type, error, errorLink
     errorLink?: { text: string; href: string };
 }) {
     const [focused, setFocused] = useState(false);
+    const isTextArea = type === 'textarea';
+
+    const baseStyle = {
+        width: '100%',
+        background: C.surface,
+        border: `1px solid ${error ? C.error : focused ? C.accent : C.border}`,
+        color: C.white,
+        padding: '12px 16px',
+        fontFamily: FONT_MONO,
+        fontSize: 13,
+        outline: 'none',
+        boxSizing: 'border-box' as const,
+        boxShadow: focused ? `0 0 0 1px rgba(0,255,133,0.2)` : error ? `0 0 0 1px rgba(255,68,68,0.2)` : 'none',
+        transition: 'border-color 150ms, box-shadow 150ms',
+    };
 
     return (
         <div style={{ marginBottom: 16 }}>
@@ -591,30 +618,29 @@ function FormField({ label, value, onChange, placeholder, type, error, errorLink
             }}>
                 {label}
             </label>
-            <input
-                type={type}
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                placeholder={placeholder}
-                onFocus={() => setFocused(true)}
-                onBlur={() => setFocused(false)}
-                required
-                minLength={type === 'password' ? 8 : undefined}
-                style={{
-                    width: '100%',
-                    height: 48,
-                    background: C.surface,
-                    border: `1px solid ${error ? C.error : focused ? C.accent : C.border}`,
-                    color: C.white,
-                    padding: '12px 16px',
-                    fontFamily: FONT_MONO,
-                    fontSize: 13,
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    boxShadow: focused ? `0 0 0 1px rgba(0,255,133,0.2)` : error ? `0 0 0 1px rgba(255,68,68,0.2)` : 'none',
-                    transition: 'border-color 150ms, box-shadow 150ms',
-                }}
-            />
+            {isTextArea ? (
+                <textarea
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    onFocus={() => setFocused(true)}
+                    onBlur={() => setFocused(false)}
+                    required
+                    style={{ ...baseStyle, height: 80, resize: 'vertical' }}
+                />
+            ) : (
+                <input
+                    type={type}
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    onFocus={() => setFocused(true)}
+                    onBlur={() => setFocused(false)}
+                    required
+                    minLength={type === 'password' ? 8 : undefined}
+                    style={{ ...baseStyle, height: 48 }}
+                />
+            )}
             {error && (
                 <div style={{
                     fontFamily: FONT_MONO, fontSize: 11, color: C.error,
