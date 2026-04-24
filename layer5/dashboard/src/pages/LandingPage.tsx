@@ -325,82 +325,7 @@ function CodeBlock({ lines }: { lines: { color: string; text: string }[] }): Rea
   );
 }
 
-// ── Pricing tier data ──
-const PRICING_TIERS = [
-  {
-    label: 'Free',
-    price: '$0',
-    per: '/month',
-    sub: 'No credit card required',
-    highlight: false,
-    badge: null,
-    features: [
-      '1 agent',
-      '5,000 outcomes / month',
-      'Action scoring — see what worked',
-      '1 task type recommendation',
-      'Community support',
-    ],
-    cta: 'Get Started Free',
-    ctaType: 'signup' as const,
-  },
-  {
-    label: 'Pro',
-    price: '$79',
-    per: '/month',
-    sub: 'Individual devs & small startups',
-    highlight: true,
-    badge: 'MOST POPULAR',
-    features: [
-      'Up to 5 agents',
-      '50,000 outcomes / month',
-      'Full recommendation engine — all task types',
-      'Safety gate (≥20 samples, ≥0.75 confidence)',
-      'Reason engine — plain language per recommendation',
-      'Compliance export CSV / JSON',
-      'Email support',
-    ],
-    cta: 'Start Pro',
-    ctaType: 'signup' as const,
-  },
-  {
-    label: 'Growth',
-    price: '$249',
-    per: '/month',
-    sub: 'Production teams at scale',
-    highlight: false,
-    badge: null,
-    features: [
-      'Unlimited agents',
-      '500,000 outcomes / month',
-      'Everything in Pro',
-      'Recommendations API (GET /v1/recommendations)',
-      '3 team dashboard seats',
-      'Slack / Email degradation alerts',
-      'Priority support',
-    ],
-    cta: 'Start Growth',
-    ctaType: 'signup' as const,
-  },
-  {
-    label: 'Enterprise',
-    price: 'Custom',
-    per: '',
-    sub: 'From $1,500 / month',
-    highlight: false,
-    badge: null,
-    features: [
-      'Unlimited everything',
-      'Private deploy option',
-      'SOC2 / HIPAA on request',
-      'Custom retention policies',
-      'SLA guarantee',
-      'Dedicated onboarding',
-    ],
-    cta: 'Contact Us',
-    ctaType: 'email' as const,
-  },
-];
+
 
 // ── Use case data ──
 const USE_CASES = [
@@ -463,7 +388,6 @@ export default function LandingPage(): React.ReactElement {
             <button className="hover:text-white transition-colors" onClick={() => scrollTo('how-it-works')}>How It Works</button>
             <button className="hover:text-white transition-colors" onClick={() => scrollTo('features')}>Features</button>
             <button className="hover:text-white transition-colors" onClick={() => scrollTo('sdk-docs')}>SDK Docs</button>
-            <button className="hover:text-white transition-colors" onClick={() => scrollTo('pricing')}>Pricing</button>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={() => navigate('/auth?mode=login')} className="text-sm font-medium text-[#888888] hover:text-white transition-colors">Sign In</button>
@@ -497,12 +421,12 @@ export default function LandingPage(): React.ReactElement {
               className="font-bold leading-[1.05] tracking-tighter text-center mb-6 max-w-4xl mx-auto"
               style={{ fontSize: 'clamp(40px, 6vw, 72px)' }}
             >
-              Your AI agents make the{' '}
+              Your AI agents are amnesiac. They repeat the{' '}
               <span className="text-[#00FF85]">same mistakes</span>{' '}
               every session.
             </h1>
             <p className="text-lg text-[#888888] text-center max-w-2xl mx-auto leading-relaxed mb-10">
-              Layerinfinite is a decision intelligence layer that sits between your LLM and infrastructure.
+              Layerinfinite is the decision intelligence layer for autonomous systems.
               Agents learn what works from production outcomes &mdash;{' '}
               <strong className="text-white">without retraining, without rebuilding.</strong>
             </p>
@@ -553,16 +477,16 @@ export default function LandingPage(): React.ReactElement {
         <section className="py-24 bg-black" id="problem">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">The Problem</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Every session starts from zero.</h2>
+            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">The Agent Cold-Start Problem. Solved.</h2>
             <p className="text-[#888888] max-w-xl mb-16 text-lg">
-              Your agents are expensive. They&apos;re also amnesiac. Here&apos;s what production looks like without a decision layer.
+              Your agents are expensive. But they start from zero every deployment. Here is what production looks like without a decision layer.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {([
                 {
                   err: '[ERR] agent_loop :: retry_overflow',
-                  title: 'Agent Amnesia',
-                  body: 'AI agents retry the same failed action 5-10 times per session with zero adaptation. Every failure costs compute, latency, and user trust.',
+                  title: 'Amnesiac Loops',
+                  body: 'Agents retry the exact same failed action 5-10 times per session. Every hallucinated retry costs compute, adds latency, and burns user trust.',
                   tag: '5-10 retries / session',
                 },
                 {
@@ -593,7 +517,7 @@ export default function LandingPage(): React.ReactElement {
         <section className="py-24 bg-[#07070f] border-y border-[#1a1a24]" id="how-it-works">
           <div className="max-w-7xl mx-auto px-6">
             <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">How It Works</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-16">Two API calls. Agents that learn.</h2>
+            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-16">Two API calls. Persistent agent memory.</h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
               <div className="space-y-10">
                 {([
@@ -796,93 +720,7 @@ export default function LandingPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Pricing — 4 tiers */}
-        <section className="py-24 bg-black" id="pricing">
-          <div className="max-w-7xl mx-auto px-6">
-            <span className="text-[#00FF85] text-[10px] font-bold tracking-[0.2em] uppercase mb-4 block">Pricing</span>
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Simple, honest pricing.</h2>
-            <p className="text-[#888888] mb-16 max-w-xl">
-              Start free. Hit the limit in two weeks if you&apos;re serious. Upgrade when you need it.
-            </p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              {PRICING_TIERS.map((tier) => (
-                <div
-                  key={tier.label}
-                  className={[
-                    'relative flex flex-col p-8',
-                    tier.highlight
-                      ? 'border border-[#00FF85]/50 bg-[#00FF85]/5'
-                      : 'border border-[#1a1a24] bg-[#07070f]',
-                  ].join(' ')}
-                >
-                  {tier.badge && (
-                    <div className="absolute -top-3 left-6 bg-[#00FF85] text-black text-[10px] font-bold px-3 py-1 tracking-widest">
-                      {tier.badge}
-                    </div>
-                  )}
-                  <div className={[
-                    'text-[10px] font-mono font-bold uppercase tracking-widest mb-4',
-                    tier.highlight ? 'text-[#00FF85]' : 'text-[#888888]',
-                  ].join(' ')}>
-                    {tier.label}
-                  </div>
-                  <div className="mb-1">
-                    <span className="text-4xl font-bold tracking-tight">{tier.price}</span>
-                    {tier.per && <span className="text-lg text-[#888888]">{tier.per}</span>}
-                  </div>
-                  <div className="text-[#555555] text-xs font-mono mb-8">{tier.sub}</div>
-                  <ul className="space-y-3 text-sm text-[#888888] mb-10 flex-1">
-                    {tier.features.map((f) => (
-                      <li key={f} className="flex items-start gap-2">
-                        <span className="text-[#00FF85] mt-0.5 flex-shrink-0">✓</span>
-                        <span>{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {tier.ctaType === 'email' ? (
-                    <a
-                      href="mailto:team@layerinfinite.app"
-                      className="block text-center border border-[#1a1a24] text-[#888888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
-                    >
-                      {tier.cta}
-                    </a>
-                  ) : tier.highlight ? (
-                    <button
-                      onClick={() => navigate('/auth?mode=signup')}
-                      className="w-full bg-[#00FF85] text-black py-3 text-sm font-bold hover:bg-white transition-all"
-                    >
-                      {tier.cta}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => navigate('/auth?mode=signup')}
-                      className="w-full border border-[#1a1a24] text-[#888888] py-3 text-sm font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
-                    >
-                      {tier.cta}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 border border-[#1a1a24] bg-[#07070f] p-5 rounded-lg flex flex-col md:flex-row items-start md:items-center gap-4">
-              <div className="flex-1">
-                <span className="text-[10px] font-mono text-[#00FF85] uppercase tracking-widest">Growth &amp; Enterprise</span>
-                <p className="text-sm text-[#888888] mt-1">
-                  The <span className="text-white font-mono">GET /v1/recommendations</span> API is only available on Growth and above.
-                  Pipe recommendations directly into your own systems — no dashboard required.
-                </p>
-              </div>
-              <button
-                onClick={() => navigate('/auth?mode=signup')}
-                className="flex-shrink-0 border border-[#00FF85]/30 text-[#00FF85] px-5 py-2 text-sm font-bold hover:bg-[#00FF85]/10 transition-all whitespace-nowrap"
-              >
-                Start Growth &rarr;
-              </button>
-            </div>
-          </div>
-        </section>
 
         {/* Final CTA */}
         <section className="py-28 relative" id="final-cta">
@@ -893,7 +731,7 @@ export default function LandingPage(): React.ReactElement {
               Free beta &middot; 50 founding team seats
             </div>
             <h2 className="text-5xl md:text-6xl font-bold tracking-tighter mb-6 max-w-3xl mx-auto">
-              Your agents are failing{' '}<span className="text-[#00FF85]">right now.</span>
+              Stop paying for the{' '}<span className="text-[#00FF85]">same failures.</span>
             </h2>
             <p className="text-[#888888] mb-10 max-w-lg mx-auto text-lg">
               Layerinfinite starts learning from your first outcome. Free during beta. No credit card. Integration in under 30 minutes.

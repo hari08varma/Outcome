@@ -13,7 +13,6 @@ import Overview from './pages/dashboard/overview';
 import Agent from './pages/dashboard/agent';
 import Actions from './pages/dashboard/actions';
 import Alerts from './pages/dashboard/alerts';
-import Simulate from './pages/dashboard/simulate';
 import DiscrepanciesPage from './pages/dashboard/discrepancies';
 import RecommendationsPage from './pages/dashboard/recommendations';
 import SettingsLayout from './pages/dashboard/settings';
@@ -66,7 +65,6 @@ function App(): React.ReactElement {
             <Route path="agent" element={<Agent />} />
             <Route path="actions" element={<Actions />} />
             <Route path="alerts" element={<Alerts />} />
-            <Route path="simulate" element={<Simulate />} />
             <Route path="signals" element={<Navigate to="/dashboard" replace />} />
             <Route path="contracts" element={<Navigate to="/dashboard" replace />} />
             <Route path="discrepancies" element={<DiscrepanciesPage />} />
@@ -84,7 +82,6 @@ function App(): React.ReactElement {
           <Route path="/outcomes" element={<Navigate to="/dashboard" replace />} />
           <Route path="/trust" element={<Navigate to="/dashboard/agent" replace />} />
           <Route path="/alerts" element={<Navigate to="/dashboard/alerts" replace />} />
-          <Route path="/simulate" element={<Navigate to="/dashboard/simulate" replace />} />
           <Route path="/audit" element={<Navigate to="/dashboard" replace />} />
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

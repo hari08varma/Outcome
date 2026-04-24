@@ -494,16 +494,17 @@ discrepancyRoute.post('/detect', async (c) => {
             }
         }
 
-        const { data: crossEventRows, error: crossEventError } = await supabase
-            .from('fact_outcomes')
-            .select('outcome_id, action_id, success, outcome_score, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason, execution_status, status_origin, failure_reason_code, failure_stage')
-            .eq('customer_id', customerId)
-            .eq('cross_event_status', 'conflict')
-            .not('outcome_id', 'is', null);
+        try {
+            const { data: crossEventRows, error: crossEventError } = await supabase
+                .from('fact_outcomes')
+                .select('outcome_id, action_id, success, outcome_score, signal_confidence, cross_event_status, inconsistency_type, inconsistency_reason, execution_status, status_origin, failure_reason_code, failure_stage')
+                .eq('customer_id', customerId)
+                .eq('cross_event_status', 'conflict')
+                .not('outcome_id', 'is', null);
 
-        if (crossEventError) {
-            return c.json({ error: 'Failed to load cross-event conflicts', details: crossEventError.message }, 500);
-        }
+            if (crossEventError) {
+                console.error('Failed to load cross-event conflicts', crossEventError);
+            } else {
 
         const crossEventOutcomeIds = [...new Set((crossEventRows ?? []).map((row: any) => row.outcome_id))];
         const existingCrossEventSet = new Set<string>();
@@ -565,31 +566,36 @@ discrepancyRoute.post('/detect', async (c) => {
                 return c.json({ error: 'Failed to write cross-event discrepancies', details: crossEventInsertError.message }, 500);
             }
 
-            detected += crossEventInserts.length;
-            crossEventConflict += crossEventInserts.length;
+                detected += crossEventInserts.length;
+                crossEventConflict += crossEventInserts.length;
+            }
+            }
+        } catch (e) {
+            console.error('Error in cross-event check:', e);
         }
 
-        const { data: pendingOutcomes, error: pendingOutcomesError } = await supabase
-            .from('fact_outcomes')
-            .select('outcome_id')
-            .eq('customer_id', customerId)
-            .eq('signal_pending', true)
-            .not('outcome_id', 'is', null);
+        try {
+            const { data: pendingOutcomes, error: pendingOutcomesError } = await supabase
+                .from('fact_outcomes')
+                .select('outcome_id')
+                .eq('customer_id', customerId)
+                .eq('signal_pending', true)
+                .not('outcome_id', 'is', null);
 
-        if (pendingOutcomesError) {
-            return c.json({ error: 'Failed to load pending outcomes', details: pendingOutcomesError.message }, 500);
-        }
+            if (pendingOutcomesError) {
+                console.error('Failed to load pending outcomes', pendingOutcomesError);
+            } else {
 
-        const { data: unresolvedRegs, error: unresolvedRegsError } = await supabase
-            .from('dim_pending_signal_registrations')
-            .select('registration_id, outcome_id, event_type, platform')
-            .eq('customer_id', customerId)
-            .eq('resolved', false)
-            .not('outcome_id', 'is', null);
+            const { data: unresolvedRegs, error: unresolvedRegsError } = await supabase
+                .from('dim_pending_signal_registrations')
+                .select('registration_id, outcome_id, event_type, platform')
+                .eq('customer_id', customerId)
+                .eq('resolved', false)
+                .not('outcome_id', 'is', null);
 
-        if (unresolvedRegsError) {
-            return c.json({ error: 'Failed to load unresolved registrations', details: unresolvedRegsError.message }, 500);
-        }
+            if (unresolvedRegsError) {
+                console.error('Failed to load unresolved registrations', unresolvedRegsError);
+            } else {
 
         const pendingOutcomeSet = new Set<string>((pendingOutcomes ?? []).map((row: any) => row.outcome_id));
         const unresolvedByOutcome = new Map<string, { registration_id: string; event_type: string; platform: string }>();
@@ -692,21 +698,27 @@ discrepancyRoute.post('/detect', async (c) => {
                     return c.json({ error: 'Failed to write pending-state mismatches', details: pendingMismatchInsertError.message }, 500);
                 }
 
-                detected += inserts.length;
-                pendingStateMismatch += inserts.length;
+                    detected += inserts.length;
+                    pendingStateMismatch += inserts.length;
+                }
             }
+            }
+            }
+        } catch (e) {
+            console.error('Error in pending state mismatch check:', e);
         }
 
-        const { data: inconsistentFactRows, error: inconsistentRowsError } = await supabase
-            .from('fact_outcomes')
-            .select('outcome_id, action_id, signal_confidence, inconsistency_type, inconsistency_reason, execution_status, status_origin, failure_reason_code, failure_stage')
-            .eq('customer_id', customerId)
-            .not('inconsistency_type', 'is', null)
-            .not('outcome_id', 'is', null);
+        try {
+            const { data: inconsistentFactRows, error: inconsistentRowsError } = await supabase
+                .from('fact_outcomes')
+                .select('outcome_id, action_id, signal_confidence, inconsistency_type, inconsistency_reason, execution_status, status_origin, failure_reason_code, failure_stage')
+                .eq('customer_id', customerId)
+                .not('inconsistency_type', 'is', null)
+                .not('outcome_id', 'is', null);
 
-        if (inconsistentRowsError) {
-            return c.json({ error: 'Failed to load ingestion inconsistencies', details: inconsistentRowsError.message }, 500);
-        }
+            if (inconsistentRowsError) {
+                console.error('Failed to load ingestion inconsistencies', inconsistentRowsError);
+            } else {
 
         const inconsistentRows = ((inconsistentFactRows ?? []) as InconsistentOutcomeRow[])
             .filter((row) => row.inconsistency_type !== null);
@@ -756,9 +768,13 @@ discrepancyRoute.post('/detect', async (c) => {
                     return c.json({ error: 'Failed to write ingestion inconsistencies', details: inconsistencyInsertError.message }, 500);
                 }
 
-                detected += inserts.length;
-                ingestionInconsistency += inserts.length;
+                    detected += inserts.length;
+                    ingestionInconsistency += inserts.length;
+                }
             }
+            }
+        } catch (e) {
+            console.error('Error in ingestion inconsistency check:', e);
         }
 
         return c.json({
