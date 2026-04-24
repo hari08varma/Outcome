@@ -172,9 +172,6 @@ export default function Auth() {
     const [password, setPassword] = useState('');
     const [fullName, setFullName] = useState('');
     const [companyName, setCompanyName] = useState('');
-    const [agentType, setAgentType] = useState('');
-    const [useCase, setUseCase] = useState('');
-    const [estimatedVolume, setEstimatedVolume] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [fieldError, setFieldError] = useState<string | null>(null);
@@ -233,13 +230,7 @@ export default function Auth() {
             email,
             password,
             options: {
-                data: { 
-                    full_name: fullName, 
-                    company_name: companyName,
-                    agent_type: agentType,
-                    use_case: useCase,
-                    estimated_volume: estimatedVolume
-                },
+                data: { full_name: fullName, company_name: companyName },
                 emailRedirectTo: `${window.location.origin}/dashboard`,
             },
         });
@@ -457,9 +448,6 @@ export default function Auth() {
                                     <>
                                         <FormField label="Full Name" value={fullName} onChange={setFullName} placeholder="Jane Smith" type="text" />
                                         <FormField label="Company Name" value={companyName} onChange={setCompanyName} placeholder="Acme Corp" type="text" />
-                                        <FormField label="Type of Agent" value={agentType} onChange={setAgentType} placeholder="e.g. Copilot, Autonomous Task Agent" type="text" />
-                                        <FormField label="Why do you want to use LayerInfinite?" value={useCase} onChange={setUseCase} placeholder="e.g. I need to track which agent actions lead to user conversions" type="textarea" />
-                                        <FormField label="Estimated Daily Volume" value={estimatedVolume} onChange={setEstimatedVolume} placeholder="e.g. < 1k, 1k-10k, 10k+" type="text" />
                                     </>
                                 )}
                                 <FormField label="Work Email" value={email} onChange={setEmail} placeholder="you@company.com" type="email"
