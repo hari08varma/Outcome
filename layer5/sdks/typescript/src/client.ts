@@ -560,7 +560,12 @@ export class Layerinfinite {
         }
 
         // Execute with fallback loop
+        // Deferred failure payloads: during fallback chains, failure outcomes
+        // for manually-registered actions are queued locally instead of firing
+        // fire-and-forget API calls. This prevents rate limit cascades when
+        // noisy agents fail through many actions.
         let lastError: unknown;
+        const deferredFailurePayloads: InternalLogPayload[] = [];
 
         for (let idx = 0; idx < executionOrder.length; idx++) {
             const actionName = executionOrder[idx]!;
@@ -582,7 +587,7 @@ export class Layerinfinite {
                 console.log(
                     `[layerinfinite] ✓ task=${task} action=${actionName} succeeded (${latencyMs}ms)`
                 );
-                // Only log if manually registered (wrapper actions log themselves)
+                // Success: send via network (the critical signal)
                 if (entry.registeredVia === 'manual') {
                     this.logOutcomeInternal({
                         task, actionName, success: true,
@@ -590,6 +595,12 @@ export class Layerinfinite {
                     }).catch(err =>
                         console.warn(`[layerinfinite] Failed to log outcome: ${err}`)
                     );
+                }
+                // Flush all deferred failure payloads to the local durable queue.
+                // The existing flushPendingOutcomes() mechanism will drain these
+                // on the next logOutcomeInternal() call automatically.
+                for (const deferred of deferredFailurePayloads) {
+                    enqueuePendingOutcome(deferred as unknown as Record<string, unknown>).catch(() => undefined);
                 }
                 return result;
             } catch (err) {
@@ -603,19 +614,37 @@ export class Layerinfinite {
                     `[layerinfinite] ✗ task=${task} action=${actionName} failed: ${errorMsg} (${latencyMs}ms)`
                 );
 
-                if (entry.registeredVia === 'manual') {
-                    this.logOutcomeInternal({
-                        task, actionName, success: false,
-                        sessionId, latencyMs, error: errorMsg, decisionId, episodeId,
-                    }).catch(logErr =>
-                        console.warn(`[layerinfinite] Failed to log outcome: ${logErr}`)
-                    );
-                }
-
                 if (!this.autoFallback) {
+                    // No fallback: send immediately (only 1 action attempted)
+                    if (entry.registeredVia === 'manual') {
+                        this.logOutcomeInternal({
+                            task, actionName, success: false,
+                            sessionId, latencyMs, error: errorMsg, decisionId, episodeId,
+                        }).catch(logErr =>
+                            console.warn(`[layerinfinite] Failed to log outcome: ${logErr}`)
+                        );
+                    }
                     throw new LayerinfiniteError(
                         `Action '${actionName}' failed for task '${task}': ${errorMsg}`
                     );
+                }
+
+                // Fallback mode: defer this failure to the local queue instead
+                // of firing a fire-and-forget API call.
+                if (entry.registeredVia === 'manual') {
+                    const payload: InternalLogPayload = {
+                        agent_id: this.agentId,
+                        action_name: actionName,
+                        issue_type: task,
+                        success: false,
+                        session_id: sessionId,
+                        idempotency_key: crypto.randomUUID(),
+                    };
+                    if (latencyMs > 0) payload.response_ms = latencyMs;
+                    if (decisionId) payload.decision_id = decisionId;
+                    if (episodeId) payload.episode_id = episodeId;
+                    if (errorMsg) payload.metadata = { error: errorMsg };
+                    deferredFailurePayloads.push(payload);
                 }
 
                 if (idx + 1 < executionOrder.length) {
@@ -626,6 +655,30 @@ export class Layerinfinite {
             } finally {
                 this.activeRunDecisionContext = null;
             }
+        }
+
+        // All actions failed. Queue all but the last failure locally,
+        // send only the terminal failure via network (updates trust score).
+        if (deferredFailurePayloads.length > 0) {
+            for (let i = 0; i < deferredFailurePayloads.length - 1; i++) {
+                enqueuePendingOutcome(
+                    deferredFailurePayloads[i]! as unknown as Record<string, unknown>
+                ).catch(() => undefined);
+            }
+            const terminal = deferredFailurePayloads[deferredFailurePayloads.length - 1]!;
+            // Fire-and-forget the terminal failure via the normal path
+            this.logOutcomeInternal({
+                task,
+                actionName: terminal.action_name,
+                success: false,
+                sessionId: terminal.session_id,
+                latencyMs: terminal.response_ms ?? 0,
+                error: (terminal.metadata as { error?: string } | undefined)?.error,
+                decisionId: terminal.decision_id ?? null,
+                episodeId: terminal.episode_id ?? null,
+            }).catch(logErr =>
+                console.warn(`[layerinfinite] Failed to log terminal failure: ${logErr}`)
+            );
         }
 
         throw new LayerinfiniteError(

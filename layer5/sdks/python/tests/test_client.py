@@ -1051,3 +1051,151 @@ def test_build_delayed_signal_metadata_maps_provider_fields():
     assert metadata['stripe']['metadata']['layerinfinite_outcome_id'] == 'out-123'
     assert metadata['sendgrid']['unique_args']['outcome_id'] == 'out-123'
     assert metadata['generic']['outcome_id'] == 'out-123'
+
+
+def test_run_defers_failure_outcomes_during_fallback(monkeypatch, tmp_path):
+    """
+    When auto_fallback=True and actions 1-3 fail but action 4 succeeds,
+    only the success outcome fires a real network call. The 3 failure
+    outcomes are written to the local pending_outcomes queue instead of
+    spawning daemon threads.
+    """
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        mode='auto',
+        auto_register=False,
+        log_async=False,  # synchronous for deterministic testing
+    )
+    # Use a temp file for the pending queue
+    pending_file = str(tmp_path / "pending_outcomes.jsonl")
+    monkeypatch.setattr(client, '_pending_outcomes_file', pending_file)
+
+    def action_fail_1(**kwargs):
+        raise RuntimeError("fail1")
+
+    def action_fail_2(**kwargs):
+        raise RuntimeError("fail2")
+
+    def action_fail_3(**kwargs):
+        raise RuntimeError("fail3")
+
+    def action_succeed(**kwargs):
+        return {"ok": True}
+
+    client.register_action('noisy_task', 'fail_1', action_fail_1)
+    client.register_action('noisy_task', 'fail_2', action_fail_2)
+    client.register_action('noisy_task', 'fail_3', action_fail_3)
+    client.register_action('noisy_task', 'succeed', action_succeed)
+
+    # Track actual network calls to /v1/log-outcome
+    network_calls: list[dict] = []
+
+    def fake_request(method, path, **kwargs):
+        if method == 'GET' and path == '/v1/get-scores':
+            # Return ranking that puts fail actions first, succeed last
+            return httpx.Response(200, json={
+                **MOCK_GET_SCORES_RESPONSE,
+                'ranked_actions': [
+                    {**MOCK_SCORED_ACTION, 'action_name': 'fail_1', 'composite_score': 0.90},
+                    {**MOCK_SCORED_ACTION, 'action_name': 'fail_2', 'composite_score': 0.80},
+                    {**MOCK_SCORED_ACTION, 'action_name': 'fail_3', 'composite_score': 0.70},
+                    {**MOCK_SCORED_ACTION, 'action_name': 'succeed', 'composite_score': 0.60},
+                ],
+                'top_action': {**MOCK_SCORED_ACTION, 'action_name': 'fail_1', 'composite_score': 0.90},
+            })
+        if method == 'POST' and path == '/v1/log-outcome':
+            payload = kwargs.get('json', {})
+            network_calls.append(payload)
+            return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    result = client.run('noisy_task')
+
+    assert result == {"ok": True}
+    # Only the SUCCESS outcome should have made a network call
+    assert len(network_calls) == 1
+    assert network_calls[0]['success'] is True
+    assert network_calls[0]['action_name'] == 'succeed'
+
+    # The 3 failure outcomes should be in the pending queue file
+    import os
+    assert os.path.exists(pending_file)
+    with open(pending_file, 'r') as f:
+        queued = [json.loads(line) for line in f if line.strip()]
+    assert len(queued) == 3
+    assert all(q['success'] is False for q in queued)
+    queued_names = [q['action_name'] for q in queued]
+    assert queued_names == ['fail_1', 'fail_2', 'fail_3']
+
+
+def test_run_all_fail_sends_only_terminal_failure(monkeypatch, tmp_path):
+    """
+    When auto_fallback=True and ALL actions fail, the earlier failures are
+    queued locally and the terminal failure fires via _send_outcome_payload.
+    The replay mechanism inside _send_outcome_payload drains the queued
+    failures, so all 3 eventually reach the network — but critically,
+    they arrive AFTER the loop (not during it), preventing rate limit
+    cascades from interleaving with the execution.
+    """
+    client = LayerinfiniteClient(
+        api_key=API_KEY,
+        agent_id='my-agent',
+        base_url=BASE_URL,
+        mode='auto',
+        auto_register=False,
+        log_async=False,
+    )
+    pending_file = str(tmp_path / "pending_outcomes.jsonl")
+    monkeypatch.setattr(client, '_pending_outcomes_file', pending_file)
+
+    def action_a(**kwargs):
+        raise RuntimeError("boom_a")
+
+    def action_b(**kwargs):
+        raise RuntimeError("boom_b")
+
+    def action_c(**kwargs):
+        raise RuntimeError("boom_c")
+
+    client.register_action('total_fail', 'action_a', action_a)
+    client.register_action('total_fail', 'action_b', action_b)
+    client.register_action('total_fail', 'action_c', action_c)
+
+    network_calls: list[dict] = []
+
+    def fake_request(method, path, **kwargs):
+        if method == 'GET' and path == '/v1/get-scores':
+            return httpx.Response(200, json={
+                **MOCK_GET_SCORES_RESPONSE,
+                'ranked_actions': [
+                    {**MOCK_SCORED_ACTION, 'action_name': 'action_a', 'composite_score': 0.90},
+                    {**MOCK_SCORED_ACTION, 'action_name': 'action_b', 'composite_score': 0.80},
+                    {**MOCK_SCORED_ACTION, 'action_name': 'action_c', 'composite_score': 0.70},
+                ],
+                'top_action': {**MOCK_SCORED_ACTION, 'action_name': 'action_a', 'composite_score': 0.90},
+            })
+        if method == 'POST' and path == '/v1/log-outcome':
+            payload = kwargs.get('json', {})
+            network_calls.append(payload)
+            return httpx.Response(200, json=MOCK_LOG_OUTCOME_RESPONSE)
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, '_request', fake_request)
+
+    with pytest.raises(LayerinfiniteError, match="All actions failed"):
+        client.run('total_fail')
+
+    # All 3 outcomes arrive via network (2 replayed from queue + 1 terminal),
+    # but critically they all fire AFTER the loop, not during it.
+    assert len(network_calls) == 3
+    sent_names = [c['action_name'] for c in network_calls]
+    # Replay order: action_a, action_b (from queue), then action_c (terminal)
+    assert sent_names == ['action_a', 'action_b', 'action_c']
+    assert all(c['success'] is False for c in network_calls)
+    # The pending queue file should be cleaned up after successful replay
+    import os
+    assert not os.path.exists(pending_file)

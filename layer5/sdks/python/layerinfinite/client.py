@@ -957,6 +957,11 @@ class Layerinfinite:
             )
 
         last_error: Exception | None = None
+        # Deferred failure payloads: during fallback chains, failure outcomes
+        # are queued locally instead of spawning daemon threads per failure.
+        # This prevents rate limit cascades when noisy agents fail through
+        # many actions. Only the final outcome gets a real-time network call.
+        deferred_failure_payloads: List[Dict[str, Any]] = []
 
         for idx, action_name in enumerate(execution_order):
             with self._registry_lock:
@@ -988,6 +993,7 @@ class Layerinfinite:
                     action_name,
                     latency_ms,
                 )
+                # Success: send this outcome via network (the critical signal)
                 self._log_outcome(
                     task=task,
                     action_name=action_name,
@@ -998,6 +1004,17 @@ class Layerinfinite:
                     decision_id=decision_id,
                     episode_id=episode_id,
                 )
+                # Flush all deferred failure payloads to the local durable queue.
+                # The existing _maybe_replay_pending_outcomes() mechanism will
+                # drain these on the next _log_outcome() call automatically.
+                for deferred in deferred_failure_payloads:
+                    try:
+                        self._enqueue_pending_outcome(deferred)
+                    except Exception as q_exc:
+                        logger.debug(
+                            "[layerinfinite] Failed to queue deferred failure outcome: %s",
+                            q_exc,
+                        )
                 return result
             except Exception as exc:
                 last_error = exc
@@ -1010,7 +1027,26 @@ class Layerinfinite:
                     error_msg,
                     latency_ms,
                 )
-                self._log_outcome(
+
+                if not self._auto_fallback:
+                    # No fallback: send immediately (only 1 action attempted)
+                    self._log_outcome(
+                        task=task,
+                        action_name=action_name,
+                        success=False,
+                        session_id=session_id,
+                        latency_ms=latency_ms,
+                        error=error_msg,
+                        decision_id=decision_id,
+                        episode_id=episode_id,
+                    )
+                    raise LayerinfiniteError(
+                        f"Action '{action_name}' failed for task '{task}': {error_msg}"
+                    ) from exc
+
+                # Fallback mode: defer this failure to the local queue instead
+                # of spawning a daemon thread. This prevents rate limit cascades.
+                payload = self._build_outcome_payload(
                     task=task,
                     action_name=action_name,
                     success=False,
@@ -1020,11 +1056,7 @@ class Layerinfinite:
                     decision_id=decision_id,
                     episode_id=episode_id,
                 )
-
-                if not self._auto_fallback:
-                    raise LayerinfiniteError(
-                        f"Action '{action_name}' failed for task '{task}': {error_msg}"
-                    ) from exc
+                deferred_failure_payloads.append(payload)
 
                 if idx + 1 < len(execution_order):
                     logger.warning(
@@ -1035,6 +1067,22 @@ class Layerinfinite:
                 continue
             finally:
                 self._active_run_decision_context = None
+
+        # All actions failed. Send only the LAST failure via network
+        # (updates trust score in real-time). Queue the rest locally.
+        if deferred_failure_payloads:
+            # Queue all but the last failure
+            for deferred in deferred_failure_payloads[:-1]:
+                try:
+                    self._enqueue_pending_outcome(deferred)
+                except Exception as q_exc:
+                    logger.debug(
+                        "[layerinfinite] Failed to queue deferred failure outcome: %s",
+                        q_exc,
+                    )
+            # Send the terminal failure via the normal _log_outcome path
+            terminal = deferred_failure_payloads[-1]
+            self._send_outcome_payload(terminal)
 
         if last_error is None:
             raise LayerinfiniteError(f"All actions failed for task '{task}'.")
@@ -1703,7 +1751,7 @@ class Layerinfinite:
             by_type=summary.by_type,
         )
 
-    def _log_outcome(
+    def _build_outcome_payload(
         self,
         task: str,
         action_name: str,
@@ -1715,14 +1763,11 @@ class Layerinfinite:
         episode_id: str | None = None,
         error: str | None = None,
         raw_context: Dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
         """
-        POST /v1/log-outcome.
-        If log_async=True (default): fire in background daemon thread.
-        If log_async=False: send synchronously.
-        NEVER raises to the caller — logs warnings only.
-
-        Note: The backend expects 'response_ms' (SDK alias for response_time_ms).
+        Build the log-outcome payload dict without sending it.
+        Used by run() to defer failure outcomes during fallback chains.
+        Also increments the observation count immediately.
         """
         payload: Dict[str, Any] = {
             "agent_id": self._agent_id,
@@ -1731,15 +1776,10 @@ class Layerinfinite:
             "success": success,
             "session_id": session_id,
             "idempotency_key": str(uuid.uuid4()),
-            # Auto-captured from LI_ENVIRONMENT env var (default: "production").
-            # Ensures the API creates a context_id scoped to the right environment,
-            # so staging outcomes don't pollute production recommendations.
             "environment": self._environment,
         }
-        # response_ms is optional but must be > 0 when present.
-        # Very fast local handlers can measure as 0ms; omit field in that case.
         if latency_ms > 0:
-            payload["response_ms"] = latency_ms  # backend alias: response_ms → response_time_ms
+            payload["response_ms"] = latency_ms
         if outcome_score is not None:
             payload["outcome_score"] = outcome_score
         if decision_id:
@@ -1751,12 +1791,24 @@ class Layerinfinite:
         if raw_context:
             payload['raw_context'] = raw_context
 
-        # Fix 1: Increment observation count immediately (before async send)
-        # so exploration floor decisions see up-to-date counts.
+        # Increment observation count immediately so exploration floor
+        # decisions see up-to-date counts even for deferred payloads.
         if self._min_observations_per_action > 0:
             with self._obs_counts_lock:
                 task_counts = self._obs_counts.setdefault(task, {})
                 task_counts[action_name] = task_counts.get(action_name, 0) + 1
+
+        return payload
+
+    def _send_outcome_payload(self, payload: Dict[str, Any]) -> None:
+        """
+        Send a pre-built outcome payload via the network.
+        If log_async=True (default): fire in background daemon thread.
+        If log_async=False: send synchronously.
+        NEVER raises to the caller — logs warnings only.
+        """
+        task = payload.get("issue_type", "unknown")
+        action_name = payload.get("action_name", "unknown")
 
         def _send() -> None:
             try:
@@ -1836,6 +1888,41 @@ class Layerinfinite:
             threading.Thread(target=_send, daemon=True).start()
         else:
             _send()
+
+    def _log_outcome(
+        self,
+        task: str,
+        action_name: str,
+        success: bool,
+        session_id: str,
+        latency_ms: int = 0,
+        outcome_score: float | None = None,
+        decision_id: str | None = None,
+        episode_id: str | None = None,
+        error: str | None = None,
+        raw_context: Dict[str, Any] | None = None,
+    ) -> None:
+        """
+        POST /v1/log-outcome.
+        If log_async=True (default): fire in background daemon thread.
+        If log_async=False: send synchronously.
+        NEVER raises to the caller — logs warnings only.
+
+        Note: The backend expects 'response_ms' (SDK alias for response_time_ms).
+        """
+        payload = self._build_outcome_payload(
+            task=task,
+            action_name=action_name,
+            success=success,
+            session_id=session_id,
+            latency_ms=latency_ms,
+            outcome_score=outcome_score,
+            decision_id=decision_id,
+            episode_id=episode_id,
+            error=error,
+            raw_context=raw_context,
+        )
+        self._send_outcome_payload(payload)
 
     def _compute_outcome_score(
         self,
