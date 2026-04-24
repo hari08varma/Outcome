@@ -30,15 +30,40 @@ export default function ProtectedRoute({ children }: Props) {
             if (isMounted) setSession(session);
 
             if (session) {
-                const { data } = await supabase
-                    .from('user_profiles')
-                    .select('access_status, agent_type')
-                    .eq('id', session.user.id)
-                    .single();
+                let retries = 5;
+                while (retries > 0 && isMounted) {
+                    const { data, error } = await supabase
+                        .from('user_profiles')
+                        .select('access_status, agent_type')
+                        .eq('id', session.user.id)
+                        .single();
+                    
+                    if (data) {
+                        if (isMounted) {
+                            setAccessStatus(data.access_status || 'pending');
+                            setHasCompletedSurvey(!!data.agent_type);
+                        }
+                        break;
+                    } else if (error) {
+                        if (error.code === 'PGRST116') {
+                            // Row not found yet (trigger race condition)
+                            await new Promise(r => setTimeout(r, 1000));
+                            retries--;
+                        } else {
+                            // Other error (e.g., column missing because migration wasn't run)
+                            console.error('Failed to fetch profile:', error);
+                            if (isMounted) {
+                                setAccessStatus('error');
+                                setHasCompletedSurvey(false);
+                            }
+                            break;
+                        }
+                    }
+                }
                 
-                if (isMounted && data) {
-                    setAccessStatus(data.access_status);
-                    setHasCompletedSurvey(!!data.agent_type);
+                if (retries === 0 && isMounted) {
+                    console.error('Profile creation timed out.');
+                    setAccessStatus('error');
                 }
             }
         }
@@ -48,15 +73,30 @@ export default function ProtectedRoute({ children }: Props) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
             setSession(newSession);
             if (newSession) {
-                const { data } = await supabase
-                    .from('user_profiles')
-                    .select('access_status, agent_type')
-                    .eq('id', newSession.user.id)
-                    .single();
-                if (data) {
-                    setAccessStatus(data.access_status);
-                    setHasCompletedSurvey(!!data.agent_type);
+                let retries = 5;
+                while (retries > 0) {
+                    const { data, error } = await supabase
+                        .from('user_profiles')
+                        .select('access_status, agent_type')
+                        .eq('id', newSession.user.id)
+                        .single();
+                    if (data) {
+                        setAccessStatus(data.access_status || 'pending');
+                        setHasCompletedSurvey(!!data.agent_type);
+                        break;
+                    } else if (error) {
+                        if (error.code === 'PGRST116') {
+                            await new Promise(r => setTimeout(r, 1000));
+                            retries--;
+                        } else {
+                            console.error('Failed to fetch profile:', error);
+                            setAccessStatus('error');
+                            setHasCompletedSurvey(false);
+                            break;
+                        }
+                    }
                 }
+                if (retries === 0) setAccessStatus('error');
             } else {
                 setAccessStatus(null);
                 setHasCompletedSurvey(null);
@@ -107,6 +147,48 @@ export default function ProtectedRoute({ children }: Props) {
                     animation: 'spin 1s linear infinite',
                 }} />
                 <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+        );
+    }
+
+    if (accessStatus === 'error') {
+        return (
+            <div style={{
+                minHeight: '100vh',
+                background: '#000000',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'column',
+                color: '#FFFFFF',
+                fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+                padding: 24,
+                textAlign: 'center'
+            }}>
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style={{ marginBottom: 24 }}>
+                    <circle cx="24" cy="24" r="24" fill="#FF4444" opacity="0.15" />
+                    <path d="M24 16v8m0 8h.01M12 24c0-6.627 5.373-12 12-12s12 5.373 12 12-5.373 12-12 12-12-5.373-12-12z" stroke="#FF4444" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+                <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 12 }}>Profile Loading Error</h1>
+                <p style={{ color: '#888888', fontSize: 14, maxWidth: 400, lineHeight: 1.6, marginBottom: 24 }}>
+                    We couldn't load your profile. This usually means the database migration (127) hasn't been applied yet, or the profile trigger failed.
+                </p>
+                <button 
+                    onClick={() => supabase.auth.signOut()}
+                    style={{
+                        background: 'none',
+                        border: '1px solid #1A1A1A',
+                        color: '#888888',
+                        padding: '10px 24px',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        transition: 'color 150ms'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = '#FFFFFF'}
+                    onMouseLeave={e => e.currentTarget.style.color = '#888888'}
+                >
+                    Sign out
+                </button>
             </div>
         );
     }
