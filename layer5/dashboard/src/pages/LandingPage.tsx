@@ -6,29 +6,19 @@ const TERMINAL_LINES = [
   { delay: 0,    color: 'text-[#555555]',   text: '# 1. Install the SDK' },
   { delay: 400,  color: 'text-[#00FF85]',   text: '$ pip install layerinfinite-sdk' },
   { delay: 1000, color: 'text-[#555555]',   text: '' },
-  { delay: 1200, color: 'text-[#555555]',   text: '# 2. Get ranked actions before your agent acts' },
-  { delay: 1600, color: 'text-blue-400',    text: 'from layerinfinite import LayerinfiniteClient, LogOutcomeRequest' },
-  { delay: 1900, color: 'text-white',       text: 'client = LayerinfiniteClient(api_key="layerinfinite_xxxx")' },
-  { delay: 2300, color: 'text-white',       text: 'scores = client.get_scores(' },
-  { delay: 2500, color: 'text-green-300',   text: '    issue_type="payment_failed",' },
-  { delay: 2700, color: 'text-green-300',   text: '    agent_id="payment-bot-1"' },
-  { delay: 2900, color: 'text-white',       text: ')' },
-  { delay: 3100, color: 'text-[#555555]',   text: '' },
-  { delay: 3300, color: 'text-[#555555]',   text: '# Returns ranked actions instantly' },
-  { delay: 3600, color: 'text-[#00FF85]',   text: '# v  update_app     score: 0.85  <- best action' },
-  { delay: 3900, color: 'text-[#888888]',   text: '# .  clear_cache    score: 0.61' },
-  { delay: 4100, color: 'text-red-400',     text: '# x  restart_svc    score: 0.07  <- skip' },
-  { delay: 4400, color: 'text-[#555555]',   text: '' },
-  { delay: 4600, color: 'text-[#555555]',   text: '# 3. Log outcome after execution' },
-  { delay: 5000, color: 'text-white',       text: 'client.log_outcome(LogOutcomeRequest(' },
-  { delay: 5200, color: 'text-green-300',   text: '    agent_id="payment-bot-1",' },
-  { delay: 5400, color: 'text-green-300',   text: '    action_name="update_app",' },
-  { delay: 5600, color: 'text-green-300',   text: '    issue_type="payment_failed",' },
-  { delay: 5800, color: 'text-green-300',   text: '    context_id="ctx_abc",' },
-  { delay: 6000, color: 'text-green-300',   text: '    success=True,' },
-  { delay: 6200, color: 'text-green-300',   text: '    outcome_score=0.9' },
-  { delay: 6400, color: 'text-white',       text: '))' },
-  { delay: 6700, color: 'text-[#00FF85]',   text: '# Agent is now learning from this outcome.' },
+  { delay: 1200, color: 'text-[#555555]',   text: '# 2. Initialize LayerInfinite in auto mode' },
+  { delay: 1600, color: 'text-blue-400',    text: 'from layerinfinite import Layerinfinite' },
+  { delay: 1900, color: 'text-white',       text: 'li = Layerinfinite(api_key="layerinfinite_xxxx", agent_id="bot-1", mode="auto")' },
+  { delay: 2300, color: 'text-[#555555]',   text: '' },
+  { delay: 2500, color: 'text-[#555555]',   text: '# 3. Decorate your agent actions' },
+  { delay: 2700, color: 'text-green-300',   text: '@li.action("deploy_failure")' },
+  { delay: 2900, color: 'text-blue-400',    text: 'def rollback_release(deploy_id):' },
+  { delay: 3100, color: 'text-white',       text: '    return ci.rollback(deploy_id)' },
+  { delay: 3300, color: 'text-[#555555]',   text: '' },
+  { delay: 3500, color: 'text-[#555555]',   text: '# 4. The SDK handles logging and routing' },
+  { delay: 3800, color: 'text-white',       text: 'rollback_release("deploy-4821")' },
+  { delay: 4100, color: 'text-[#555555]',   text: '' },
+  { delay: 4500, color: 'text-[#00FF85]',   text: '# -> Action recorded. Probability updated.' },
 ];
 
 function AnimatedTerminal(): React.ReactElement {
@@ -254,30 +244,21 @@ const PY_LINES = [
   { color: 'text-[#555555]', text: '# Install' },
   { color: 'text-[#00FF85]', text: 'pip install layerinfinite-sdk' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '# Import' },
-  { color: 'text-blue-400',  text: 'from layerinfinite import LayerinfiniteClient, LogOutcomeRequest' },
+  { color: 'text-[#555555]', text: '# Import and Initialize' },
+  { color: 'text-blue-400',  text: 'from layerinfinite import Layerinfinite' },
+  { color: 'text-white',     text: 'li = Layerinfinite(api_key="layerinfinite_...", agent_id="my-agent")' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '# Init — key must start with layerinfinite_' },
-  { color: 'text-white',     text: 'client = LayerinfiniteClient(' },
-  { color: 'text-green-300', text: '    api_key="layerinfinite_your_key"' },
-  { color: 'text-white',     text: ')' },
+  { color: 'text-[#555555]', text: '# Register actions using decorators' },
+  { color: 'text-green-300', text: '@li.action("deploy_failure")' },
+  { color: 'text-white',     text: 'def rollback_release(deploy_id):' },
+  { color: 'text-white',     text: '    return ci.rollback(deploy_id)' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '# Get ranked actions' },
-  { color: 'text-white',     text: 'scores = client.get_scores(' },
-  { color: 'text-green-300', text: '    issue_type="payment_failed",' },
-  { color: 'text-green-300', text: '    agent_id="my-agent"        # optional' },
-  { color: 'text-white',     text: ')' },
-  { color: 'text-[#888888]', text: '# scores.top_action.action_name  -> best action' },
+  { color: 'text-green-300', text: '@li.action("deploy_failure")' },
+  { color: 'text-white',     text: 'def hotfix_forward(deploy_id):' },
+  { color: 'text-white',     text: '    return ci.apply_hotfix(deploy_id)' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '# Log outcome' },
-  { color: 'text-white',     text: 'client.log_outcome(LogOutcomeRequest(' },
-  { color: 'text-green-300', text: '    agent_id="my-agent",' },
-  { color: 'text-green-300', text: '    action_name="escalate_to_human",' },
-  { color: 'text-green-300', text: '    issue_type="payment_failed",' },
-  { color: 'text-green-300', text: '    context_id=scores.context_id,' },
-  { color: 'text-green-300', text: '    success=True,' },
-  { color: 'text-green-300', text: '    outcome_score=0.9' },
-  { color: 'text-white',     text: '))' },
+  { color: 'text-[#555555]', text: '# Outcomes are logged automatically' },
+  { color: 'text-white',     text: 'rollback_release("deploy-4821")' },
 ];
 
 // ── Real JS/TS SDK code lines (matches client.ts + types.ts) ──
@@ -285,30 +266,20 @@ const JS_LINES = [
   { color: 'text-[#555555]', text: '// Install' },
   { color: 'text-[#00FF85]', text: 'npm install layerinfinite-sdk' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '// Import' },
-  { color: 'text-blue-400',  text: "import { LayerinfiniteClient } from 'layerinfinite-sdk';" },
+  { color: 'text-[#555555]', text: '// Import and Initialize' },
+  { color: 'text-blue-400',  text: "import { Layerinfinite } from 'layerinfinite-sdk';" },
+  { color: 'text-white',     text: 'const li = new Layerinfinite({ apiKey: "layer...", agentId: "my-agent" });' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '// Init — key must start with layerinfinite_' },
-  { color: 'text-white',     text: 'const client = new LayerinfiniteClient({' },
-  { color: 'text-green-300', text: '  apiKey: "layerinfinite_your_key"' },
-  { color: 'text-white',     text: '});' },
+  { color: 'text-[#555555]', text: '// Wrap actions to auto-log outcomes' },
+  { color: 'text-white',     text: 'const rollbackRelease = li.action(' },
+  { color: 'text-green-300', text: '  "deploy_failure", "rollback_release",' },
+  { color: 'text-white',     text: '  async (deployId: string) => {' },
+  { color: 'text-white',     text: '    return await ci.rollback(deployId);' },
+  { color: 'text-white',     text: '  }' },
+  { color: 'text-white',     text: ');' },
   { color: '', text: '' },
-  { color: 'text-[#555555]', text: '// Get ranked actions' },
-  { color: 'text-white',     text: 'const scores = await client.getScores({' },
-  { color: 'text-green-300', text: '  agentId: "my-agent",' },
-  { color: 'text-green-300', text: '  issueType: "payment_failed"' },
-  { color: 'text-white',     text: '});' },
-  { color: 'text-[#888888]', text: '// scores.top_action.action_name  -> best action' },
-  { color: '', text: '' },
-  { color: 'text-[#555555]', text: '// Log outcome' },
-  { color: 'text-white',     text: 'await client.logOutcome({' },
-  { color: 'text-green-300', text: '  agent_id: "my-agent",' },
-  { color: 'text-green-300', text: '  action_id: scores.top_action.action_id,' },
-  { color: 'text-green-300', text: '  context_id: scores.context_id,' },
-  { color: 'text-green-300', text: '  issue_type: "payment_failed",' },
-  { color: 'text-green-300', text: '  success: true,' },
-  { color: 'text-green-300', text: '  outcome_score: 0.9' },
-  { color: 'text-white',     text: '});' },
+  { color: 'text-[#555555]', text: '// Executes and logs outcome automatically' },
+  { color: 'text-white',     text: 'await rollbackRelease("deploy-4821");' },
 ];
 
 function CodeBlock({ lines }: { lines: { color: string; text: string }[] }): React.ReactElement {
@@ -521,10 +492,10 @@ export default function LandingPage(): React.ReactElement {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
               <div className="space-y-10">
                 {([
-                  { n: '01', title: 'Before your agent acts — get ranked scores', body: 'Call get_scores() / getScores() with your issue_type. Layerinfinite returns every available action ranked by evidence-based success probability for that exact context.' },
-                  { n: '02', title: 'Your agent picks the top action', body: 'Execute scores.top_action. No guessing. No retrying failed paths. The best action for this context, backed by production history.' },
-                  { n: '03', title: 'After acting — log the outcome', body: 'Call log_outcome() / logOutcome() with success and outcome_score. The scoring engine updates in real-time. Every agent in your fleet benefits immediately.' },
-                  { n: '04', title: 'Dashboard shows what is working', body: 'Track agent health scores, success rates, degradation alerts, and decision recommendations in one place. No additional infra.' },
+                  { n: '01', title: 'Define the Task', body: 'Identify the problem your agent is trying to solve (e.g. "deploy_failure"). This becomes the routing category.' },
+                  { n: '02', title: 'Register your Actions', body: 'Use the @li.action decorator to wrap the different strategies your agent can use to solve the task.' },
+                  { n: '03', title: 'Agent executes, LayerInfinite logs', body: 'When your agent calls a function, LayerInfinite automatically logs the success or failure of that outcome.' },
+                  { n: '04', title: 'Data-driven Auto-Routing', body: 'The next time the agent faces the same task, LayerInfinite routes it to the highest-performing action based on production data.' },
                 ] as { n: string; title: string; body: string }[]).map(({ n, title, body }) => (
                   <div key={n} className="flex gap-6">
                     <div className="flex-shrink-0 w-10 h-10 border border-[#00FF85]/30 bg-[#00FF85]/5 flex items-center justify-center text-[#00FF85] text-xs font-bold font-mono">{n}</div>
@@ -540,7 +511,7 @@ export default function LandingPage(): React.ReactElement {
                 <div className="text-[#555555] mb-2 uppercase tracking-widest text-[10px]">// System Architecture</div>
                 {([
                   { label: 'Your Agent / LLM',                        cls: 'border-blue-400/40 text-blue-300',        small: false, hi: false },
-                  { label: 'getScores()  |  logOutcome()',            cls: 'border-[#00FF85]/30 text-[#00FF85]',     small: true,  hi: false },
+                  { label: '@li.action  |  li.run()',            cls: 'border-[#00FF85]/30 text-[#00FF85]',     small: true,  hi: false },
                   { label: 'Layerinfinite Decision Layer',             cls: 'border-[#00FF85]/40 text-[#00FF85]',     small: false, hi: true  },
                   { label: 'SQL  Materialized Views  Scoring Engine',  cls: 'border-[#555555]/40 text-[#555555]',    small: true,  hi: false },
                   { label: 'Your Supabase / Postgres',                 cls: 'border-[#888888]/30 text-[#888888]',    small: false, hi: false },
@@ -600,7 +571,7 @@ export default function LandingPage(): React.ReactElement {
               {/* Python SDK */}
               <div className="border border-[#1a1a24] rounded-lg overflow-hidden">
                 <div className="bg-[#0e0e18] px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between">
-                  <span className="text-[11px] text-[#888888] font-mono">🐍 Python SDK &mdash; LayerinfiniteClient</span>
+                  <span className="text-[11px] text-[#888888] font-mono">🐍 Python SDK &mdash; Layerinfinite</span>
                   <a href="https://pypi.org/project/layerinfinite-sdk/" target="_blank" rel="noreferrer" className="text-[10px] text-[#00FF85] hover:underline font-mono">PyPI &rarr;</a>
                 </div>
                 <CodeBlock lines={PY_LINES} />
@@ -609,7 +580,7 @@ export default function LandingPage(): React.ReactElement {
               {/* JS/TS SDK */}
               <div className="border border-[#1a1a24] rounded-lg overflow-hidden">
                 <div className="bg-[#0e0e18] px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between">
-                  <span className="text-[11px] text-[#888888] font-mono">🟨 JS / TS SDK &mdash; LayerinfiniteClient</span>
+                  <span className="text-[11px] text-[#888888] font-mono">🟨 JS / TS SDK &mdash; Layerinfinite</span>
                   <a href="https://www.npmjs.com/package/layerinfinite-sdk" target="_blank" rel="noreferrer" className="text-[10px] text-[#00FF85] hover:underline font-mono">npm &rarr;</a>
                 </div>
                 <CodeBlock lines={JS_LINES} />
@@ -621,16 +592,16 @@ export default function LandingPage(): React.ReactElement {
               <div className="text-[10px] font-mono text-[#00FF85] uppercase tracking-widest mb-3">Key API Notes</div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] font-mono text-[#888888]">
                 <div>
-                  <span className="text-white">API key prefix</span><br />
+                  <span className="text-white">API key format</span><br />
                   Must start with <span className="text-[#00FF85]">layerinfinite_</span>
                 </div>
                 <div>
-                  <span className="text-white">get_scores / getScores</span><br />
-                  Required: <span className="text-[#00FF85]">issue_type / issueType</span>
+                  <span className="text-white">@li.action(task)</span><br />
+                  Automatically logs outcomes and tracks <span className="text-[#00FF85]">task</span> success rates
                 </div>
                 <div>
-                  <span className="text-white">log_outcome / logOutcome</span><br />
-                  Required: <span className="text-[#00FF85]">outcome_score</span> (0.0&ndash;1.0)
+                  <span className="text-white">li.run(task)</span><br />
+                  Autonomously executes the highest probability action for <span className="text-[#00FF85]">task</span>
                 </div>
               </div>
             </div>
