@@ -135,17 +135,23 @@ export default function ProtectedRoute({ children }: Props) {
                 minHeight: '100vh',
                 background: '#000000',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
+                color: '#888',
+                fontFamily: 'monospace',
+                fontSize: 12
             }}>
                 <div style={{
-                    width: 16,
-                    height: 16,
+                    width: 24,
+                    height: 24,
                     border: '2px solid #00FF85',
                     borderTop: '2px solid transparent',
                     borderRadius: '50%',
                     animation: 'spin 1s linear infinite',
+                    marginBottom: 16
                 }} />
+                <div>Verifying profile...</div>
                 <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
             </div>
         );
