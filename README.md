@@ -171,13 +171,13 @@ result = li.run("deploy_failure", deploy_id="deploy-4821")
 
 We evaluated LayerInfinite's routing engine against a baseline autonomous agent (powered by GPT-4o-mini) in a high-volume, simulated production environment. The workload consisted of complex customer support ticket resolutions across multiple failure states, requiring the agent to consistently select the optimal remediation strategy.
 
-| Operating Mode | Task Success Rate | Decision Architecture |
-|----------------|-------------------|-----------------------|
-| **Baseline** (Raw LLM, No LayerInfinite) | 76.0% | Agent selects actions via standard system prompting |
-| **Recommend** (LLM + LayerInfinite) | 86.0% | Agent integrates LayerInfinite probability scores |
-| **Auto** (Fully Autonomous Routing) | **95.0%** | LayerInfinite deterministically routes based on history |
+| Operating Mode | Task Success Rate | Failure Reduction | Decision Architecture |
+|----------------|-------------------|-------------------|-----------------------|
+| **Baseline** (Raw LLM, No LayerInfinite) | 76.0% | — | Agent selects actions via standard system prompting |
+| **Recommend** (LLM + LayerInfinite) | 86.0% | **↓ 41.6%** | Agent integrates LayerInfinite probability scores |
+| **Auto** (Fully Autonomous Routing) | **95.0%** | **↓ 79.1%** | LayerInfinite deterministically routes based on history |
 
-> **Analysis:** By replacing probabilistic LLM guessing with deterministic, outcome-based routing, the **Auto** mode achieved a 19% absolute increase in successful task resolutions. The SDK actively learned which remediation strategies historically succeeded and automatically routed execution away from degraded or failing paths.
+> **Analysis:** By replacing probabilistic LLM guessing with deterministic, outcome-based routing, the **Auto** mode achieved a 19% absolute increase in successful task resolutions. More importantly, it **reduced the overall agent failure rate by 79.1%**. The SDK actively learned which remediation strategies historically succeeded and automatically routed execution away from degraded or failing paths.
 
 ---
 
