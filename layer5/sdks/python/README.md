@@ -184,5 +184,5 @@ with Layerinfinite(api_key="...", agent_id="my-agent") as li:
 
 - **PyPI**: [pypi.org/project/layerinfinite-sdk](https://pypi.org/project/layerinfinite-sdk)
 - **Docs**: [docs.layerinfinite.ai](https://docs.layerinfinite.ai)
-- **GitHub**: [github.com/hari08varma/Outcome](https://github.com/hari08varma/Outcome)
+- **GitHub**: [github.com/harinathpathipaka-commits/Layerinfinite-AI](https://github.com/harinathpathipaka-commits/Layerinfinite-AI)
 - **API keys**: [layerinfinite.ai/settings/api-keys](https://layerinfinite.ai/settings/api-keys)

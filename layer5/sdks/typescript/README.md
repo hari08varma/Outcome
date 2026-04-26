@@ -154,4 +154,4 @@ Production checklist:
 
 - **npm**: [@layerinfinite/sdk](https://www.npmjs.com/package/@layerinfinite/sdk)
 - **Docs**: [docs.layerinfinite.ai](https://docs.layerinfinite.ai)
-- **GitHub**: [github.com/hari08varma/Outcome](https://github.com/hari08varma/Outcome)
+- **GitHub**: [github.com/harinathpathipaka-commits/Layerinfinite-AI](https://github.com/harinathpathipaka-commits/Layerinfinite-AI)
