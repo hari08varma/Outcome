@@ -5,7 +5,8 @@
 <head>
   <meta charset="utf-8" />
   <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-  <title>Layer5 | Decision Intelligence for Enterprise AI</title>
+  <title>LayerInfinite | Decision Intelligence for AI Agents</title>
+  <meta name="description" content="Outcome-ranked decision intelligence that sits between your LLM and infrastructure. Agents learn what works — without retraining, without rebuilding." />
   <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <link href="https://fonts.googleapis.com" rel="preconnect" />
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
@@ -67,7 +68,7 @@
   <nav class="fixed top-0 w-full z-50 border-b border-brand-border bg-black/80 backdrop-blur-md">
     <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
       <div class="flex items-center gap-2">
-        <span class="text-2xl font-bold tracking-tighter">Layer<span class="text-brand-green">5</span></span>
+        <span class="text-2xl font-bold tracking-tighter">Layer<span class="text-brand-green">Infinite</span></span>
       </div>
       <div class="hidden md:flex items-center gap-8 text-sm font-medium text-brand-textMuted">
         <a class="hover:text-white transition-colors" href="#problem">Problem</a>
@@ -93,7 +94,7 @@
           <h1 class="text-5xl md:text-7xl font-bold leading-tight tracking-tighter mb-8"
             style="font-size: clamp(42px, 6vw, 68px);">
             Your AI <br />agents are <br />repeating <br />failures. <br />
-            <span class="text-brand-green">Layer5 stops them.</span>
+            <span class="text-brand-green">LayerInfinite stops them.</span>
           </h1>
           <p class="text-lg text-brand-textMuted max-w-lg leading-relaxed mb-6">
             Outcome-ranked decision intelligence that sits between your LLM and infrastructure. Agents learn what works.
@@ -121,7 +122,7 @@
               <span class="text-[10px] text-brand-textMuted ml-2 font-mono">agent-session-0x4f2a</span>
             </div>
             <div class="p-6 font-mono text-sm space-y-4">
-              <div class="text-brand-textMuted opacity-50">[before Layer5]</div>
+              <div class="text-brand-textMuted opacity-50">[before LayerInfinite]</div>
               <div class="flex items-center gap-3 text-red-400">
                 <span>✕</span> <span>restart_service attempt 1 <span class="text-red-500/80 font-bold">FAILED</span>
                   503ms</span>
@@ -134,7 +135,7 @@
                 <span>✕</span> <span>restart_service attempt 3 <span class="text-red-500/80 font-bold">FAILED</span>
                   501ms</span>
               </div>
-              <div class="pt-2 text-brand-green opacity-70">[Layer5 active]</div>
+              <div class="pt-2 text-brand-green opacity-70">[LayerInfinite active]</div>
               <div class="flex items-center gap-3 text-brand-green">
                 <span>✓</span> <span>update_app <span class="opacity-60 text-xs">score 0.85</span> <span
                     class="font-bold">SUCCESS</span> 241ms</span>
@@ -210,12 +211,7 @@
             <div class="text-brand-textMuted text-sm font-medium">Every decision is immutably recorded. No data loss.
               GDPR-compliant soft deletes.</div>
           </div>
-          <div class="text-center md:text-left">
-            <div class="text-brand-green text-3xl md:text-4xl font-bold mb-2 font-sans tracking-tight">Early access
-            </div>
-            <div class="text-brand-textMuted text-sm font-medium">Now open to founding teams. Shape the product from day
-              one.</div>
-          </div>
+
         </div>
       </div>
     </section>
@@ -280,7 +276,7 @@
             <thead>
               <tr class="border-b border-brand-border text-[10px] uppercase tracking-widest text-brand-textMuted">
                 <th class="py-6 px-4">Feature</th>
-                <th class="py-6 px-4 text-brand-green">Layer5</th>
+                <th class="py-6 px-4 text-brand-green">LayerInfinite</th>
                 <th class="py-6 px-4">Observability</th>
                 <th class="py-6 px-4">RL Pipelines</th>
               </tr>
@@ -339,7 +335,7 @@
             <div class="p-8">
               <span class="text-brand-textMuted block mb-2">// Before your agent acts</span>
               <span class="text-blue-400">const</span> { ranked_actions } = <span class="text-purple-400">await</span>
-              layer5.<span class="text-yellow-200">getScores</span>({<br />
+              li.<span class="text-yellow-200">getScores</span>({<br />
                 agent_id: <span class="text-green-300">'payment-bot-1'</span>,<br />
                 context: { issue_type: <span class="text-green-300">'payment_failed'</span>, tier: <span
                 class="text-green-300">'enterprise'</span> }<br />
@@ -349,7 +345,7 @@
               agent.<span class="text-yellow-200">execute</span>(ranked_actions[<span
                 class="text-orange-400">0</span>].action);<br /><br />
               <span class="text-brand-textMuted block mb-2">// After your agent acts</span>
-              <span class="text-purple-400">await</span> layer5.<span class="text-yellow-200">logOutcome</span>({<br />
+              <span class="text-purple-400">await</span> li.<span class="text-yellow-200">logOutcome</span>({<br />
                 action: <span class="text-green-300">'update_app'</span>,<br />
                 success: <span class="text-blue-400">true</span>,<br />
                 response_ms: <span class="text-orange-400">241</span><br />
@@ -362,7 +358,7 @@
                 class="flex-shrink-0 w-8 h-8 rounded-sm bg-brand-green/10 border border-brand-green/30 flex items-center justify-center text-brand-green text-xs font-bold">
                 1</div>
               <div>
-                <h4 class="text-lg font-bold mb-2">Layer5 works with any agent</h4>
+                <h4 class="text-lg font-bold mb-2">LayerInfinite works with any agent</h4>
                 <p class="text-brand-textMuted text-sm leading-relaxed">One GET call before acting. One POST call after.
                   No SDK required. Works with LangChain, AutoGen, or custom frameworks.</p>
               </div>
@@ -401,7 +397,7 @@
           Your agents are failing right now.
         </h2>
         <p class="text-brand-textMuted mb-12 max-w-xl mx-auto">
-          Layer5 starts learning from your first outcome. Free during beta. No credit card required. Integration in
+          LayerInfinite starts learning from your first outcome. No credit card required. Integration in
           under 30 minutes.
         </p>
         <div class="flex flex-col items-center gap-6">
@@ -409,19 +405,16 @@
             class="bg-brand-green text-black px-12 py-5 text-lg font-bold tracking-tight hover:scale-105 hover:bg-white transition-all shadow-[0_0_40px_rgba(0,255,133,0.3)] inline-block">
             Get Started Free — No Credit Card
           </a>
-          <div class="mt-4 flex flex-col items-center gap-6">
+          <div class="mt-4 flex flex-col items-center gap-4">
             <div
               class="flex flex-wrap justify-center gap-4 text-[10px] font-bold uppercase tracking-widest text-brand-textMuted opacity-60">
-              <span>Built on PostgreSQL · Runs on your Supabase</span>
-            </div>
-            <div class="bg-brand-gray/50 border border-brand-border px-4 py-2 rounded-full flex items-center gap-3">
-              <span class="text-[11px] font-mono text-brand-green">Beta access open · Limited to 50 teams</span>
+              <span>Built on PostgreSQL · Framework-agnostic · Python & TypeScript SDKs</span>
             </div>
           </div>
           <div
             class="flex items-center gap-8 text-[10px] text-brand-textMuted font-mono uppercase tracking-widest opacity-60">
-            <span>Free during beta</span>
             <span>No credit card</span>
+            <span>Sub-5ms latency</span>
             <span>30m setup</span>
           </div>
         </div>
@@ -433,8 +426,7 @@
   <footer class="py-12 border-t border-brand-border bg-black">
     <div class="max-w-7xl mx-auto px-6 flex flex-col md:row items-center justify-between gap-8">
       <div class="flex items-center gap-2">
-        <span class="text-xl font-bold tracking-tighter">Layer<span class="text-brand-green">5</span></span>
-        <span class="text-brand-textMuted text-[10px] ml-4 font-mono">Build v1.0.4 - March 2026</span>
+        <span class="text-xl font-bold tracking-tighter">Layer<span class="text-brand-green">Infinite</span></span>
       </div>
       <div class="flex gap-8 text-[10px] font-bold uppercase tracking-widest text-brand-textMuted">
         <a class="hover:text-brand-green transition-colors" href="/privacy">Privacy</a>
