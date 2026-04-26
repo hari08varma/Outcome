@@ -35,7 +35,7 @@ jobs:
     needs: verify-version
     env:
       SMOKE_TEST_API_KEY: ${{ secrets.SMOKE_TEST_API_KEY }}
-      SMOKE_TEST_BASE_URL: ${{ vars.SMOKE_TEST_BASE_URL || 'https://api.layerinfinite.app' }}
+      SMOKE_TEST_BASE_URL: ${{ vars.SMOKE_TEST_BASE_URL || 'https://layerinfinite.me' }}
     steps:
       - uses: actions/checkout@v4
 

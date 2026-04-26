@@ -110,7 +110,7 @@ try {
 | Option | Default | Description |
 |--------|---------|-------------|
 | `apiKey` | required | Your Layerinfinite API key |
-| `baseUrl` | `https://api.layerinfinite.app` | Primary API base URL |
+| `baseUrl` | `https://layerinfinite.me` | Primary API base URL |
 | `baseUrls` | `[]` | Optional fallback API URLs used after network/timeout/5xx failures |
 | `timeout` | `10000` | Request timeout in ms |
 | `maxRetries` | `3` | Max retries on 429/5xx/timeouts/network errors |
@@ -123,7 +123,7 @@ You can also provide fallback endpoints with the `LAYERINFINITE_BASE_URLS` envir
 
 Use this endpoint order in production:
 
-1. Primary: stable custom domain (example: `https://api.layerinfinite.app`)
+1. Primary: stable custom domain (example: `https://layerinfinite.me`)
 2. Fallback 1: Railway deployment URL
 3. Fallback 2: Vercel deployment URL
 
@@ -132,7 +132,7 @@ Recommended client setup:
 ```typescript
 const client = new LayerinfiniteClient({
   apiKey: process.env.LAYERINFINITE_API_KEY!,
-  baseUrl: 'https://api.layerinfinite.app',
+  baseUrl: 'https://layerinfinite.me',
   baseUrls: [
     'https://layerinfinite-api-production.up.railway.app',
     'https://layerinfinite-api.vercel.app',

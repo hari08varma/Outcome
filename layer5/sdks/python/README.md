@@ -94,7 +94,7 @@ Layerinfinite(
     confidence_threshold=0.7,        # minimum confidence before LI acts
     auto_fallback=True,              # fall back to next action on failure (auto mode)
     min_observations_per_action=0,   # exploration floor — try each action N times first
-    base_url="https://api.layerinfinite.app",
+    base_url="https://layerinfinite.me",
     timeout=10.0,
     max_retries=3,
     log_async=True,                  # non-blocking outcome logging (default)

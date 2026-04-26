@@ -232,7 +232,7 @@ export interface LayerinfiniteConfig {
     autoFallback?: boolean;
     /** Sync action names to dashboard on registration. Default: true. */
     autoRegister?: boolean;
-    /** Default: 'https://api.layerinfinite.app' */
+    /** Default: 'https://layerinfinite.me' */
     baseUrl?: string;
     /** Optional fallback API URLs (used after baseUrl on network/server failures). */
     baseUrls?: string[];

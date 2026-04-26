@@ -33,7 +33,7 @@ Preview deployments are blocked from calling the API by design — they should u
 
 | Variable | Value |
 |---|---|
-| `VITE_LAYERINFINITE_API_URL` | `https://api.layerinfinite.app` |
+| `VITE_LAYERINFINITE_API_URL` | `https://layerinfinite.me` |
 | `VITE_SUPABASE_URL` | `https://<project>.supabase.co` |
 | `VITE_SUPABASE_ANON_KEY` | `eyJ...` |
 
@@ -42,4 +42,4 @@ Preview deployments are blocked from calling the API by design — they should u
 | Service | Domain |
 |---|---|
 | Dashboard (Vercel) | `layerinfinite.app`, `www.layerinfinite.app` |
-| API (Railway) | `api.layerinfinite.app` |
+| API (Railway) | `layerinfinite.me` |

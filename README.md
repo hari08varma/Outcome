@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="https://files.catbox.moe/hwoco4.png" width="120" height="120" alt="LayerInfinite Matrix Intersection Logo" />
   <h1>LayerInfinite</h1>
   <p><strong>Decision intelligence infrastructure for autonomous AI agents.</strong></p>
   <p>Agents learn from production outcomes. No retraining. No vector databases. No guessing.</p>
@@ -6,13 +7,14 @@
   <p>
     <a href="https://layerinfinite.app">Dashboard</a> ·
     <a href="https://pypi.org/project/layerinfinite-sdk/">PyPI</a> ·
-    <a href="https://www.npmjs.com/package/layerinfinite-sdk">npm</a> ·
+    <a href="https://www.npmjs.com/package/@layerinfinite/sdk">npm</a> ·
+    <a href="BENCHMARKS.md">Benchmarks</a> ·
     <a href="ARCHITECTURE.md">Architecture</a> ·
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
   <p>
-    <img src="https://img.shields.io/pypi/v/layerinfinite-sdk" alt="PyPI" />
-    <img src="https://img.shields.io/npm/v/layerinfinite-sdk" alt="npm" />
+    <a href="https://pypi.org/project/layerinfinite-sdk/"><img src="https://img.shields.io/pypi/v/layerinfinite-sdk" alt="PyPI" /></a>
+    <a href="https://www.npmjs.com/package/@layerinfinite/sdk"><img src="https://img.shields.io/npm/v/@layerinfinite/sdk" alt="npm" /></a>
     <img src="https://img.shields.io/badge/latency-sub--5ms-00FF85" alt="Sub-5ms" />
     <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
   </p>
@@ -44,6 +46,58 @@ LayerInfinite is completely framework-agnostic. Because it instruments your Pyth
 - CrewAI
 - Vercel AI SDK
 - Custom-built agents in Plain Python / TypeScript
+
+---
+
+## Choose Your Starting Point
+
+Your integration path depends on one question: **do you have existing agent logs?**
+
+This is not a minor detail. Teams with production history get a fundamentally different — and dramatically more powerful — entry point than teams starting from scratch.
+
+---
+
+### Path A — You Have Existing Agent Logs
+
+If your agent has been running in production — even if it was using LangChain, AutoGen, CrewAI, or a completely custom framework — you are not starting from zero.
+
+```
+1. Export logs from your current observability tool or database
+2. Import them via the LayerInfinite Import API (one API call)
+3. Open the Dashboard → Recommendations page
+4. LayerInfinite has already normalized your messy logs into
+   canonical task names and action names, ranked by success rate
+5. Copy those exact names into your @li.action decorators
+6. Deploy — your agent starts with a fully calibrated probability
+   model on the very first production call
+```
+
+> [!IMPORTANT]
+> **The names on the Recommendations page are canonical.** They are the keys the routing engine uses to map live SDK calls to historical outcomes. If you use different names in your decorators, you break the link — and your agent starts cold, as if it had no history at all.
+>
+> See the [Zero Cold-Start section](#️-the-zero-cold-start-advantage-historical-data-imports) for the full integration rule.
+
+**What you get immediately:** The routing engine enters production already knowing which actions succeed for which task types — across your entire history. The [benchmark data](BENCHMARKS.md) shows this delivers 94% success rate from scenario #1, versus 48% for a cold-start agent learning from scratch.
+
+---
+
+### Path B — You Are Starting Fresh
+
+No existing logs. This is a clean integration.
+
+```
+1. Install the SDK (pip or npm — see Quick Start below)
+2. Decorate your action functions with @li.action("your_task_name")
+3. Choose task names that describe the problem category your
+   agent is solving, not the action itself
+4. Run in Recommend mode — LayerInfinite observes outcomes
+   without interfering with your agent's decisions
+5. After 50–100 logged outcomes, the probability model has
+   enough signal to start making useful recommendations
+6. Switch to Auto mode — routing is now data-driven
+```
+
+**What you get:** A learning system that improves with every production call. The routing engine starts exploring, builds a probability model from your real outcomes, and converges to near-optimal routing by the time you have ~100 logged outcomes per task type.
 
 ---
 
@@ -167,19 +221,6 @@ result = li.run("deploy_failure", deploy_id="deploy-4821")
 
 ---
 
-## Performance Benchmarks
-
-We evaluated LayerInfinite's routing engine against a baseline autonomous agent (powered by GPT-4o-mini) in a high-volume, simulated production environment. The workload consisted of complex customer support ticket resolutions across multiple failure states, requiring the agent to consistently select the optimal remediation strategy.
-
-| Operating Mode | Task Success Rate | Failure Reduction | Decision Architecture |
-|----------------|-------------------|-------------------|-----------------------|
-| **Baseline** (Raw LLM, No LayerInfinite) | 76.0% | — | Agent selects actions via standard system prompting |
-| **Recommend** (LLM + LayerInfinite) | 86.0% | **↓ 41.6%** | Agent integrates LayerInfinite probability scores |
-| **Auto** (Fully Autonomous Routing) | **95.0%** | **↓ 79.1%** | LayerInfinite deterministically routes based on history |
-
-> **Analysis:** By replacing probabilistic LLM guessing with deterministic, outcome-based routing, the **Auto** mode achieved a 19% absolute increase in successful task resolutions. More importantly, it **reduced the overall agent failure rate by 79.1%**. The SDK actively learned which remediation strategies historically succeeded and automatically routed execution away from degraded or failing paths.
-
----
 
 ## ⚡️ The Zero Cold-Start Advantage: Historical Data Imports
 
@@ -188,9 +229,18 @@ Most decision systems require weeks of live traffic to build confidence. **Layer
 If you have existing logs of agent successes and failures — whether from custom databases, raw server logs, or other observability platforms — you can bulk-load them into LayerInfinite via the Import API. 
 
 > [!IMPORTANT]
-> **API Key Continuity is Critical:** You must use the **exact same `api_key`** for the historical import as you use when initializing the SDK (`li = Layerinfinite(api_key="...")`). 
+> **The Golden Rule of Integration: Semantic Consistency** 
 > 
-> When the keys match, the routing engine immediately recognizes the imported tasks and actions. The moment you deploy your agent, it will boot up making highly optimized, data-driven decisions based on your entire historical production dataset.
+> When you import raw historical logs from LangChain, AutoGen, or any custom framework, LayerInfinite's semantic engine cleans the messy data and generates **canonical Task and Action names** on your Dashboard. 
+> 
+> To achieve the "Zero Cold-Start" advantage, your SDK integration **must perfectly mirror** those dashboard names.
+>
+> **The 3-Step Integration Rule:**
+> 1. **Check the Dashboard:** Open the Recommendations page and identify the canonical task (e.g., `"stripe_refund_issue"`) and action (e.g., `"process_full_refund"`).
+> 2. **Map the Task:** Use that exact string in your decorator: `@li.action("stripe_refund_issue")`.
+> 3. **Map the Action:** Ensure your underlying function name matches the action string: `def process_full_refund(...):`.
+> 
+> **Why this matters:** If you invent new names in your code instead of using the dashboard's canonical names, the SDK will treat them as brand-new tools with zero history—completely destroying your historical data advantage!
 
 ---
 

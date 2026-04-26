@@ -15,7 +15,7 @@ import urllib.parse
 
 LAYERINFINITE_API_KEY = os.getenv("LAYERINFINITE_API_KEY", "")
 OPENAI_API_KEY        = os.getenv("OPENAI_API_KEY", "")
-LAYERINFINITE_BASE    = os.getenv("LAYERINFINITE_BASE", "https://api.layerinfinite.app")
+LAYERINFINITE_BASE    = os.getenv("LAYERINFINITE_BASE", "https://layerinfinite.me")
 OPENAI_MODEL          = "gpt-4o-mini"
 AGENT_ID              = "realworld"
 COST_PER_CALL         = 0.000075

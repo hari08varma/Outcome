@@ -5,20 +5,19 @@ import time
 from pathlib import Path
 import openai
 
+# Initialize LayerInfinite SDK
 try:
-    from layerinfinite import Layerinfinite, LogOutcomeRequest
-    from layerinfinite.exceptions import LowConfidenceError
+    from layerinfinite import Layerinfinite
 except ImportError:
     _LOCAL_SDK = Path(__file__).resolve().parent / "layer5" / "sdks" / "python"
-    if _LOCAL_SDK.exists():
-        sys.path.insert(0, str(_LOCAL_SDK))
-    from layerinfinite import Layerinfinite, LogOutcomeRequest
-    from layerinfinite.exceptions import LowConfidenceError
+    sys.path.insert(0, str(_LOCAL_SDK))
+    from layerinfinite import Layerinfinite
+
+LI_API_KEY = os.getenv("LI_API_KEY", "")
+LI_BASE_URL = os.getenv("LI_BASE_URL", "https://layerinfinite.me")
+li = Layerinfinite(api_key=LI_API_KEY, agent_id="dev_agent_assist", mode="assist", base_url=LI_BASE_URL)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-LI_API_KEY     = os.getenv("LI_API_KEY",     "")
-LI_AGENT_ID    = os.getenv("LI_AGENT_ID",    "dev_agent_2")
-LI_BASE_URL    = os.getenv("LI_BASE_URL",    "https://king-prawn-app-oiwpl.ondigitalocean.app")
 openai.api_key = OPENAI_API_KEY
 
 TICKET_TYPES = {
@@ -29,11 +28,80 @@ TICKET_TYPES = {
 }
 ALL_ACTIONS = list({a for rates in TICKET_TYPES.values() for a in rates})
 
-TEST_PLAN = [
-    ("baseline", 10),
-    ("assist", 10),
-    ("auto", 10),
-]
+# ==========================================
+# Real World Example: Decorating Functions
+# ==========================================
+# In a real-world agent, developers explicitly decorate their functions
+# with @li.action(task_name). This tells LayerInfinite exactly which task 
+# this function is trying to solve.
+
+@li.action("build_failed")
+def trigger_rebuild():
+    success = random.random() < 0.60
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to trigger rebuild")
+    return True
+
+@li.action("build_failed")
+def revert_commit():
+    success = random.random() < 0.85
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to revert commit")
+    return True
+
+@li.action("security_vulnerability")
+def notify_security_team():
+    success = random.random() < 0.99
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to notify security team")
+    return True
+
+@li.action("security_vulnerability")
+def auto_patch():
+    success = random.random() < 0.40
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to auto patch")
+    return True
+
+@li.action("pr_review")
+def comment_on_pr():
+    success = random.random() < 0.90
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to comment on PR")
+    return True
+
+@li.action("pr_review")
+def ignore_warning():
+    success = random.random() < 0.10
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to ignore warning")
+    return True
+
+@li.action("dependency_conflict")
+def auto_patch_dependency():
+    success = random.random() < 0.70
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to patch dependency")
+    return True
+
+@li.action("dependency_conflict")
+def revert_commit_dependency():
+    success = random.random() < 0.50
+    time.sleep(random.uniform(0.1, 0.3))
+    if not success: raise Exception("Failed to revert commit")
+    return True
+
+# We store them in a dictionary so our simulated agent can call them by name
+ACTION_FUNCS = {
+    "build_failed:trigger_rebuild": trigger_rebuild,
+    "build_failed:revert_commit": revert_commit,
+    "security_vulnerability:notify_security_team": notify_security_team,
+    "security_vulnerability:auto_patch": auto_patch,
+    "pr_review:comment_on_pr": comment_on_pr,
+    "pr_review:ignore_warning": ignore_warning,
+    "dependency_conflict:auto_patch": auto_patch_dependency,
+    "dependency_conflict:revert_commit": revert_commit_dependency
+}
 
 def normalize_action(raw):
     if not isinstance(raw, str): return None
@@ -43,140 +111,87 @@ def normalize_action(raw):
         if action in candidate: return action
     return None
 
-HANDLERS = {}
-
-def build_li(mode: str) -> Layerinfinite:
-    return Layerinfinite(
-        api_key=LI_API_KEY, agent_id=LI_AGENT_ID, mode=mode,
-        base_url=LI_BASE_URL, timeout=10.0, max_retries=3, auto_fallback=True,
-        confidence_threshold=0.35
-    )
-
-def register_actions(li: Layerinfinite):
-    for t in TICKET_TYPES:
-        for a in ALL_ACTIONS:
-            def _make_handler(ticket, act):
-                @li.action(ticket, name=act)
-                def handler():
-                    rate = TICKET_TYPES.get(ticket, {}).get(act, 0.15)
-                    success = random.random() < rate
-                    if not success: raise RuntimeError(f"Failed {act}")
-                    return {"action": act, "status": "resolved"}
-                return handler
-            HANDLERS[f"{t}:{a}"] = _make_handler(t, a)
-
-def simulate_environment(ticket_type: str, action: str):
-    handler = HANDLERS.get(f"{ticket_type}:{action}")
+def execute_action(ticket_type: str, action: str):
+    """Simulates executing the action in the infrastructure."""
+    handler = ACTION_FUNCS.get(f"{ticket_type}:{action}")
     if not handler:
         return False
+        
     try:
+        # Executing the decorated function automatically logs the outcome to LayerInfinite
         handler()
         return True
     except Exception:
         return False
 
 def call_openai(ticket_type: str) -> str:
-    prompt = f"Dev Support Ticket: '{ticket_type}'. Choose single best action from {ALL_ACTIONS}. Reply ONLY action name."
+    """Asks the LLM to decide the best action based on the ticket type."""
+    prompt = (
+        f"You are an autonomous DevOps support agent. A new ticket has come in with the issue type: '{ticket_type}'. "
+        f"Choose the single best action to resolve this issue from the following options: {ALL_ACTIONS}. "
+        f"Reply ONLY with the exact action name and nothing else."
+    )
+    
+    # [LAYERINFINITE ASSIST MODE]
+    # Ask LayerInfinite for a data-driven suggestion based on historical production outcomes
     try:
-        resp = openai.ChatCompletion.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], temperature=0)
+        suggestion = li.suggest(ticket_type)
+        if suggestion and getattr(suggestion, "action_name", None):
+            prompt += f"\n\nHINT: LayerInfinite recommends '{suggestion.action_name}' (Confidence: {suggestion.confidence:.2f})"
+            print(f"  [LI Assist] Added hint to prompt: {suggestion.action_name}")
+    except Exception as e:
+        pass
+    
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o-mini", 
+            messages=[{"role": "user", "content": prompt}], 
+            temperature=0
+        )
         action = normalize_action(resp["choices"][0]["message"]["content"].strip())
-    except Exception:
+    except Exception as e:
+        print(f"OpenAI API Error: {e}")
+        # Fallback if OpenAI fails or API key is missing
         action = random.choice(list(TICKET_TYPES[ticket_type].keys()))
+        
     return action or "comment_on_pr"
 
-def dispatch_baseline(ticket_type: str):
-    action = call_openai(ticket_type)
-    rate = TICKET_TYPES.get(ticket_type, {}).get(action, 0.15)
-    success = random.random() < rate
-    return action, success, "openai"
-
-def dispatch_observe(li: Layerinfinite, ticket_type: str):
-    action = call_openai(ticket_type)
-    success = simulate_environment(ticket_type, action)
-    return action, success, "openai_observe"
-
-def dispatch_recommend(li: Layerinfinite, ticket_type: str):
-    action = None; source = "openai_fallback"
-    scores = li.scores(ticket_type)
-    if scores and getattr(scores, "top_action", None):
-        action = normalize_action(scores.top_action.action_name)
-        source = "li_scores"
-    if not action:
-        rec = li.recommend(ticket_type)
-        if rec and getattr(rec, "recommendation", None):
-            action = normalize_action(rec.recommendation)
-            source = "li_recommend"
-    if not action: action = call_openai(ticket_type)
+def process_ticket(ticket_type: str):
+    print(f"Processing ticket: {ticket_type}...")
     
-    success = simulate_environment(ticket_type, action)
-    return action, success, source
-
-def dispatch_assist(li: Layerinfinite, ticket_type: str):
-    action = None; source = "openai_fallback"
-    try:
-        s = li.suggest(ticket_type)
-        if s and getattr(s, "action_name", None):
-            action = normalize_action(s.action_name); source = "li_suggest"
-    except Exception: pass
-    if not action: action = call_openai(ticket_type)
-    success = simulate_environment(ticket_type, action)
-    return action, success, source
-
-def dispatch_auto(li: Layerinfinite, ticket_type: str):
-    try:
-        res = li.run(ticket_type)
-        return res.get("action", "li_auto") if isinstance(res, dict) else "li_auto", True, "li_auto"
-    except LowConfidenceError as exc:
-        action = normalize_action(getattr(exc.suggestion, "action_name", None)) or call_openai(ticket_type)
-        success = simulate_environment(ticket_type, action)
-        return action, success, "li_abstained"
-    except Exception:
-        return "auto_error", False, "li_error"
-
-import concurrent.futures
-
-def run_mode(mode: str, count: int) -> list:
-    print(f"\n[{mode.upper()}] Running {count} tickets concurrently (aiming for 60 rpm)...")
-    li = None if mode == "baseline" else build_li(mode)
-    if li: register_actions(li)
-    records = []
+    # 1. Agent observes the ticket and decides what to do using LLM
+    action = call_openai(ticket_type)
+    print(f"  -> Agent decided to execute: {action}")
     
-    def process_ticket(i):
-        t = random.choice(list(TICKET_TYPES.keys()))
-        if mode == "baseline": act, suc, src = dispatch_baseline(t)
-        elif mode == "observe": act, suc, src = dispatch_observe(li, t)
-        elif mode == "recommend": act, suc, src = dispatch_recommend(li, t)
-        elif mode == "assist": act, suc, src = dispatch_assist(li, t)
-        else: act, suc, src = dispatch_auto(li, t)
+    # 2. Agent executes the action in the environment
+    success = execute_action(ticket_type, action)
+    
+    if success:
+        print(f"  -> [SUCCESS] Action {action} resolved the ticket.")
+    else:
+        print(f"  -> [FAILED] Action {action} did not resolve the ticket.")
         
-        # Enforce rate limits natively per thread
-        time.sleep(1.0 + random.uniform(0, 0.15))
-        return {"ticket": t, "action": act, "success": suc, "source": src}
+    return success
 
-    # Use 3 concurrent workers to guarantee ~60 RPM despite OpenAI's latency
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(process_ticket, i) for i in range(count)]
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            records.append(future.result())
-            if (i + 1) % 25 == 0:
-                oks = sum(1 for r in records if r["success"])
-                print(f"    progress: {i + 1}/{count} ({(oks / (i + 1)) * 100:.1f}% win)")
-
-    return records
+def run_agent(ticket_count: int = 10):
+    print(f"Starting Autonomous Dev Support Agent (processing {ticket_count} tickets)...\n")
+    
+    successes = 0
+    tickets = [random.choice(list(TICKET_TYPES.keys())) for _ in range(ticket_count)]
+    
+    for i, ticket in enumerate(tickets):
+        print(f"--- Ticket {i+1}/{ticket_count} ---")
+        if process_ticket(ticket):
+            successes += 1
+        time.sleep(1.0) # Rate limiting to avoid OpenAI 429s
+        
+    print("\n--- Final Report ---")
+    print(f"Total Tickets Processed: {ticket_count}")
+    print(f"Successfully Resolved: {successes}")
+    print(f"Resolution Rate: {(successes/ticket_count)*100:.1f}%")
 
 if __name__ == "__main__":
-    results = {}
-    for mode, count in TEST_PLAN:
-        results[mode] = run_mode(mode, count)
-        oks = sum(1 for r in results[mode] if r["success"])
-        print(f" -> {mode} Finished: {oks}/{count} ({(oks/count)*100:.1f}%)")
+    if not OPENAI_API_KEY:
+        print("WARNING: OPENAI_API_KEY environment variable not set. Agent will fallback to random actions.\n")
     
-    print("\nFINAL OVERVIEW:")
-    for mode, recs in results.items():
-        oks = sum(1 for r in recs if r["success"])
-        print(f" {mode:<12}: {oks}/{len(recs)} = {(oks/len(recs))*100:.1f}% Win Rate")
-
-
-import time
-time.sleep(5)
-print('Flush complete.')
+    run_agent(20)

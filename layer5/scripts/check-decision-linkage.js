@@ -45,7 +45,7 @@ async function main() {
     const baseUrl = process.env.PRIMARY_API_URL
         || process.env.LAYERINFINITE_BASE_URL
         || process.env.LAYERINFINITE_API_URL
-        || 'https://api.layerinfinite.app';
+        || 'https://layerinfinite.me';
 
     const apiKey = process.env.LAYERINFINITE_API_KEY;
     const issues = parseIssues(process.env.DECISION_CHECK_ISSUES);

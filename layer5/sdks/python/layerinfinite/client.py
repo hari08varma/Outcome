@@ -48,7 +48,7 @@ logger = logging.getLogger("layerinfinite")
 
 _VALID_MODES = ("recommend", "assist", "auto")
 _SDK_VERSION = "0.4.2"
-_DEFAULT_BASE_URL = "https://api.layerinfinite.app"
+_DEFAULT_BASE_URL = "https://layerinfinite.me"
 _BASE_URLS_ENV = "LAYERINFINITE_BASE_URLS"
 _SCORES_CACHE_TTL_SECONDS = 15 * 60
 _RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60

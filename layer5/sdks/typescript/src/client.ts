@@ -36,7 +36,7 @@ import type {
     WrappedActionFunction,
 } from './types.js';
 
-const DEFAULT_BASE_URL = 'https://api.layerinfinite.app';
+const DEFAULT_BASE_URL = 'https://layerinfinite.me';
 const BASE_URLS_ENV = 'LAYERINFINITE_BASE_URLS';
 const PENDING_OUTCOMES_FILE_ENV = 'LAYERINFINITE_PENDING_OUTCOMES_FILE';
 const QUARANTINED_OUTCOMES_FILE_ENV = 'LAYERINFINITE_QUARANTINED_OUTCOMES_FILE';

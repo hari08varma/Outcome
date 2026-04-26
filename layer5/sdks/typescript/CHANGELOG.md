@@ -35,7 +35,7 @@ Without SMOKE_TEST_API_KEY, smoke tests are skipped (not failed).
 - Removed exports: `instrument`, `InstrumentOptions`, `InstrumentResult`, `CausalGraph`,
   `TracedResponse`, `ContractClient`, all tracing types
 - Removed source files: `instrument.ts`, `interceptor.ts`, `pipeline/`, `tracing/`, `contracts/`
-- Default base URL changed from `outcome-production.up.railway.app` to `api.layerinfinite.app`
+- Default base URL changed from `outcome-production.up.railway.app` to `layerinfinite.me`
 
 ### Added
 - `Layerinfinite` class with three modes: `recommend`, `assist`, `auto`
