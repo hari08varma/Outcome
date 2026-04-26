@@ -1,6 +1,6 @@
 [project]
 name = "layerinfinite-sdk"
-version = "0.4.2"
+version = "0.4.3"
 description = "Decision intelligence layer for AI agents — Layerinfinite"
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,9 +34,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://layerinfinite.ai"
-Repository = "https://github.com/hari08varma/Outcome"
-Documentation = "https://docs.layerinfinite.ai"
+Homepage = "https://layerinfinite.app"
+Repository = "https://github.com/harinathpathipaka-commits/Layerinfinite-AI"
+Documentation = "https://layerinfinite.app"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

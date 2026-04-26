@@ -1,6 +1,6 @@
 {
     "name": "@layerinfinite/sdk",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "description": "Decision intelligence layer for AI agents. No LLMs. Just math.",
     "main": "dist/index.js",
     "module": "dist/index.mjs",
@@ -29,7 +29,7 @@
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/hari08varma/Outcome"
+        "url": "https://github.com/harinathpathipaka-commits/Layerinfinite-AI"
     },
     "files": [
         "dist",
