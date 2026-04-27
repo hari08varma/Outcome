@@ -21,6 +21,7 @@ import AgentsSettings from './pages/dashboard/settings/agents';
 import ActionsSettings from './pages/dashboard/settings/actions';
 import ImportSettings from './pages/dashboard/settings/import';
 import LandingPage from './pages/LandingPage';
+import DocsPage from './pages/DocsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import NavBar from './components/NavBar';
 import { ToastContainer, ToastContext } from './components/Toast';
@@ -59,6 +60,7 @@ function App(): React.ReactElement {
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/" element={<LandingPage />} />
+          <Route path="/docs" element={<DocsPage />} />
 
           <Route path="/dashboard" element={<DashboardShell />}>
             <Route index element={<Overview />} />
