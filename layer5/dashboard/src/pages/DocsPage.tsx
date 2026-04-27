@@ -40,16 +40,19 @@ If your agent has been running in production — even if it was using LangChain,
 
 \\\`\\\`\\\`
 1. Export logs from your current observability tool or database
-2. Import them via the LayerInfinite Import API (one API call)
+2. Import them directly from the Dashboard — upload your log file 
+   and LayerInfinite normalizes them automatically.
 3. Open the Dashboard → Recommendations page
-4. LayerInfinite has already normalized your messy logs into
-   canonical task names and action names, ranked by success rate
-5. Copy those exact names into your @li.action decorators
+4. Identify the canonical task names and action names, now ranked 
+   by success rate
+5. Copy those exact names into your SDK integration
 6. Deploy — your agent starts with a fully calibrated probability
    model on the very first production call
 \\\`\\\`\\\`
 
-> **The names on the Recommendations page are canonical.** They are the keys the routing engine uses to map live SDK calls to historical outcomes. If you use different names in your decorators, you break the link — and your agent starts cold, as if it had no history at all.
+> 🚨 **CRITICAL: The Golden Rule of Integration**
+> 
+> **The names on the Recommendations page are canonical.** They are the keys the routing engine uses to map live SDK calls to historical outcomes. If you use different names in your code, you break the link — and your agent starts cold, as if it had no history at all.
 
 **What you get immediately:** The routing engine enters production already knowing which actions succeed for which task types — across your entire history. Benchmark data shows this delivers 94% success rate from scenario #1, versus 48% for a cold-start agent learning from scratch.
 
@@ -132,6 +135,9 @@ const hotfixForward = li.action('deploy_failure', 'hotfix_forward', async (deplo
 await rollbackRelease('deploy-4821');
 \\\`\\\`\\\`
 
+> **Why the wrapper instead of a decorator?**
+> Python has native support for function decorators. TypeScript's decorator support is largely restricted to classes. To provide maximum type safety for standard \\\`async\\\` functions, the TS SDK uses the \\\`li.action()\\\` wrapper pattern. They accomplish the exact same outcome logging and routing.
+
 ### How \\\`@li.action\\\` works
 
 | Concept | What it means | Example |
@@ -187,18 +193,20 @@ result = li.run("deploy_failure", deploy_id="deploy-4821")
 
 Most decision systems require weeks of live traffic to build confidence. **LayerInfinite bypasses the cold-start problem entirely.**
 
-If you have existing logs of agent successes and failures — whether from custom databases, raw server logs, or other observability platforms — you can bulk-load them via the Import API.
+If you have existing logs of agent successes and failures — whether from custom databases, raw server logs, or other observability platforms — you can bulk-load them into LayerInfinite via the Dashboard upload. 
 
-> **The Golden Rule of Integration: Semantic Consistency**
->
-> When you import raw historical logs, LayerInfinite's semantic engine generates **canonical Task and Action names** on your Dashboard.
+> 🚨 **CRITICAL: The Golden Rule of Integration** 
+> 
+> When you import raw historical logs from LangChain, AutoGen, or any custom framework, LayerInfinite's semantic engine cleans the messy data and generates **canonical Task and Action names** on your Dashboard. 
+> 
+> To achieve the "Zero Cold-Start" advantage, your SDK integration **must perfectly mirror** those dashboard names.
 >
 > **The 3-Step Integration Rule:**
-> 1. **Check the Dashboard:** Open Recommendations and identify the canonical task and action names.
-> 2. **Map the Task:** Use that exact string in your decorator: \\\`@li.action("stripe_refund_issue")\\\`
-> 3. **Map the Action:** Ensure your function name matches: \\\`def process_full_refund(...):\\\`
->
-> If you invent new names instead of using the dashboard's canonical names, the SDK treats them as brand-new tools with zero history — destroying your historical data advantage.
+> 1. **Check the Dashboard:** Open the Recommendations page and identify the canonical task (e.g., \\\`"stripe_refund_issue"\\\`) and action (e.g., \\\`"process_full_refund"\\\`).
+> 2. **Map the Task:** Use that exact string in your integration: \\\`@li.action("stripe_refund_issue")\\\`
+> 3. **Map the Action:** Ensure your underlying function name matches the action string: \\\`def process_full_refund(...):\\\`
+> 
+> **Why this matters:** If you invent new names in your code instead of using the dashboard's canonical names, the SDK will treat them as brand-new tools with zero history—completely destroying your historical data advantage!
 
 ---
 
@@ -234,6 +242,19 @@ Unlike other observability and evaluation tools that rely on "LLM-as-a-judge" to
 - **Automatic PII Scrubbing:** The SDK strips sensitive parameters before they ever leave your infrastructure.
 
 Your data stays in your database, and the math stays transparent.
+
+### 🛡️ Agent Trust Scoring
+
+LayerInfinite doesn't just route actions; it tracks the overall reliability of your agents.
+
+**What is a Trust Score?**
+Every agent receives a real-time Trust Score (0.0 to 1.0) calculated from its recent rolling success rate across all tasks. 
+
+*   **0.9+ (High Trust):** The agent is performing optimally.
+*   **0.6 - 0.8 (Degraded):** The agent is struggling with certain tasks. LayerInfinite will fire a degradation alert.
+*   **< 0.6 (Critical):** The agent is failing consistently.
+
+If an agent's trust score drops below your configured threshold, LayerInfinite can **auto-suspend** the agent (failing closed or returning a safe fallback) to prevent catastrophic cascading failures in production.
 
 ---
 

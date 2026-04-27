@@ -196,9 +196,9 @@ export default function ProtectedRoute({ children }: Props) {
                     padding: 24,
                 }}>
                     <div style={{ width: '100%', maxWidth: 480 }}>
-                        <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>One last step.</h1>
+                        <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Tell us about your agent</h1>
                         <p style={{ color: '#888888', fontSize: 14, marginBottom: 32, lineHeight: 1.6 }}>
-                            Before we grant access, we need to know a little bit about what you're building so we can allocate the right resources.
+                            We review every application to allocate the right infrastructure. This takes less than a minute.
                         </p>
 
                         <form onSubmit={handleSurveySubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -210,29 +210,11 @@ export default function ProtectedRoute({ children }: Props) {
                                     type="text"
                                     value={agentType}
                                     onChange={(e) => setAgentType(e.target.value)}
-                                    placeholder="e.g. Copilot, Autonomous Task Agent"
+                                    placeholder="e.g. LangChain customer support agent, AutoGen coding assistant"
                                     required
                                     style={{
                                         width: '100%', height: 48, background: '#111111', border: '1px solid #1A1A1A', color: '#FFFFFF', padding: '12px 16px',
                                         fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 13, outline: 'none', transition: 'border-color 150ms'
-                                    }}
-                                    onFocus={(e) => e.target.style.borderColor = '#00FF85'}
-                                    onBlur={(e) => e.target.style.borderColor = '#1A1A1A'}
-                                />
-                            </div>
-
-                            <div>
-                                <label style={{ display: 'block', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#888888', marginBottom: 8 }}>
-                                    Why do you want to use LayerInfinite?
-                                </label>
-                                <textarea
-                                    value={useCase}
-                                    onChange={(e) => setUseCase(e.target.value)}
-                                    placeholder="e.g. I need to track which agent actions lead to user conversions"
-                                    required
-                                    style={{
-                                        width: '100%', height: 100, background: '#111111', border: '1px solid #1A1A1A', color: '#FFFFFF', padding: '12px 16px',
-                                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 13, outline: 'none', transition: 'border-color 150ms', resize: 'vertical'
                                     }}
                                     onFocus={(e) => e.target.style.borderColor = '#00FF85'}
                                     onBlur={(e) => e.target.style.borderColor = '#1A1A1A'}
@@ -258,6 +240,24 @@ export default function ProtectedRoute({ children }: Props) {
                                 />
                             </div>
 
+                            <div>
+                                <label style={{ display: 'block', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#888888', marginBottom: 8 }}>
+                                    What's the biggest mistake your agent keeps making?
+                                </label>
+                                <textarea
+                                    value={useCase}
+                                    onChange={(e) => setUseCase(e.target.value)}
+                                    placeholder="e.g. It retries the same failed API call 5 times before escalating to a human"
+                                    required
+                                    style={{
+                                        width: '100%', height: 100, background: '#111111', border: '1px solid #1A1A1A', color: '#FFFFFF', padding: '12px 16px',
+                                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 13, outline: 'none', transition: 'border-color 150ms', resize: 'vertical'
+                                    }}
+                                    onFocus={(e) => e.target.style.borderColor = '#00FF85'}
+                                    onBlur={(e) => e.target.style.borderColor = '#1A1A1A'}
+                                />
+                            </div>
+
                             <button
                                 type="submit"
                                 disabled={submitting}
@@ -271,14 +271,26 @@ export default function ProtectedRoute({ children }: Props) {
                             >
                                 {submitting ? 'Saving...' : 'Join Waitlist'}
                             </button>
-                            
-                            <button 
-                                type="button"
-                                onClick={() => supabase.auth.signOut()}
-                                style={{ background: 'none', border: 'none', color: '#888888', fontSize: 13, cursor: 'pointer', marginTop: 16 }}
-                            >
-                                Sign out
-                            </button>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                                <a
+                                    href="/docs"
+                                    style={{ color: '#00FF85', fontSize: 13, textDecoration: 'none', borderBottom: '1px solid rgba(0,255,133,0.3)', transition: 'border-color 150ms' }}
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = '#00FF85'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(0,255,133,0.3)'}
+                                >
+                                    Learn more →
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => supabase.auth.signOut()}
+                                    style={{ background: 'none', border: 'none', color: '#555555', fontSize: 13, cursor: 'pointer' }}
+                                    onMouseEnter={e => e.currentTarget.style.color = '#888888'}
+                                    onMouseLeave={e => e.currentTarget.style.color = '#555555'}
+                                >
+                                    Sign out
+                                </button>
+                            </div>
                         </form>
                     </div>
                 </div>
