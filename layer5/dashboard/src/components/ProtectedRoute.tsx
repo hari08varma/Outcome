@@ -32,7 +32,7 @@ export default function ProtectedRoute({ children }: Props) {
             try {
                 const { data, error } = await supabase
                     .from('user_profiles')
-                    .select('access_status, agent_type')
+                    .select('access_status, agent_type, use_case, estimated_volume')
                     .eq('id', userId)
                     .single();
 
@@ -40,7 +40,8 @@ export default function ProtectedRoute({ children }: Props) {
 
                 if (data) {
                     setAccessStatus(data.access_status || 'pending');
-                    setHasCompletedSurvey(!!data.agent_type);
+                    const isSurveyComplete = Boolean(data.agent_type && data.use_case && data.estimated_volume);
+                    setHasCompletedSurvey(isSurveyComplete);
                 } else if (error && error.code === 'PGRST116') {
                     if (attempts < 5) {
                         timeoutId = setTimeout(() => checkProfile(userId, attempts + 1), 1000);
