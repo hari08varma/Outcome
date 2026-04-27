@@ -351,7 +351,23 @@ export default function LandingPage(): React.ReactElement {
       {/* Nav */}
       <nav className="fixed top-0 w-full z-50 border-b border-[#1a1a24] bg-black/85 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <span className="text-xl font-bold tracking-tight">
+          <span className="flex items-center gap-2 text-xl font-bold tracking-tight">
+            <svg width="28" height="28" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0" y="0" width="80" height="80" rx="4" fill="#111118" />
+              {[0,1,2,3].map(r => [0,1,2,3].map(c => (
+                <rect
+                  key={`${r}-${c}`}
+                  x={8 + c * 16}
+                  y={8 + r * 16}
+                  width="15"
+                  height="15"
+                  rx="1.5"
+                  fill={r === 1 && c === 2 ? '#00FF85' : 'transparent'}
+                  stroke={r === 1 && c === 2 ? '#00FF85' : '#333333'}
+                  strokeWidth="0.8"
+                />
+              )))}
+            </svg>
             layer<span className="text-[#00FF85]">infinite</span>
           </span>
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#888888]">

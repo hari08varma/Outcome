@@ -28,15 +28,60 @@ LayerInfinite is completely framework-agnostic:
 
 ---
 
+## Choose Your Starting Point
+
+Your integration path depends on one question: **do you have existing agent logs?**
+
+This is not a minor detail. Teams with production history get a fundamentally different — and dramatically more powerful — entry point than teams starting from scratch.
+
+### Path A — You Have Existing Agent Logs
+
+If your agent has been running in production — even if it was using LangChain, AutoGen, CrewAI, or a completely custom framework — you are not starting from zero.
+
+\\\`\\\`\\\`
+1. Export logs from your current observability tool or database
+2. Import them via the LayerInfinite Import API (one API call)
+3. Open the Dashboard → Recommendations page
+4. LayerInfinite has already normalized your messy logs into
+   canonical task names and action names, ranked by success rate
+5. Copy those exact names into your @li.action decorators
+6. Deploy — your agent starts with a fully calibrated probability
+   model on the very first production call
+\\\`\\\`\\\`
+
+> **The names on the Recommendations page are canonical.** They are the keys the routing engine uses to map live SDK calls to historical outcomes. If you use different names in your decorators, you break the link — and your agent starts cold, as if it had no history at all.
+
+**What you get immediately:** The routing engine enters production already knowing which actions succeed for which task types — across your entire history. Benchmark data shows this delivers 94% success rate from scenario #1, versus 48% for a cold-start agent learning from scratch.
+
+### Path B — You Are Starting Fresh
+
+No existing logs. This is a clean integration.
+
+\\\`\\\`\\\`
+1. Install the SDK (pip or npm — see Quick Start below)
+2. Decorate your action functions with @li.action("your_task_name")
+3. Choose task names that describe the problem category your
+   agent is solving, not the action itself
+4. Run in Recommend mode — LayerInfinite observes outcomes
+   without interfering with your agent's decisions
+5. After 50–100 logged outcomes, the probability model has
+   enough signal to start making useful recommendations
+6. Switch to Auto mode — routing is now data-driven
+\\\`\\\`\\\`
+
+**What you get:** A learning system that improves with every production call. The routing engine starts exploring, builds a probability model from your real outcomes, and converges to near-optimal routing by the time you have ~100 logged outcomes per task type.
+
+---
+
 ## Quick Start
 
 ### Python
 
-\`\`\`bash
+\\\`\\\`\\\`bash
 pip install layerinfinite-sdk
-\`\`\`
+\\\`\\\`\\\`
 
-\`\`\`python
+\\\`\\\`\\\`python
 from layerinfinite import Layerinfinite
 
 li = Layerinfinite(
@@ -53,17 +98,21 @@ def rollback_release(deploy_id):
 def hotfix_forward(deploy_id):
     return ci.apply_hotfix(deploy_id)
 
+@li.action("deploy_failure")
+def scale_canary(deploy_id):
+    return infra.scale_canary(deploy_id, replicas=1)
+
 # Outcomes are logged automatically.
 rollback_release("deploy-4821")
-\`\`\`
+\\\`\\\`\\\`
 
 ### TypeScript / JavaScript
 
-\`\`\`bash
+\\\`\\\`\\\`bash
 npm install layerinfinite-sdk
-\`\`\`
+\\\`\\\`\\\`
 
-\`\`\`typescript
+\\\`\\\`\\\`typescript
 import { Layerinfinite } from 'layerinfinite-sdk';
 
 const li = new Layerinfinite({
@@ -76,95 +125,115 @@ const rollbackRelease = li.action('deploy_failure', 'rollback_release', async (d
     return await ci.rollback(deployId);
 });
 
-await rollbackRelease('deploy-4821');
-\`\`\`
+const hotfixForward = li.action('deploy_failure', 'hotfix_forward', async (deployId: string) => {
+    return await ci.applyHotfix(deployId);
+});
 
-### How \`@li.action\` works
+await rollbackRelease('deploy-4821');
+\\\`\\\`\\\`
+
+### How \\\`@li.action\\\` works
 
 | Concept | What it means | Example |
 |---------|---------------|---------|
-| **Task** | The category of problem your agent is solving | \`"deploy_failure"\`, \`"payment_retry"\` |
-| **Action** | The specific strategy the agent uses | \`rollback_release\`, \`hotfix_forward\` |
+| **Task** | The category of problem your agent is solving | \\\`"deploy_failure"\\\`, \\\`"data_quality_check"\\\`, \\\`"payment_retry"\\\` |
+| **Action** | The specific strategy the agent uses to solve it | \\\`rollback_release\\\`, \\\`hotfix_forward\\\`, \\\`scale_canary\\\` |
 | **Outcome** | Whether the action succeeded or failed | Captured automatically by the decorator |
+
+You define the task and register multiple actions for it. LayerInfinite tracks which actions succeed and fail for each task, then routes future decisions to the highest-performing action.
 
 ---
 
 ## Modes
 
-### \`recommend\` (default)
+LayerInfinite operates in three modes, each giving your agent a different level of autonomy.
+
+### \\\`recommend\\\` (default)
 **Passive observation.** LayerInfinite watches every decorated action call, logs outcomes, and builds scoring models — but never interferes with your agent's decisions.
 
-\`\`\`python
+\\\`\\\`\\\`python
 li = Layerinfinite(api_key="...", agent_id="my-agent", mode="recommend")
 
-scores = li.scores("deploy_failure")
-rec = li.recommend("deploy_failure")
-\`\`\`
+scores = li.scores("deploy_failure")        # Ranked actions by success probability
+rec = li.recommend("deploy_failure")        # Single recommendation with reasoning
+\\\`\\\`\\\`
 
-### \`assist\`
-**Advisory mode.** LayerInfinite provides suggestions via \`li.suggest()\`, but your agent decides whether to follow them.
+### \\\`assist\\\`
+**Advisory mode.** LayerInfinite provides suggestions via \\\`li.suggest()\\\`, but your agent decides whether to follow them.
 
-\`\`\`python
+\\\`\\\`\\\`python
 li = Layerinfinite(api_key="...", agent_id="my-agent", mode="assist")
 
 suggestion = li.suggest("deploy_failure")
 # suggestion.action_name  → "rollback_release"
 # suggestion.confidence   → 0.87
-\`\`\`
+# suggestion.reason       → "rollback_release has 87% success rate across 142 outcomes."
+\\\`\\\`\\\`
 
-### \`auto\`
-**Fully autonomous.** LayerInfinite picks the highest-probability action and executes it directly.
+### \\\`auto\\\`
+**Fully autonomous.** LayerInfinite picks the highest-probability action and executes it directly. If the action fails and \\\`auto_fallback=True\\\`, it tries the next best action.
 
-> **If the LayerInfinite API is unreachable**, the SDK fails open — it executes the first registered action and queues telemetry locally for background retry.
+> **If the LayerInfinite API is unreachable**, the SDK fails open — it executes the first registered action for the task and queues all telemetry locally for background retry, so your agent never blocks on our infrastructure.
 
-\`\`\`python
+\\\`\\\`\\\`python
 li = Layerinfinite(api_key="...", agent_id="my-agent", mode="auto")
 
 result = li.run("deploy_failure", deploy_id="deploy-4821")
-\`\`\`
+\\\`\\\`\\\`
 
 ---
 
 ## The Zero Cold-Start Advantage
 
-Most decision systems require weeks of live traffic. **LayerInfinite bypasses the cold-start problem entirely.**
+Most decision systems require weeks of live traffic to build confidence. **LayerInfinite bypasses the cold-start problem entirely.**
 
-Import existing logs via the Import API and the routing engine enters production already knowing which actions succeed.
+If you have existing logs of agent successes and failures — whether from custom databases, raw server logs, or other observability platforms — you can bulk-load them via the Import API.
 
-> **The Golden Rule: Semantic Consistency**
+> **The Golden Rule of Integration: Semantic Consistency**
 >
-> When you import historical logs, LayerInfinite generates **canonical Task and Action names** on your Dashboard.
-> Your SDK integration **must mirror** those dashboard names exactly.
+> When you import raw historical logs, LayerInfinite's semantic engine generates **canonical Task and Action names** on your Dashboard.
 >
-> 1. **Check the Dashboard** → Recommendations page for canonical names
-> 2. **Map the Task:** \`@li.action("stripe_refund_issue")\`
-> 3. **Map the Action:** \`def process_full_refund(...):\`
+> **The 3-Step Integration Rule:**
+> 1. **Check the Dashboard:** Open Recommendations and identify the canonical task and action names.
+> 2. **Map the Task:** Use that exact string in your decorator: \\\`@li.action("stripe_refund_issue")\\\`
+> 3. **Map the Action:** Ensure your function name matches: \\\`def process_full_refund(...):\\\`
+>
+> If you invent new names instead of using the dashboard's canonical names, the SDK treats them as brand-new tools with zero history — destroying your historical data advantage.
 
 ---
 
-## Why LayerInfinite?
+## Why LayerInfinite? — Competitive Analysis
 
-| Capability | LayerInfinite | Langfuse | AgentOps | Braintrust |
-|------------|:---:|:---:|:---:|:---:|
-| **Outcome-based routing** | ✅ | ❌ | ❌ | ❌ |
-| **Auto-fallback** | ✅ | ❌ | ❌ | ❌ |
-| **Cross-session learning** | ✅ | ❌ | ❌ | ❌ |
-| **Decision latency** | Sub-5ms | N/A | N/A | N/A |
-| **Cold-start injection** | ✅ | ❌ | ❌ | ❌ |
-| **Agent trust scoring** | ✅ | ❌ | ❌ | ❌ |
-| **No LLM dependency** | ✅ | N/A | N/A | N/A |
+LayerInfinite is **not** an observability tool. It is a **decision layer**.
 
-**Observability tools** answer *"what happened?"*
+| Capability | LayerInfinite | Langfuse | AgentOps | Braintrust | Manual RL |
+|------------|:---:|:---:|:---:|:---:|:---:|
+| **Outcome-based action routing** | ✅ | ❌ | ❌ | ❌ | ⚠️ |
+| **Auto-fallback on failure** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Cross-session learning** | ✅ | ❌ | ❌ | ❌ | ⚠️ |
+| **Decision latency** | Sub-5ms | N/A | N/A | N/A | Variable |
+| **Decorator-based instrumentation** | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **Cold-start prior injection** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Agent trust scoring** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **No LLM dependency** | ✅ | N/A | N/A | N/A | ❌ |
 
-**LayerInfinite** answers *"what should the agent do next?"*
+### The Moat
+
+**Observability tools** (Langfuse, AgentOps, Braintrust) answer *"what happened?"* — they log traces, show you dashboards, and let you replay sessions.
+
+**LayerInfinite** answers *"what should the agent do next?"* — it takes the outcome data, computes action-level success probabilities in real-time, and actively routes your agent's next decision.
 
 This is the difference between a dashcam and an autopilot.
 
-### Zero-LLM Architecture
+### 🔒 Zero-LLM Architecture & Absolute Data Privacy
 
-- **100% Deterministic SQL:** Decisions calculated using mathematical probabilities in PostgreSQL materialized views.
-- **Strict Data Privacy:** Your production data is never sent to OpenAI, Anthropic, or any third-party API.
-- **Automatic PII Scrubbing:** The SDK strips sensitive parameters before they leave your infrastructure.
+Unlike other observability and evaluation tools that rely on "LLM-as-a-judge" to score outcomes, **LayerInfinite does not use external LLMs to make routing decisions.**
+
+- **100% Deterministic SQL:** Decisions are calculated using mathematical probabilities in PostgreSQL materialized views. There are no black-box hallucinations.
+- **Strict Data Privacy:** Because we don't use LLMs to evaluate your logs, **your production data is never sent to OpenAI, Anthropic, or any third-party API.**
+- **Automatic PII Scrubbing:** The SDK strips sensitive parameters before they ever leave your infrastructure.
+
+Your data stays in your database, and the math stays transparent.
 
 ---
 
@@ -175,8 +244,8 @@ LayerInfinite ships with a production dashboard at [layerinfinite.app](https://l
 - **Overview** — Agent health scores, outcome volume, success rate trends
 - **Actions** — Per-action success rates, sample counts, confidence scores
 - **Alerts** — Degradation detection, trust score drops
-- **Discrepancies** — Cross-event conflicts, expired signals
-- **Recommendations** — Data-driven action replacement suggestions
+- **Discrepancies** — Cross-event conflicts, expired signals, ingestion inconsistencies
+- **Recommendations** — Data-driven action replacement suggestions with reasoning
 
 ---
 
@@ -184,10 +253,11 @@ LayerInfinite ships with a production dashboard at [layerinfinite.app](https://l
 
 LayerInfinite is built on PostgreSQL materialized views, not vector databases. Decisions are deterministic and SQL-queryable.
 
-- **Append-only storage** — No outcome is ever deleted or overwritten.
-- **Deterministic scoring** — \`success_count / total_count * recency_weight\`
-- **PII scrubbing** — Automatic before logging.
-- **Durable queue** — Failed submissions persisted to disk and retried automatically.
+**Key design decisions:**
+- **Append-only storage** — No outcome is ever deleted or overwritten. Required for EU AI Act compliance.
+- **Deterministic scoring** — \\\`success_count / total_count * recency_weight\\\`. No black-box model weights.
+- **PII scrubbing** — The SDK automatically strips sensitive parameters before logging.
+- **Durable queue** — Failed outcome submissions are persisted to disk and retried automatically.
 
 ---
 
@@ -236,6 +306,26 @@ export default function DocsPage(): React.ReactElement {
       {/* Hero */}
       <section className="pt-28 pb-12 border-b border-[#1a1a24]" style={{ background: 'linear-gradient(to bottom, rgba(0,255,133,0.03), black)' }}>
         <div className="max-w-[820px] mx-auto px-6 text-center">
+          {/* SVG Logo */}
+          <div className="flex justify-center mb-8">
+            <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0" y="0" width="80" height="80" rx="4" fill="#111118" />
+              {/* 4x4 grid */}
+              {[0,1,2,3].map(r => [0,1,2,3].map(c => (
+                <rect
+                  key={`${r}-${c}`}
+                  x={8 + c * 16}
+                  y={8 + r * 16}
+                  width="15"
+                  height="15"
+                  rx="1.5"
+                  fill={r === 1 && c === 2 ? '#00FF85' : 'transparent'}
+                  stroke={r === 1 && c === 2 ? '#00FF85' : '#333333'}
+                  strokeWidth="0.8"
+                />
+              )))}
+            </svg>
+          </div>
           <h1 className="text-4xl md:text-5xl font-bold tracking-tighter mb-4">Documentation</h1>
           <p className="text-[#888888] text-lg max-w-xl mx-auto">
             Decision intelligence infrastructure for autonomous AI agents. Everything you need to integrate, configure, and ship.
