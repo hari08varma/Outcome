@@ -381,12 +381,7 @@ export default function LandingPage(): React.ReactElement {
           <div className="absolute inset-0 bg-gradient-to-b from-black via-transparent to-black pointer-events-none" />
 
           <div className="max-w-7xl mx-auto px-6 relative z-10">
-            <div className="flex justify-center mb-8">
-              <div className="inline-flex items-center gap-2 border border-[#00FF85]/20 bg-[#00FF85]/5 px-4 py-1.5 rounded-full text-[11px] font-mono text-[#00FF85]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00FF85] animate-pulse" />
-                Beta &middot; Open to founding teams &middot; 50 seats left
-              </div>
-            </div>
+
 
             <h1
               className="font-bold leading-[1.05] tracking-tighter text-center mb-6 max-w-4xl mx-auto"
@@ -606,20 +601,7 @@ export default function LandingPage(): React.ReactElement {
               </div>
             </div>
 
-            <div className="border border-[#1a1a24] bg-black p-6 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div>
-                <div className="text-sm font-bold mb-1">Prefer plain HTTP? Use the REST API directly.</div>
-                <div className="text-[#888888] text-sm font-mono">POST https://api.layerinfinite.app/v1/log-outcome</div>
-              </div>
-              <a
-                href="https://pypi.org/project/layerinfinite-sdk/"
-                target="_blank"
-                rel="noreferrer"
-                className="flex-shrink-0 border border-[#00FF85]/30 text-[#00FF85] px-5 py-2 text-sm font-bold hover:bg-[#00FF85]/10 transition-all"
-              >
-                Full API Reference &rarr;
-              </a>
-            </div>
+
           </div>
         </section>
 
@@ -697,15 +679,12 @@ export default function LandingPage(): React.ReactElement {
         <section className="py-28 relative" id="final-cta">
           <div className="absolute inset-0 bg-gradient-to-b from-black via-[#00FF85]/5 to-black pointer-events-none" />
           <div className="max-w-7xl mx-auto px-6 text-center relative z-10">
-            <div className="inline-flex items-center gap-2 border border-[#00FF85]/20 bg-[#00FF85]/5 px-4 py-1.5 rounded-full text-[11px] font-mono text-[#00FF85] mb-8">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#00FF85] animate-pulse" />
-              Free beta &middot; 50 founding team seats
-            </div>
+
             <h2 className="text-5xl md:text-6xl font-bold tracking-tighter mb-6 max-w-3xl mx-auto">
               Stop paying for the{' '}<span className="text-[#00FF85]">same failures.</span>
             </h2>
             <p className="text-[#888888] mb-10 max-w-lg mx-auto text-lg">
-              Layerinfinite starts learning from your first outcome. Free during beta. No credit card. Integration in under 30 minutes.
+              Layerinfinite starts learning from your first outcome. No credit card. Integration in under 30 minutes.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-10">
               <button
@@ -714,16 +693,14 @@ export default function LandingPage(): React.ReactElement {
               >
                 Get Started Free &mdash; No Credit Card
               </button>
-              <button
-                onClick={() => scrollTo('sdk-docs')}
+              <a
+                href="/docs"
                 className="border border-[#1a1a24] text-[#888888] px-10 py-4 text-base font-bold hover:border-[#00FF85]/40 hover:text-white transition-all"
               >
                 Read the Docs &rarr;
-              </button>
+              </a>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-6 text-[11px] text-[#555555] font-mono">
-              <span>Free during beta</span>
-              <span>&middot;</span>
               <span>No credit card</span>
               <span>&middot;</span>
               <span>30-minute setup</span>
