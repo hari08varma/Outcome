@@ -404,12 +404,12 @@ export default function LandingPage(): React.ReactElement {
               >
                 Start for Free &mdash; No Credit Card
               </button>
-              <button
-                onClick={() => scrollTo('sdk-docs')}
+              <a
+                href="/docs"
                 className="border border-[#1a1a24] text-[#888888] px-8 py-3.5 text-sm font-bold tracking-tight hover:border-[#00FF85]/40 hover:text-white transition-all"
               >
-                View SDK Docs &rarr;
-              </button>
+                View Docs &rarr;
+              </a>
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-6 text-[11px] text-[#555555] font-mono mb-16">
@@ -567,7 +567,6 @@ export default function LandingPage(): React.ReactElement {
               <div className="border border-[#1a1a24] rounded-lg overflow-hidden">
                 <div className="bg-[#0e0e18] px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between">
                   <span className="text-[11px] text-[#888888] font-mono">🐍 Python SDK &mdash; Layerinfinite</span>
-                  <a href="https://pypi.org/project/layerinfinite-sdk/" target="_blank" rel="noreferrer" className="text-[10px] text-[#00FF85] hover:underline font-mono">PyPI &rarr;</a>
                 </div>
                 <CodeBlock lines={PY_LINES} />
               </div>
@@ -576,7 +575,6 @@ export default function LandingPage(): React.ReactElement {
               <div className="border border-[#1a1a24] rounded-lg overflow-hidden">
                 <div className="bg-[#0e0e18] px-4 py-3 border-b border-[#1a1a24] flex items-center justify-between">
                   <span className="text-[11px] text-[#888888] font-mono">🟨 JS / TS SDK &mdash; Layerinfinite</span>
-                  <a href="https://www.npmjs.com/package/layerinfinite-sdk" target="_blank" rel="noreferrer" className="text-[10px] text-[#00FF85] hover:underline font-mono">npm &rarr;</a>
                 </div>
                 <CodeBlock lines={JS_LINES} />
               </div>
@@ -723,7 +721,6 @@ export default function LandingPage(): React.ReactElement {
             <Link className="hover:text-[#00FF85] transition-colors" to="/privacy">Privacy</Link>
             <Link className="hover:text-[#00FF85] transition-colors" to="/terms">Terms</Link>
             <a className="hover:text-[#00FF85] transition-colors" href="mailto:team@layerinfinite.app">Contact</a>
-            <a className="hover:text-[#00FF85] transition-colors" href="https://pypi.org/project/layerinfinite-sdk/" target="_blank" rel="noreferrer">SDK</a>
           </div>
         </div>
       </footer>
