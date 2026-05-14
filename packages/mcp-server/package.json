@@ -1,0 +1,39 @@
+{
+  "name": "@layerinfinite/mcp-server",
+  "version": "1.0.0",
+  "description": "LayerInfinite Decision Layer — MCP Server for AI Agent Outcome Intelligence",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "bin": {
+    "layerinfinite-mcp": "dist/bin/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/bin/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "layerinfinite",
+    "ai-agents",
+    "decision-intelligence",
+    "outcome-tracking"
+  ],
+  "author": "LayerInfinite",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -461,7 +461,7 @@ v1.route('/auth', authRoutes);
 v1.use('/me', primaryAuth);
 v1.route('/me', meRouter);
 
-v1.use('/admin/*', adminAuthMiddleware);
+v1.use('/admin/*', primaryAuth, adminAuthMiddleware);
 v1.route('/admin', actionsRouter);
 v1.route('/admin/reinstate-agent', reinstateAgentRouter);
 v1.route('/admin', reinstateSandboxRouter);
@@ -522,8 +522,13 @@ app.notFound((c) => c.json(
 // ── Global error handler ──────────────────────────────────────
 app.onError((err, c) => {
     console.error('[layerinfinite] Unhandled error:', err.message);
+    const isProduction = process.env.NODE_ENV === 'production';
     return c.json(
-        { error: 'Internal server error', code: 'INTERNAL_ERROR', message: err.message },
+        {
+            error: 'Internal server error',
+            code: 'INTERNAL_ERROR',
+            ...(isProduction ? {} : { message: err.message }),
+        },
         500
     );
 });

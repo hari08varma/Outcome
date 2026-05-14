@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "layerinfinite": {
+      "command": "node",
+      "args": ["./packages/mcp-server/dist/bin/cli.js"],
+      "env": {
+        "LAYERINFINITE_API_KEY": "layerinfinite_your_key_here",
+        "LAYERINFINITE_BASE_URL": "https://layerinfinite.me",
+        "LAYERINFINITE_MODE": "recommend"
+      }
+    }
+  }
+}

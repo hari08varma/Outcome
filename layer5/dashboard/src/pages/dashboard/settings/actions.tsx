@@ -19,6 +19,16 @@ interface Action {
   customer_id: string | null;
 }
 
+/** True if the action was deactivated within the last hour (likely circuit-broken by agent). */
+function isRecentlyCircuitBroken(action: Action): boolean {
+  if (action.is_active) return false;
+  if (!action.updated_at) return false;
+  const updatedAt = new Date(action.updated_at).getTime();
+  if (isNaN(updatedAt)) return false;
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  return updatedAt > oneHourAgo;
+}
+
 export default function ActionsSettings(): React.ReactElement {
   const { showToast } = useToastContext();
 
@@ -144,9 +154,11 @@ export default function ActionsSettings(): React.ReactElement {
         <p className="text-[#a1a1aa] text-sm">
           Actions are{' '}
           <strong className="text-white">auto-discovered</strong>
-          {' '}when your agent logs outcomes via the SDK.
+          {' '}when your agent logs outcomes via the SDK or MCP server.
           You can also register actions manually or
-          disable specific actions here.
+          disable specific actions here. Actions marked{' '}
+          <span className="text-[#ff4444] font-semibold">CIRCUIT BROKEN</span>{' '}
+          were recently disabled by your agent due to repeated failures.
         </p>
       </div>
 
@@ -234,8 +246,8 @@ export default function ActionsSettings(): React.ReactElement {
             </h3>
             <p className="text-[#52525b] text-sm max-w-sm mb-6">
               Actions are automatically discovered when your agent
-              logs outcomes via the SDK. Connect your agent to
-              get started, or register an action manually.
+              logs outcomes via the SDK or MCP server. Connect your agent
+              to get started, or register an action manually.
             </p>
             <Link to="/dashboard/settings/api-keys"
               className="bg-[#b8ff00] text-black font-semibold
@@ -264,9 +276,11 @@ export default function ActionsSettings(): React.ReactElement {
                     <td className="px-4 py-3">
                       <span className={action.is_active
                         ? 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#00cc66]/10 text-[#00cc66] border border-[#00cc66]/30'
-                        : 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'}
+                        : isRecentlyCircuitBroken(action)
+                          ? 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#ff4444]/10 text-[#ff4444] border border-[#ff4444]/30'
+                          : 'text-[10px] font-bold px-2 py-1 rounded-full bg-[#52525b]/20 text-[#a1a1aa] border border-[#52525b]/30'}
                       >
-                        {action.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        {action.is_active ? 'ACTIVE' : isRecentlyCircuitBroken(action) ? 'CIRCUIT BROKEN' : 'INACTIVE'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-[#a1a1aa]">
