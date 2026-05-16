@@ -43,7 +43,7 @@ export const PRIOR_ALPHA = 1.0;  // Laplace prior successes (neutral = 1)
 export const PRIOR_BETA = 1.0;  // Laplace prior failures  (neutral = 1)
 
 // ── Thresholds ───────────────────────────────────────────────
-const MIN_CONFIDENCE = 0.30;  // below this → cold-start fallback
+const MIN_CONFIDENCE = 0.15;  // below this → cold-start fallback (was 0.30; lowered so 2+ outcomes can differentiate)
 const ESCALATION_SCORE = 0.20;  // below this → escalate_human
 const CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
 // LRU eviction: 1000 entries × ~2KB avg = ~2MB max resident cache size.
