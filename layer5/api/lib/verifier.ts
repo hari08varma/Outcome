@@ -1,5 +1,6 @@
 export interface VerifierSignal {
-    source: 'http_status_code' | 'database_row_count' | 'human_review' | 'downstream_webhook' | 'none';
+    // 'downstream_webhook' removed — V2 webhooks use dedicated POST /v1/webhook/:provider route.
+    source: 'http_status_code' | 'database_row_count' | 'human_review' | 'none';
     value?: number | boolean | string;
     verified_at?: string;
 }

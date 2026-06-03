@@ -1,9 +1,13 @@
-name: Publish TypeScript SDK
+# DEPRECATED — LayerInfinite V2 uses MCP gateway (zero SDK required).
+# SDK packages remain available on npm for reference but are no longer published.
+# This workflow is disabled. Re-enable by restoring `on.push.tags` if needed.
+name: Publish TypeScript SDK [DISABLED]
 
 on:
-  push:
-    tags:
-      - 'sdk-ts-v*'
+  workflow_dispatch:  # Manual only — SDK publishing is deprecated
+  # push:
+  #   tags:
+  #     - 'sdk-ts-v*'
 
 permissions:
   contents: write

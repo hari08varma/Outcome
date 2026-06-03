@@ -1,9 +1,13 @@
-name: Publish Python SDK
+# DEPRECATED — LayerInfinite V2 uses MCP gateway (zero SDK required).
+# SDK packages remain available on PyPI for reference but are no longer published.
+# This workflow is disabled. Re-enable by restoring `on.push.tags` if needed.
+name: Publish Python SDK [DISABLED]
 
 on:
-  push:
-    tags:
-      - 'sdk-python-v*'
+  workflow_dispatch:  # Manual only — SDK publishing is deprecated
+  # push:
+  #   tags:
+  #     - 'sdk-python-v*'
 
 permissions:
   contents: write

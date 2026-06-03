@@ -173,9 +173,10 @@ export function getOutcomeQueueMode(): QueueMode {
     const explicit = (process.env.LI_OUTCOME_QUEUE_MODE ?? '').trim().toLowerCase();
     if (explicit === 'sync') return 'sync';
     if (explicit === 'postgres') return 'postgres';
-    // Default to sync — zero data loss, every outcome written before 200 response.
-    // Set LI_OUTCOME_QUEUE_MODE=postgres once migration 124 is applied.
-    return 'sync';
+    // Default to postgres — durable queue with FOR UPDATE SKIP LOCKED, exponential
+    // backoff, dead-letter, and stale-lock recovery. Set LI_OUTCOME_QUEUE_MODE=sync
+    // to revert to the legacy synchronous path.
+    return 'postgres';
 }
 
 
@@ -184,8 +185,8 @@ export function getOutcomeQueueMode(): QueueMode {
 // ══════════════════════════════════════════════════════════════
 
 
-const PG_WORKER_BATCH_SIZE = parsePositiveInt(process.env.LI_PG_QUEUE_BATCH_SIZE, 50);
-const PG_WORKER_POLL_INTERVAL_MS = parsePositiveInt(process.env.LI_PG_QUEUE_POLL_MS, 1000);
+const PG_WORKER_BATCH_SIZE = parsePositiveInt(process.env.LI_PG_QUEUE_BATCH_SIZE, 100);
+const PG_WORKER_POLL_INTERVAL_MS = parsePositiveInt(process.env.LI_PG_QUEUE_POLL_MS, 500);
 const PG_WORKER_MAX_ATTEMPTS = parsePositiveInt(process.env.LI_PG_QUEUE_MAX_ATTEMPTS, 5);
 const PG_WORKER_NAME = process.env.LI_PG_QUEUE_WORKER_NAME
     ?? `${os.hostname()}-${process.pid}`;

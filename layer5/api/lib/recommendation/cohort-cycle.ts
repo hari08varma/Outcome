@@ -228,6 +228,51 @@ export function resetRecommendationCohortCycleStore(): void {
     cycleStore.clear();
 }
 
+/**
+ * Warm the in-memory cohort cycle store from the database on cold start.
+ * The RPC is still the primary path — this just ensures the fallback has
+ * data if the RPC is temporarily unavailable after a server restart.
+ */
+export async function warmCohortCycleStore(): Promise<void> {
+    try {
+        const { data, error } = await supabase
+            .from('recommendation_cohort_cycles')
+            .select('cycle_id, customer_id, task_name, opened_at, opened_total_outcomes, opened_median_confidence, opened_median_success_rate, opened_confidence_source, opened_confidence_source_reason')
+            .is('closed_at', null)
+            .order('opened_at', { ascending: false });
+
+        if (error || !data) {
+            console.warn('[cohort-cycle] Warm failed — store starts cold:', error?.message ?? 'no data');
+            return;
+        }
+
+        let warmed = 0;
+        for (const row of data) {
+            const key = cycleKey(row.customer_id, row.task_name);
+            if (cycleStore.has(key)) continue; // already loaded
+
+            cycleStore.set(key, {
+                cycle_id: row.cycle_id,
+                customer_id: row.customer_id,
+                task_name: row.task_name,
+                opened_at: row.opened_at,
+                opened_total_outcomes: row.opened_total_outcomes ?? 0,
+                opened_median_confidence: row.opened_median_confidence ?? null,
+                opened_median_success_rate: row.opened_median_success_rate ?? null,
+                opened_confidence_source: normalizeConfidenceSource(row.opened_confidence_source),
+                opened_confidence_source_reason: normalizeConfidenceSourceReason(row.opened_confidence_source_reason),
+            });
+            warmed++;
+        }
+
+        if (warmed > 0) {
+            console.log(`[cohort-cycle] Warmed ${warmed} active cycles from DB`);
+        }
+    } catch (err: any) {
+        console.warn('[cohort-cycle] Warm threw — store starts cold:', err?.message ?? 'unknown error');
+    }
+}
+
 function fallbackUpsertRecommendationCohortCycle(
     observation: CohortCycleObservation,
 ): RecommendationCohortCycleResult {

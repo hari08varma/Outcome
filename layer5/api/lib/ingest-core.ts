@@ -12,6 +12,7 @@
  * KEY INVARIANT: ingestion_source must always be set by the caller.
  *   'sdk'    → real-time SDK outcome
  *   'import' → historical file upload
+ *   'mcp'    → V2 gateway proxy outcome
  *
  * Trust side-effects (orchestrateOutcome + upsertLiveTrustScore)
  * are NEVER triggered for 'import' rows — controlled via skipTrustUpdate.
@@ -38,7 +39,7 @@ import type { InferredOutcomeScore } from './outcome-score-inference.js';
 
 // ── Types ─────────────────────────────────────────────────────
 
-export type IngestionSource = 'sdk' | 'import';
+export type IngestionSource = 'sdk' | 'import' | 'mcp';
 export type ExecutionStatus = 'COMPLETED' | 'FAILED';
 export type StatusOrigin =
     | 'explicit'

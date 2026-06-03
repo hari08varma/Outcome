@@ -38,6 +38,7 @@ async function fetchDataSources(
 ): Promise<{
     uploaded_outcomes: number;
     sdk_outcomes: number;
+    mcp_outcomes: number;
     total: number;
     upload_share: number;
     quality_score: number | null;
@@ -51,6 +52,7 @@ async function fetchDataSources(
         let finalCandidate = candidates[0];
         let importedCount = 0;
         let sdkCount = 0;
+        let mcpCount = 0;
 
         for (const candidate of candidates) {
             const baseQuery = supabase
@@ -62,23 +64,25 @@ async function fetchDataSources(
                 .eq('is_synthetic', false)
                 .eq('is_deleted', false);
 
-            const [importRes, sdkRes] = await Promise.all([
+            const [importRes, sdkRes, mcpRes] = await Promise.all([
                 baseQuery.eq('ingestion_source', 'import'),
-                baseQuery.eq('ingestion_source', 'api')
+                baseQuery.eq('ingestion_source', 'sdk'),
+                baseQuery.eq('ingestion_source', 'mcp')
             ]);
             
             // If we found data using this slug, stick with it.
-            if ((importRes.count ?? 0) > 0 || (sdkRes.count ?? 0) > 0) {
+            if ((importRes.count ?? 0) > 0 || (sdkRes.count ?? 0) > 0 || (mcpRes.count ?? 0) > 0) {
                 importedCount = importRes.count ?? 0;
                 sdkCount = sdkRes.count ?? 0;
+                mcpCount = mcpRes.count ?? 0;
                 finalCandidate = candidate;
                 break;
             }
         }
 
-        const total = importedCount + sdkCount;
+        const total = importedCount + sdkCount + mcpCount;
         if (total === 0) {
-            return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
+            return { uploaded_outcomes: 0, sdk_outcomes: 0, mcp_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
         }
 
         // Fetch just a 1000-row sample for the average quality to prevent OOM
@@ -102,9 +106,9 @@ async function fetchDataSources(
 
         const uploadShare = Math.round((importedCount / total) * 10000) / 10000;
 
-        return { uploaded_outcomes: importedCount, sdk_outcomes: sdkCount, total, upload_share: uploadShare, quality_score: qualityScore };
+        return { uploaded_outcomes: importedCount, sdk_outcomes: sdkCount, mcp_outcomes: mcpCount, total, upload_share: uploadShare, quality_score: qualityScore };
     } catch {
-        return { uploaded_outcomes: 0, sdk_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
+        return { uploaded_outcomes: 0, sdk_outcomes: 0, mcp_outcomes: 0, total: 0, upload_share: 0, quality_score: null };
     }
 }
 

@@ -1,198 +1,400 @@
 /**
  * LayerInfinite MCP Server — index.ts
  * ══════════════════════════════════════════════════════════════
- * Main server entry point. Creates the McpServer instance and
- * conditionally registers tools based on the configured mode.
+ * V2 Gateway Proxy entry point. Uses low-level Server (ADR-001)
+ * for raw JSON-RPC interception of tools/list and tools/call.
  *
- * Tool Registration Matrix:
- * ┌─────────────────────┬───────────┬───────────┬────────┬──────┐
- * │ Tool                │ Bootstrap │ Recommend │ Assist │ Auto │
- * ├─────────────────────┼───────────┼───────────┼────────┼──────┤
- * │ li_log              │     ✅    │     ✅    │   ✅   │  ✅  │
- * │ li_observe          │     ✅    │     ✅    │   ✅   │  ✅  │
- * │ li_audit            │     ✅    │     ✅    │   ✅   │  ✅  │
- * │ li_health           │     ✅    │     ✅    │   ✅   │  ✅  │
- * │ li_toggle_action    │     ✅    │     ✅    │   ✅   │  ✅  │
- * │ li_simulate         │           │     ✅    │   ✅   │  ✅  │
- * │ li_patterns         │           │     ✅    │   ✅   │  ✅  │
- * │ li_action           │           │           │   ✅   │  ✅  │
- * │ li_fallback         │           │           │   ✅   │  ✅  │
- * │ li_register_action  │ admin key │ admin key │admin   │admin │
- * └─────────────────────┴───────────┴───────────┴────────┴──────┘
- *
- * Resource (always): layerinfinite://tasks/{task_name}
- * Prompt  (always):  layerinfinite-setup
+ * Registers handlers:
+ *   tools/list   — enriched upstream tools + virtual li_recommend
+ *   tools/call   — proxy to upstream, auto-mode rerouting
+ *   resources/*  — gateway status + config (admin-gated)
+ *   prompts/*    — setup instructions
  * ══════════════════════════════════════════════════════════════
  */
 
-import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+
 import { loadConfig } from './config.js';
-import { RestClient } from './rest-client.js';
-import { EpisodeTracker } from './episode-tracker.js';
+import type { GatewayConfig } from './config.js';
+import { LiApiClient, UpstreamMCPClient } from './rest-client.js';
+import { UpstreamRegistry } from './upstream-registry.js';
+import { GatewayProxy } from './gateway-proxy.js';
+import { OutcomeClassifier } from './outcome-classifier.js';
+import { DecisionTracker } from './decision-tracker.js';
+import { startQueueProcessor } from './fail-open.js';
+import type { QueueSender } from './fail-open.js';
+import type { OutcomePayload } from './types.js';
 import { logger } from './logger.js';
+import { dashboardResource } from './resources/dashboard.js';
+import { docsResource } from './resources/docs.js';
+import { onboardingPrompt } from './prompts/onboarding.js';
 
-// ── Tool imports ────────────────────────────────────────────
-import { LI_LOG_NAME, LI_LOG_DESCRIPTION, liLogSchema, createLiLogHandler } from './tools/li-log.js';
-import { LI_OBSERVE_NAME, LI_OBSERVE_DESCRIPTION, liObserveSchema, createLiObserveHandler } from './tools/li-observe.js';
-import { LI_AUDIT_NAME, LI_AUDIT_DESCRIPTION, liAuditSchema, createLiAuditHandler } from './tools/li-audit.js';
-import { LI_HEALTH_NAME, LI_HEALTH_DESCRIPTION, liHealthSchema, createLiHealthHandler } from './tools/li-health.js';
-import { LI_TOGGLE_ACTION_NAME, LI_TOGGLE_ACTION_DESCRIPTION, liToggleActionSchema, createLiToggleActionHandler } from './tools/li-toggle-action.js';
-import { LI_ACTION_NAME, getLiActionDescription, liActionSchema, createLiActionHandler } from './tools/li-action.js';
-import { LI_FALLBACK_NAME, LI_FALLBACK_DESCRIPTION, liFallbackSchema, createLiFallbackHandler } from './tools/li-fallback.js';
-import { LI_SIMULATE_NAME, LI_SIMULATE_DESCRIPTION, liSimulateSchema, createLiSimulateHandler } from './tools/li-simulate.js';
-import { LI_PATTERNS_NAME, LI_PATTERNS_DESCRIPTION, liPatternsSchema, createLiPatternsHandler } from './tools/li-patterns.js';
-import { LI_REGISTER_ACTION_NAME, LI_REGISTER_ACTION_DESCRIPTION, liRegisterActionSchema, createLiRegisterActionHandler } from './tools/li-register-action.js';
+const SERVER_NAME = 'layerinfinite-gateway';
+const SERVER_VERSION = '2.0.0';
 
-// ── Resource + prompt imports ───────────────────────────────
-import { createTaskIntelligenceReader } from './resources/task-intelligence.js';
-import { AGENT_SETUP_PROMPT_NAME, AGENT_SETUP_PROMPT_DESCRIPTION, getAgentSetupPrompt } from './prompts/agent-setup.js';
+const log = logger.forTool('index');
 
-/**
- * Creates and configures the McpServer with all tools, resources, and prompts.
- */
-export function createServer() {
-  const config = loadConfig();
-  const client = new RestClient(config);
-  const episodeTracker = new EpisodeTracker();
-  const mode = config.mode;
+// ── Task context extraction ─────────────────────────────────
 
-  const server = new McpServer({
-    name: 'layerinfinite',
-    version: '1.0.0',
-  });
-
-  // ════════════════════════════════════════════════════════════
-  // ALWAYS REGISTERED — Foundation tools (bootstrap + all modes)
-  // ════════════════════════════════════════════════════════════
-
-  server.tool(
-    LI_LOG_NAME,
-    LI_LOG_DESCRIPTION,
-    liLogSchema,
-    createLiLogHandler(client),
-  );
-
-  server.tool(
-    LI_OBSERVE_NAME,
-    LI_OBSERVE_DESCRIPTION,
-    liObserveSchema,
-    createLiObserveHandler(client),
-  );
-
-  server.tool(
-    LI_AUDIT_NAME,
-    LI_AUDIT_DESCRIPTION,
-    liAuditSchema,
-    createLiAuditHandler(client),
-  );
-
-  server.tool(
-    LI_HEALTH_NAME,
-    LI_HEALTH_DESCRIPTION,
-    liHealthSchema,
-    createLiHealthHandler(client, config),
-  );
-
-  // ════════════════════════════════════════════════════════════
-  // CIRCUIT BREAKER — Runtime action disable/enable (all modes)
-  // ════════════════════════════════════════════════════════════
-
-  server.tool(
-    LI_TOGGLE_ACTION_NAME,
-    LI_TOGGLE_ACTION_DESCRIPTION,
-    liToggleActionSchema,
-    createLiToggleActionHandler(client),
-  );
-
-  // ════════════════════════════════════════════════════════════
-  // MODE-GATED — Intelligence tools (recommend + assist + auto)
-  // ════════════════════════════════════════════════════════════
-
-  if (mode) {
-    server.tool(
-      LI_SIMULATE_NAME,
-      LI_SIMULATE_DESCRIPTION,
-      liSimulateSchema,
-      createLiSimulateHandler(client),
-    );
-
-    server.tool(
-      LI_PATTERNS_NAME,
-      LI_PATTERNS_DESCRIPTION,
-      liPatternsSchema,
-      createLiPatternsHandler(client),
-    );
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // DECISION LAYER — Gateway + Fallback (assist + auto only)
-  // ════════════════════════════════════════════════════════════
-
-  if (mode === 'assist' || mode === 'auto') {
-    server.tool(
-      LI_ACTION_NAME,
-      getLiActionDescription(mode),
-      liActionSchema,
-      createLiActionHandler(client, config, episodeTracker),
-    );
-
-    server.tool(
-      LI_FALLBACK_NAME,
-      LI_FALLBACK_DESCRIPTION,
-      liFallbackSchema,
-      createLiFallbackHandler(client, episodeTracker),
-    );
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // ADMIN — Gated by LAYERINFINITE_ADMIN_KEY
-  // ════════════════════════════════════════════════════════════
-
-  if (config.adminKey) {
-    server.tool(
-      LI_REGISTER_ACTION_NAME,
-      LI_REGISTER_ACTION_DESCRIPTION,
-      liRegisterActionSchema,
-      createLiRegisterActionHandler(client, config.adminKey),
-    );
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // RESOURCE — Decision intelligence (always active)
-  // ════════════════════════════════════════════════════════════
-
-  const taskReader = createTaskIntelligenceReader(client, config);
-
-  server.resource(
-    'task-intelligence',
-    new ResourceTemplate('layerinfinite://tasks/{task_name}', {
-      list: undefined,
-    }),
-    taskReader,
-  );
-
-  // ════════════════════════════════════════════════════════════
-  // PROMPT — Mode-aware agent configuration (always active)
-  // ════════════════════════════════════════════════════════════
-
-  server.prompt(
-    AGENT_SETUP_PROMPT_NAME,
-    AGENT_SETUP_PROMPT_DESCRIPTION,
-    () => getAgentSetupPrompt(config),
-  );
-
-  // ── Startup log ───────────────────────────────────────────
-  const toolCount = 5 // foundation (4) + circuit breaker (1)
-    + (mode ? 2 : 0) // intelligence
-    + (mode === 'assist' || mode === 'auto' ? 2 : 0) // decision layer
-    + (config.adminKey ? 1 : 0); // admin
-
-  logger.info('Server configured', {
-    mode: mode ?? 'bootstrap',
-    tools: toolCount,
-    admin: config.adminKey ? 'enabled' : 'disabled',
-    api: config.baseUrl,
-  });
-
-  return server;
+interface TaskContext {
+  taskType: string;
+  customerId: string;
+  agentId: string;
 }
+
+function extractTaskContext(params: Record<string, unknown> | undefined): TaskContext {
+  const args = (params?.['arguments'] as Record<string, unknown>) ?? {};
+  const meta = (params?.['_meta'] as Record<string, unknown>) ?? {};
+
+  const taskType = String(
+    args['task_type'] ?? args['taskType'] ?? params?.['task_type'] ?? meta['taskType'] ?? 'unknown',
+  );
+
+  const customerId = String(
+    args['customer_id'] ??
+      args['customerId'] ??
+      params?.['customer_id'] ??
+      process.env.LAYERINFINITE_DEFAULT_CUSTOMER ??
+      'default',
+  );
+
+  const agentId = String(
+    meta['agentId'] ??
+      args['agent_id'] ??
+      args['agentId'] ??
+      params?.['agent_id'] ??
+      process.env.LAYERINFINITE_DEFAULT_AGENT ??
+      'unknown',
+  );
+
+  return { taskType, customerId, agentId };
+}
+
+// ══════════════════════════════════════════════════════════════
+// createGatewayServer
+// ══════════════════════════════════════════════════════════════
+
+export interface GatewayServer {
+  server: Server;
+  proxy: GatewayProxy;
+  config: GatewayConfig;
+  upstreamClient: UpstreamMCPClient;
+  registry: UpstreamRegistry;
+  tracker: DecisionTracker;
+  queueProcessor: { stop: () => void };
+}
+
+export function createGatewayServer(): GatewayServer {
+  const config = loadConfig();
+  const registry = new UpstreamRegistry(config);
+  const liApi = new LiApiClient(config);
+  const upstreamClient = new UpstreamMCPClient(registry);
+
+  const classifier = config.classifier ? new OutcomeClassifier(config.classifier) : null;
+  const tracker = new DecisionTracker(liApi, config.environment);
+  const proxy = new GatewayProxy(liApi, upstreamClient, registry, config, classifier, tracker);
+
+  // Start periodic queue processor for retrying failed outcome logs
+  const queueSender: QueueSender = (payload: OutcomePayload) => liApi.logOutcome(payload);
+  const queueProcessor = startQueueProcessor(queueSender, 30_000);
+
+  // Start periodic flush of tracker buffer (secondary durability)
+  tracker.startFlushTimer();
+
+  const server = new Server(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { capabilities: { tools: {}, resources: {}, prompts: {} } },
+  );
+
+  const startedAt = Date.now();
+
+  // ── tools/list ──────────────────────────────────────────
+
+  server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+    try {
+      const taskCtx = extractTaskContext(request.params as Record<string, unknown> | undefined);
+      const enriched = await proxy.handleListTools(taskCtx);
+
+      // Strip internal fields (upstreamName, annotations) per MCP spec
+      const tools = enriched.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      }));
+
+      return { tools };
+    } catch (err) {
+      log.error('tools/list handler failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { tools: [] };
+    }
+  });
+
+  // ── tools/call ──────────────────────────────────────────
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const toolName = request.params?.name ?? '';
+    const args = (request.params?.arguments ?? {}) as Record<string, unknown>;
+    const taskCtx = extractTaskContext(request.params as Record<string, unknown> | undefined);
+
+    try {
+      const result = await proxy.handleCallTool(toolName, args, taskCtx);
+      return result as unknown as { content: Array<{ type: string; text?: string }>; isError?: boolean };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('tools/call handler failed', { tool: toolName, error: message });
+      return {
+        content: [{ type: 'text' as const, text: message }],
+        isError: true,
+      };
+    }
+  });
+
+  // ── resources/list ──────────────────────────────────────
+
+  server.setRequestHandler(
+    { method: 'resources/list' } as never,
+    async () => {
+      try {
+        const entries = registry.getAllUpstreams();
+        const healthyCount = entries.filter((e) => registry.isHealthy(e.server.name)).length;
+
+        const resources = [
+          {
+            uri: 'li://gateway/status',
+            name: 'Gateway Status',
+            description: 'LayerInfinite Gateway Proxy runtime status',
+            mimeType: 'text/plain',
+          },
+        ];
+
+        if (config.adminKey) {
+          resources.push({
+            uri: 'li://gateway/config',
+            name: 'Gateway Configuration',
+            description: 'Gateway config summary (requires admin key to read)',
+            mimeType: 'application/json',
+          });
+        }
+
+          resources.push({ uri: dashboardResource.uri, name: dashboardResource.name, description: dashboardResource.description, mimeType: dashboardResource.mimeType });
+          resources.push({ uri: docsResource.uri, name: docsResource.name, description: docsResource.description, mimeType: docsResource.mimeType });
+
+        return { resources };
+      } catch (err) {
+        log.error('resources/list failed', { error: err instanceof Error ? err.message : String(err) });
+        return { resources: [] };
+      }
+    },
+  );
+
+  // ── resources/read ──────────────────────────────────────
+
+  server.setRequestHandler(
+    { method: 'resources/read' } as never,
+    async (request: { params?: { uri?: string } }) => {
+      const uri = request.params?.uri ?? '';
+
+      try {
+        if (uri === 'li://gateway/status') {
+          const entries = registry.getAllUpstreams();
+          const healthy = entries.filter((e) => registry.isHealthy(e.server.name));
+          const uptimeMs = Date.now() - startedAt;
+
+          const status = {
+            mode: config.mode ?? 'bootstrap',
+            environment: config.environment,
+            shadowMode: config.shadowMode,
+            upstreams: {
+              total: entries.length,
+              healthy: healthy.length,
+              names: entries.map((e) => e.server.name),
+              healthyNames: healthy.map((e) => e.server.name),
+            },
+            uptime_seconds: Math.floor(uptimeMs / 1000),
+            version: SERVER_VERSION,
+          };
+
+          return {
+            contents: [
+              {
+                uri,
+                mimeType: 'text/plain',
+                text: JSON.stringify(status, null, 2),
+              },
+            ],
+          };
+        }
+
+        if (uri === 'li://gateway/config') {
+          return {
+            contents: [
+              {
+                uri,
+                mimeType: 'application/json',
+                text: JSON.stringify(
+                  {
+                    mode: config.mode ?? 'bootstrap',
+                    environment: config.environment,
+                    shadowMode: config.shadowMode,
+                    upstreamCount: config.upstreamServers.length,
+                    modeOverrides: Object.fromEntries(config.modeOverrides),
+                    apiKey: '[REDACTED]',
+                    baseUrl: config.baseUrl,
+                    adminEnabled: config.adminKey !== null,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+          if (uri === dashboardResource.uri) {
+            const result = await dashboardResource.handler();
+            return { contents: result.contents };
+          }
+
+          if (uri === docsResource.uri) {
+            const result = await docsResource.handler();
+            return { contents: result.contents };
+          }
+
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'text/plain',
+              text: `Unknown resource: ${uri}`,
+            },
+          ],
+        };
+      } catch (err) {
+        log.error('resources/read failed', { uri, error: err instanceof Error ? err.message : String(err) });
+        return {
+          contents: [{ uri, mimeType: 'text/plain', text: 'Error reading resource' }],
+        };
+      }
+    },
+  );
+
+  // ── prompts/list ────────────────────────────────────────
+
+  server.setRequestHandler(
+    { method: 'prompts/list' } as never,
+    async () => {
+      return {
+        prompts: [
+          {
+            name: 'layerinfinite-gateway-setup',
+            description: 'LayerInfinite Gateway Proxy setup instructions',
+            arguments: [],
+          },
+          {
+            name: onboardingPrompt.name,
+            description: onboardingPrompt.description,
+            arguments: onboardingPrompt.arguments,
+          },
+        ],
+      };
+    },
+  );
+
+  // ── prompts/get ─────────────────────────────────────────
+
+  server.setRequestHandler(
+    { method: 'prompts/get' } as never,
+    async (request: { params?: { name?: string; arguments?: Record<string, unknown> } }) => {
+      const name = request.params?.name ?? '';
+
+      if (name === onboardingPrompt.name) {
+          const result = await onboardingPrompt.handler();
+          return { messages: result.messages };
+        }
+
+        if (name !== 'layerinfinite-gateway-setup') {
+        return {
+          messages: [
+            {
+              role: 'user' as const,
+              content: { type: 'text' as const, text: `Unknown prompt: ${name}` },
+            },
+          ],
+        };
+      }
+
+      const text = [
+        '# LayerInfinite Gateway Proxy Setup',
+        '',
+        'The LayerInfinite MCP Gateway Proxy transparently enriches your existing MCP tools with historical outcome intelligence.',
+        '',
+        '## Configuration',
+        '',
+        'Set these environment variables before starting:',
+        '',
+        '| Variable | Required | Description |',
+        '|----------|----------|-------------|',
+        '| `LAYERINFINITE_API_KEY` | Yes | Your LayerInfinite API key |',
+        '| `LAYERINFINITE_UPSTREAM_TOOLS` | Yes | JSON array of upstream MCP servers (name, url, optional apiKey) |',
+        '| `LAYERINFINITE_MODE` | No | Operating mode: `recommend`, `assist`, `auto` (omit for bootstrap) |',
+        '| `LAYERINFINITE_MODE_OVERRIDES` | No | Per-task-type mode overrides as JSON object |',
+        '| `LAYERINFINITE_SHADOW_MODE` | No | Set to `true` to observe without intervening |',
+        '| `LAYERINFINITE_ENVIRONMENT` | No | `staging` or `production` (default: production) |',
+        '| `LAYERINFINITE_BASE_URL` | No | API base URL (default: https://layerinfinite.me) |',
+        '',
+        '## Modes',
+        '',
+        '- **Bootstrap** (no mode set): Observe only — no enrichment or intervention',
+        '- **Recommend**: Tool descriptions enriched with historical success rates',
+        '- **Assist**: Recommendations + directional warnings based on history',
+        '- **Auto**: Silent rerouting to the best tool based on outcome data',
+        '',
+        '## Upstream Format',
+        '',
+        '```json',
+        '[',
+        '  { "name": "github", "url": "https://github-mcp.example.com", "apiKey": "sk-..." },',
+        '  { "name": "filesystem", "url": "http://localhost:8080" }',
+        ']',
+        '```',
+        '',
+        '## Starting the Gateway',
+        '',
+        '```bash',
+        'npx @layerinfinite/mcp-server',
+        '# or directly:',
+        'node dist/bin/cli.js',
+        '```',
+        '',
+        'The gateway connects via stdio — configure your MCP client to spawn this process.',
+      ].join('\n');
+
+      return {
+        messages: [
+          {
+            role: 'user' as const,
+            content: { type: 'text' as const, text },
+          },
+        ],
+      };
+    },
+  );
+
+  log.info('Gateway server created', {
+    mode: config.mode ?? 'bootstrap',
+    upstreams: config.upstreamServers.length,
+    environment: config.environment,
+    shadowMode: config.shadowMode,
+    classifier: config.classifier ? `${config.classifier.model} (enabled)` : 'disabled',
+  });
+
+  return { server, proxy, config, upstreamClient, registry, tracker, queueProcessor };
+}
+

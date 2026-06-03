@@ -6,36 +6,45 @@
  * Entry point for stdio transport. This is what Claude Desktop,
  * Cursor, Cline, and other MCP hosts spawn as a child process.
  *
- * Production hardening:
- *   - Graceful shutdown on SIGINT/SIGTERM
- *   - Unhandled rejection safety net
- *
  * Usage:
  *   LAYERINFINITE_API_KEY=xxx npx layerinfinite-mcp
  * ══════════════════════════════════════════════════════════════
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createServer } from '../src/index.js';
+import { createGatewayServer } from '../src/index.js';
 import { logger } from '../src/logger.js';
 
+const log = logger.forTool('cli');
+
+let shuttingDown = false;
+
 async function main() {
-  const server = createServer();
+  log.info('LayerInfinite Gateway starting', { version: '2.0.0' });
+
+  const gateway = createGatewayServer();
+  const { server, proxy, upstreamClient, registry, tracker, queueProcessor } = gateway;
+
+  // Start upstream health checks
+  upstreamClient.startHealthChecks();
+
   const transport = new StdioServerTransport();
 
-  // ── Graceful shutdown ─────────────────────────────────────
-  let isShuttingDown = false;
-
   async function shutdown(signal: string) {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    logger.info('Shutting down', { signal });
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info('Shutting down', { signal });
 
     try {
+      registry.stopHealthChecks();
+      queueProcessor.stop();
+      tracker.stopFlushTimer();
+      await tracker.flushBuffer();
+      await proxy.shutdown();
       await server.close();
-      logger.info('Server closed cleanly');
+      log.info('Server closed cleanly');
     } catch (err) {
-      logger.error('Error during shutdown', {
+      log.error('Error during shutdown', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -45,21 +54,22 @@ async function main() {
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
-
-  // Safety net for unhandled rejections — log but don't crash
   process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled rejection', {
+    log.error('Unhandled rejection', {
       error: reason instanceof Error ? reason.message : String(reason),
       stack: reason instanceof Error ? reason.stack : undefined,
     });
   });
 
   await server.connect(transport);
-  logger.info('Connected via stdio transport');
+  log.info('Gateway connected via stdio', {
+    mode: gateway.config.mode ?? 'bootstrap',
+    upstreams: gateway.config.upstreamServers.length,
+  });
 }
 
 main().catch((err) => {
-  logger.error('Fatal startup error', {
+  log.error('Fatal startup error', {
     error: err instanceof Error ? err.message : String(err),
     stack: err instanceof Error ? err.stack : undefined,
   });

@@ -194,11 +194,7 @@ export async function writeCounterfactuals(
 
     // Idempotent upsert: retries (Railway restart, HTTP timeout) are safe.
     // First write wins on (decision_id, unchosen_action_id) conflict.
-    // Requires UNIQUE constraint — see migration TODO above.
-    // TODO(migration):
-    // ALTER TABLE fact_outcome_counterfactuals
-    // ADD CONSTRAINT uq_counterfactual_decision_action
-    // UNIQUE (decision_id, unchosen_action_id);
+    // UNIQUE constraint exists in migration 021 (unique_decision_action).
     const { error } = await supabase
         .from('fact_outcome_counterfactuals')
         .upsert(counterfactuals, {

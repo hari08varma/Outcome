@@ -32,6 +32,27 @@ function shouldPreserveProtectedStatus(
 }
 
 // ── Shared Types ──
+
+export interface WebhookCallbackParams {
+  decisionId: string;
+  /** 2 = session outcome, 3 = business outcome. */
+  layer: 2 | 3;
+  success: boolean;
+  score: number;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface WebhookCallbackResult {
+  resolved: boolean;
+  outcomeId: string | null;
+  idempotent: boolean;
+  layer: 2 | 3;
+  previousScore: number | null;
+  newScore: number;
+}
+
 export interface OrchestratorParams {
     agentId: string;
     customerId: string;
@@ -269,6 +290,140 @@ export async function orchestrateOutcome(params: OrchestratorParams): Promise<vo
             console.warn('[orchestrator] refreshLiveTrustCache failed:', (err as Error).message)
         );
     }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Webhook Callback Handler — Layer 2/3 Score Overwrite
+// ══════════════════════════════════════════════════════════════
+//
+// 3-Layer Outcome Score Model:
+//   Layer 1 (technical): Initial score from gateway inference
+//   Layer 2 (session):    Webhook callback overwrites score
+//   Layer 3 (business):   Webhook callback overwrites again
+//
+// Append-only log (webhook_callback_log) preserves full timeline —
+// all three writes are recorded immutably. The latest write per layer
+// is authoritative for scoring.
+//
+// Idempotency: duplicate (decision_id, layer) → returns existing result.
+// ══════════════════════════════════════════════════════════════
+
+export async function handleWebhookCallback(
+  params: WebhookCallbackParams,
+): Promise<WebhookCallbackResult> {
+  // ── 1. Idempotency check ──────────────────────────────────
+  const { data: existingLog } = await supabase
+    .from('webhook_callback_log')
+    .select('outcome_id, previous_score, new_score')
+    .eq('decision_id', params.decisionId)
+    .eq('layer', params.layer)
+    .order('received_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingLog) {
+    return {
+      resolved: true,
+      outcomeId: existingLog.outcome_id,
+      idempotent: true,
+      layer: params.layer,
+      previousScore: existingLog.previous_score,
+      newScore: existingLog.new_score,
+    };
+  }
+
+  // ── 2. Resolve decision_id → outcome ──────────────────────
+  const { data: outcome } = await supabase
+    .from('fact_outcomes')
+    .select('outcome_id, customer_id, outcome_score, success')
+    .eq('decision_id', params.decisionId)
+    .order('timestamp', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!outcome) {
+    return {
+      resolved: false,
+      outcomeId: null,
+      idempotent: false,
+      layer: params.layer,
+      previousScore: null,
+      newScore: params.score,
+    };
+  }
+
+  const previousScore = typeof outcome.outcome_score === 'number'
+    ? outcome.outcome_score
+    : null;
+  const newScore = clamp01Score(params.score);
+
+  // ── 3. Update fact_outcomes with new score ─────────────────
+  const nowIso = new Date().toISOString();
+  const updateData: Record<string, unknown> = {
+    outcome_score: newScore,
+    feedback_received_at: nowIso,
+    signal_updated_at: nowIso,
+  };
+
+  // Layer 3 (business) also updates business_outcome
+  if (params.layer === 3) {
+    updateData.business_outcome = params.success ? 'resolved' : 'failed';
+  }
+
+  const { error: updateError } = await supabase
+    .from('fact_outcomes')
+    .update(updateData)
+    .eq('outcome_id', outcome.outcome_id)
+    .eq('customer_id', outcome.customer_id);
+
+  if (updateError) {
+    console.error('[orchestrator:webhook-callback] outcome update failed:', updateError.message);
+    throw new Error(`Failed to update outcome ${outcome.outcome_id}: ${updateError.message}`);
+  }
+
+  // ── 4. Write append-only log ──────────────────────────────
+  const logEntry = {
+    decision_id: params.decisionId,
+    outcome_id: outcome.outcome_id,
+    customer_id: outcome.customer_id,
+    layer: params.layer,
+    success: params.success,
+    previous_score: previousScore,
+    new_score: newScore,
+    reason: params.reason ?? null,
+    metadata: params.metadata ?? null,
+    webhook_timestamp: params.timestamp,
+    received_at: nowIso,
+  };
+
+  const { error: logError } = await supabase
+    .from('webhook_callback_log')
+    .insert(logEntry);
+
+  if (logError) {
+    // Log write is best-effort — score update already committed.
+    // Duplicate key on (decision_id, layer) is handled by idempotency check above.
+    console.warn('[orchestrator:webhook-callback] append-log write failed:', logError.message);
+  }
+
+  // ── 5. Invalidate caches ──────────────────────────────────
+  invalidateCache(outcome.customer_id, params.decisionId);
+
+  return {
+    resolved: true,
+    outcomeId: outcome.outcome_id,
+    idempotent: false,
+    layer: params.layer,
+    previousScore,
+    newScore,
+  };
+}
+
+function clamp01Score(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
 }
 
 // ── Live Trust Cache Refresh (fire-and-forget) ──

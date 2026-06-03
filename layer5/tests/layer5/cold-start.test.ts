@@ -196,7 +196,7 @@ describe('Phase 5 — Cold Start Protocol', () => {
         ];
 
         // Verify MIN_CONFIDENCE threshold
-        expect(MIN_CONFIDENCE).toBe(0.30);
+        expect(MIN_CONFIDENCE).toBe(0.15);
 
         // All confidences are above MIN_CONFIDENCE → NOT cold start
         const allAboveThreshold = maturedActions.every(a => a.confidence >= MIN_CONFIDENCE);

@@ -11,13 +11,13 @@ export interface DecisionRow {
 }
 
 const buffer: (DecisionRow & { _id: string })[] = [];
-const MAX_BUFFER_SIZE = 50;
+const MAX_BUFFER_SIZE = 100;
 
 let failureCount = 0;
 let circuitOpenUntil = 0;
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_OPEN_MS = 60_000;
-const FLUSH_INTERVAL_MS = 5000;
+const FLUSH_INTERVAL_MS = 2000;
 
 function toInsertRow(row: DecisionRow & { _id: string }) {
     const { _id, ...rest } = row;

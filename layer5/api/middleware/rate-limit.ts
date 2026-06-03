@@ -5,8 +5,12 @@ import { supabase } from '../lib/supabase.js';
 import { OUTCOME_INGEST_WORKER_BYPASS_HEADER } from '../lib/outcome-ingest-queue.js';
 
 const DEFAULT_WINDOW_MS = 60_000;
-const DEFAULT_MAX_REQUESTS = 300;
-const DEFAULT_FAIL_OPEN = true;
+const DEFAULT_MAX_REQUESTS = 1000;
+const DEFAULT_FAIL_OPEN = false; // fail-closed: return 429 when DB is unavailable
+
+// Two-tier defaults for MCP gateway endpoints
+const DEFAULT_TOOLS_LIST_MAX = 60;    // tools/list — cached, shouldn't hit often
+const DEFAULT_TOOLS_CALL_MAX = 2000;  // tools/call — headroom for 1000/min sustained
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
     const parsed = Number.parseInt(value ?? '', 10);
@@ -20,6 +24,25 @@ function getWindowMs(): number {
 
 function getMaxRequests(): number {
     return readPositiveInt(process.env.RATE_LIMIT_MAX, DEFAULT_MAX_REQUESTS);
+}
+
+function getToolsListMax(): number {
+    return readPositiveInt(process.env.RATE_LIMIT_TOOLS_LIST_MAX, DEFAULT_TOOLS_LIST_MAX);
+}
+
+function getToolsCallMax(): number {
+    return readPositiveInt(process.env.RATE_LIMIT_TOOLS_CALL_MAX, DEFAULT_TOOLS_CALL_MAX);
+}
+
+/** Resolve the rate limit ceiling for a request path. */
+function resolveMaxRequests(path: string): number {
+    if (path.includes('/tools/list') || path.includes('/v1/get-scores') || path.includes('/v1/recommendations')) {
+        return getToolsListMax();
+    }
+    if (path.includes('/tools/call') || path.includes('/v1/log-outcome') || path.includes('/v1/simulate')) {
+        return getToolsCallMax();
+    }
+    return getMaxRequests();
 }
 
 function readBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -107,7 +130,7 @@ export const rateLimitMiddleware = async (c: Context, next: Next): Promise<Respo
     }
 
     const windowMs = getWindowMs();
-    const maxRequests = getMaxRequests();
+    const maxRequests = resolveMaxRequests(c.req.path);
 
     try {
         const consumeResult = await consumeRateLimitBucket({
@@ -143,12 +166,15 @@ export const rateLimitMiddleware = async (c: Context, next: Next): Promise<Respo
             return;
         }
 
+        // Fail-closed: return 429 to protect the system when DB is unavailable
+        console.error('[rate-limit] backend unavailable, fail-closed — returning 429:', err?.message ?? 'unknown error');
+        c.header('Retry-After', '60');
         return c.json(
             {
                 error: 'RATE_LIMIT_UNAVAILABLE',
-                message: 'Rate limiter is temporarily unavailable.',
+                message: 'Too many requests — rate limiter is temporarily unavailable.',
             },
-            503,
+            429,
         );
     }
 };

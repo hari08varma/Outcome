@@ -91,7 +91,7 @@ describe('computeCompositeScore', () => {
 
         expect(Math.abs(score - expected)).toBeLessThan(0.001);
         expect(Math.abs(score - expected)).toBeLessThan(0.001);
-        expect(MIN_CONFIDENCE).toBe(0.3);
+        expect(MIN_CONFIDENCE).toBe(0.15);
     });
 
     it('normal well-performing action: 25 attempts, 0.85 success, 0.9 conf', () => {

@@ -343,7 +343,7 @@ export async function fetchActionBaseline(
         .select('response_time_ms, success')
         .eq('agent_id', agentId)
         .eq('action_id', actionId)
-        .eq('ingestion_source', 'sdk')    // only live signal
+        .eq('ingestion_source', 'sdk')    // only live SDK signal; 'mcp' outcomes flow through the decision-tracker pipeline separately
         .eq('is_synthetic', false)
         .eq('is_deleted', false)          // exclude GDPR soft-deletes
         .order('timestamp', { ascending: false })

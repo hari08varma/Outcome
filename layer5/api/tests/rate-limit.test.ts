@@ -125,7 +125,7 @@ describe('rateLimitMiddleware (DB-backed)', () => {
         expect(res.status).toBe(200);
     });
 
-    it('returns 503 on backend error when RATE_LIMIT_FAIL_OPEN=false', async () => {
+    it('returns 429 on backend error when RATE_LIMIT_FAIL_OPEN=false', async () => {
         process.env.RATE_LIMIT_FAIL_OPEN = 'false';
         vi.mocked((supabase as any).rpc).mockResolvedValueOnce({
             data: null,
@@ -138,7 +138,7 @@ describe('rateLimitMiddleware (DB-backed)', () => {
             headers: { 'x-customer-id': 'cust-1' },
         });
 
-        expect(res.status).toBe(503);
+        expect(res.status).toBe(429);
         const json = await res.json() as any;
         expect(json.error).toBe('RATE_LIMIT_UNAVAILABLE');
     });

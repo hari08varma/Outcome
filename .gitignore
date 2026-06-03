@@ -11,3 +11,6 @@ __pycache__/
 Thumbs.db
 *.log
 .claude/
+.swarm/
+ruvector.db
+.li-queue/

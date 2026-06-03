@@ -1,4 +1,14 @@
+// Environment variables (fall back to dev defaults when unset):
+//   E2E_API_KEY       — API key for authentication (default: key123)
+//   E2E_CUSTOMER_ID   — Customer UUID (default: a0000000-0000-0000-0000-000000000001)
+//   E2E_AGENT_ID      — Agent UUID (default: d0000000-0000-0000-0000-000000000001)
+//   E2E_SESSION_ID    — Session UUID (default: 00000000-0000-0000-0000-000000000123)
 const http = require('http');
+
+const API_KEY = process.env.E2E_API_KEY || 'key123';
+const CUSTOMER_ID = process.env.E2E_CUSTOMER_ID || 'a0000000-0000-0000-0000-000000000001';
+const AGENT_ID = process.env.E2E_AGENT_ID || 'd0000000-0000-0000-0000-000000000001';
+const SESSION_ID = process.env.E2E_SESSION_ID || '00000000-0000-0000-0000-000000000123';
 
 async function checkE2E() {
     console.log('--- LAYERINFINITE E2E VERIFICATION ---');
@@ -7,7 +17,7 @@ async function checkE2E() {
     // 1. GET /v1/get-scores -> update_app is top recommendation
     try {
         const res = await fetch('http://localhost:3000/v1/get-scores?issue_type=payment_failed', {
-            headers: { 'X-API-Key': 'key123', 'X-Customer-ID': 'a0000000-0000-0000-0000-000000000001' }
+            headers: { 'X-API-Key': API_KEY, 'X-Customer-ID': CUSTOMER_ID }
         });
         const json = await res.json();
         const topAction = json.top_action?.action_name;
@@ -44,12 +54,12 @@ async function checkE2E() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': 'key123',
-                'X-Agent-ID': 'd0000000-0000-0000-0000-000000000001',
-                'X-Customer-ID': 'a0000000-0000-0000-0000-000000000001'
+                'X-API-Key': API_KEY,
+                'X-Agent-ID': AGENT_ID,
+                'X-Customer-ID': CUSTOMER_ID
             },
             body: JSON.stringify({
-                session_id: '00000000-0000-0000-0000-000000000123',
+                session_id: SESSION_ID,
                 action_name: 'fake_action_does_not_exist',
                 issue_type: 'payment_failed',
                 success: true

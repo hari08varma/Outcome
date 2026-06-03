@@ -159,8 +159,9 @@ function isWebhookAuthorized(params: {
         }
     }
 
-    // Keep local dev easy to test while keeping production strict.
-    if (process.env.NODE_ENV !== 'production') {
+    // Explicit dev bypass — set LI_WEBHOOK_DEV_BYPASS=true only for local testing.
+    // All deployed environments (staging, production) enforce auth.
+    if (process.env.LI_WEBHOOK_DEV_BYPASS === 'true') {
         return true;
     }
 

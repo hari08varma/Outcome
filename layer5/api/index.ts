@@ -21,6 +21,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { prettyJSON } from 'hono/pretty-json';
 import { serve } from '@hono/node-server';
 import { getOutcomeQueueMode, startDurableQueueWorker, getDurableQueueHealth } from './lib/outcome-ingest-queue.js';
+import { warmCohortCycleStore } from './lib/recommendation/cohort-cycle.js';
 
 const REQUIRED_ENV_VARS = [
     'SUPABASE_URL',
@@ -73,6 +74,7 @@ import { testNotificationRouter } from './routes/admin/test-notification.js';
 import { triggerTrainingRoute } from './routes/admin/trigger-training.js';
 import { restoreTrustSnapshotRouter } from './routes/admin/restore-trust-snapshot.js';
 import { embeddingDriftRouter } from './routes/admin/embedding-drift.js';
+import { modelHistoryRouter } from './routes/model-history.js';
 import { userAuthMiddleware } from './middleware/user-auth.js';
 import { apiKeysRouter } from './routes/auth/api-keys.js';
 import { meRouter } from './routes/auth/me.js';
@@ -81,6 +83,7 @@ import { simulateRouter } from './routes/simulate.js';
 import contractsRoute from './routes/contracts.js';
 import discrepancyRoute from './routes/discrepancy.js';
 import pendingSignalsRoute from './routes/pending-signals.js';
+import businessWebhookRoute from './routes/business-webhook.js';
 import webhookRoute from './routes/webhook.js';
 import { getRecommendationsRouter } from './routes/get-recommendations.js';
 import { observeRouter } from './routes/observe.js';
@@ -202,6 +205,7 @@ app.get('/', (c) => c.json({
         'GET  /v1/contracts': 'Signal contracts',
         'GET  /v1/discrepancies': 'Signal discrepancies',
         'GET  /v1/pending-signals': 'Pending signal queue',
+        'POST /v1/webhook/callback': 'Business outcome webhook (Layer 2/3 score overwrite)',
         'POST /v1/webhook/:provider': 'Webhook ingestion',
         'GET /v1/me': 'Verify API key identity — returns agent_id + customer_id',
         'GET  /v1/audit': 'Immutable audit trail',
@@ -209,6 +213,9 @@ app.get('/', (c) => c.json({
         'GET  /v1/admin/actions': 'List actions (admin)',
         'POST /v1/admin/reinstate-agent': 'Reinstate suspended agent (admin)',
         'POST /v1/admin/test-notification': 'Test a notification channel (admin)',
+        'GET  /v1/admin/model-history': 'Model version history (admin)',
+        'POST /v1/admin/model-history/rollback': 'Rollback model version (admin)',
+        'POST /v1/admin/model-history/pin': 'Pin task_type to model version (admin)',
         'GET  /health/deep': 'Deep health check (table + env var diagnostics)',
     },
 }));
@@ -469,6 +476,7 @@ v1.route('/admin/test-notification', testNotificationRouter);
 v1.route('/admin/trigger-training', triggerTrainingRoute);
 v1.route('/admin/restore-trust-snapshot', restoreTrustSnapshotRouter);
 v1.route('/admin/embedding-drift', embeddingDriftRouter);
+v1.route('/admin/model-history', modelHistoryRouter);
 
 v1.use('/outcome-feedback', primaryAuth);
 v1.use('/outcome-feedback/*', primaryAuth);
@@ -509,6 +517,7 @@ v1.route('/contracts', contractsRoute);
 v1.route('/discrepancies', discrepancyRoute);
 v1.route('/pending-signals', pendingSignalsRoute);
 v1.route('/import', importRouter);
+v1.post('/webhook/callback', businessWebhookRoute);
 v1.post('/webhook/:provider', webhookRoute);
 
 app.route('/v1', v1);
@@ -554,4 +563,9 @@ serve({
     } else {
         console.log(`   [Queue]     Sync mode — responses wait for DB write`);
     }
+
+    // Warm caches from DB on startup
+    warmCohortCycleStore().catch((err: any) => {
+        console.warn('[cohort-cycle] Startup warm failed:', err?.message ?? 'unknown error');
+    });
 });
