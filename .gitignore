@@ -14,3 +14,9 @@ Thumbs.db
 .swarm/
 ruvector.db
 .li-queue/
+
+# Unrelated / scratch files
+architecture_v2_analysis.md
+churn_analysis.py
+benchmark/
+WA_Fn-UseC_-Telco-Customer-Churn.csv
