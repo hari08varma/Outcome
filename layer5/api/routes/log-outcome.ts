@@ -1066,6 +1066,39 @@ logOutcomeRouter.post('/', async (c) => {
         // Ensure all ingestion paths carry an idempotency key.
         body.idempotency_key = body.idempotency_key ?? crypto.randomUUID();
 
+        // ── Early validation (before queue fast-path) ──────────
+        // STATUS_CONFLICT checks are pure in-memory — no DB round-trips needed.
+        // Run them BEFORE the durable queue fast-accept so invalid payloads
+        // are rejected immediately (400) instead of being silently queued.
+        const earlyRequestedStatus = normalizeExecutionStatus(body.execution_status ?? null);
+        const successResult = (() => {
+            if (typeof body.success === 'boolean') return body.success;
+            // Raw parse: replicate the preprocess logic from the zod schema
+            if (typeof body.success === 'string') {
+                const lower = body.success.trim().toLowerCase();
+                if (['true', '1', 'yes', 'ok', 'pass', 'resolved'].includes(lower)) return true;
+                if (['false', '0', 'no', 'fail', 'failed'].includes(lower)) return false;
+            }
+            if (typeof body.success === 'number') return body.success === 1;
+            return body.success as boolean;
+        })();
+        const earlyScore = (() => {
+            if (body.outcome_score === undefined || body.outcome_score === null) return null;
+            const num = Number(body.outcome_score);
+            if (!Number.isFinite(num)) return null;
+            if (num >= 2 && num <= 100) return num / 100;
+            return num;
+        })();
+        const earlyScoreDerivedStatus = earlyScore !== null && Number.isFinite(earlyScore)
+            ? (earlyScore >= 0.5 ? 'COMPLETED' as const : 'FAILED' as const)
+            : null;
+        if (earlyRequestedStatus && ((earlyRequestedStatus === 'COMPLETED') !== successResult)) {
+            throw new Error('STATUS_CONFLICT:execution_status conflicts with resolved success value');
+        }
+        if (earlyRequestedStatus && earlyScoreDerivedStatus && earlyRequestedStatus !== earlyScoreDerivedStatus) {
+            throw new Error('STATUS_CONFLICT:execution_status conflicts with outcome_score_raw polarity');
+        }
+
         const queueBypass = (c.req.header(OUTCOME_INGEST_WORKER_BYPASS_HEADER) ?? '').trim() === '1';
         const queueMode = getOutcomeQueueMode();
 

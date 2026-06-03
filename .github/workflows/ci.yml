@@ -45,6 +45,8 @@ jobs:
       - name: Typecheck API
         run: npm --prefix "layer5/api" run typecheck
       - name: Run API tests
+        env:
+          LI_OUTCOME_QUEUE_MODE: sync
         run: npm --prefix "layer5/api" run test
 
   python-sdk-validation:

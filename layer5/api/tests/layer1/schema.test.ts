@@ -63,6 +63,12 @@ vi.mock('../../lib/verifier.js', () => ({
     }),
 }));
 
+vi.mock('../../lib/outcome-ingest-queue.js', () => ({
+    getOutcomeQueueMode: () => 'sync',
+    enqueueDurable: vi.fn(),
+    OUTCOME_INGEST_WORKER_BYPASS_HEADER: 'x-li-worker-bypass',
+}));
+
 vi.mock('../../middleware/validate-action.js', () => ({
     validateAction: async () => ({
         valid: true,

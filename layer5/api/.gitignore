@@ -2,3 +2,14 @@
 dist/
 *.js.map
 node_modules/
+architecture_v2_analysis.md
+churn_analysis.py
+benchmark/
+WA_Fn-UseC_-Telco-Customer-Churn.csv
+
+# Unrelated/scratch files
+architecture_v2_analysis.md
+churn_analysis.py
+benchmark/
+WA_Fn-UseC_-Telco-Customer-Churn.csv
+
