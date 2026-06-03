@@ -1071,17 +1071,8 @@ logOutcomeRouter.post('/', async (c) => {
         // Run them BEFORE the durable queue fast-accept so invalid payloads
         // are rejected immediately (400) instead of being silently queued.
         const earlyRequestedStatus = normalizeExecutionStatus(body.execution_status ?? null);
-        const successResult = (() => {
-            if (typeof body.success === 'boolean') return body.success;
-            // Raw parse: replicate the preprocess logic from the zod schema
-            if (typeof body.success === 'string') {
-                const lower = body.success.trim().toLowerCase();
-                if (['true', '1', 'yes', 'ok', 'pass', 'resolved'].includes(lower)) return true;
-                if (['false', '0', 'no', 'fail', 'failed'].includes(lower)) return false;
-            }
-            if (typeof body.success === 'number') return body.success === 1;
-            return body.success as boolean;
-        })();
+        // body.success is already boolean after Zod parsing — no need to re-preprocess
+        const successResult = body.success as boolean;
         const earlyScore = (() => {
             if (body.outcome_score === undefined || body.outcome_score === null) return null;
             const num = Number(body.outcome_score);
